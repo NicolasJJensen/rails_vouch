@@ -1,0 +1,12 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    change_table :<%= table_name %> do |t|
+      t.string   :invitation_token
+      t.datetime :invitation_sent_at
+      t.datetime :invitation_accepted_at
+      t.boolean  :invitation_registration_required, default: false, null: false
+      t.references :inviter, foreign_key: { to_table: :<%= table_name %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
+    end
+    add_index :<%= table_name %>, :invitation_token, unique: true
+  end
+end

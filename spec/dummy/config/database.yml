@@ -1,0 +1,11 @@
+development:
+  adapter: postgresql
+  database: vouch_development
+  encoding: unicode
+  pool: 5
+
+test:
+  adapter: postgresql
+  database: vouch_test
+  encoding: unicode
+  pool: 5

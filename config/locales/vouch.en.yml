@@ -1,0 +1,51 @@
+en:
+  vouch:
+    sessions:
+      signed_out: "Signed out."
+      invalid_credentials: "Invalid credentials."
+    passwords:
+      reset_sent: "If that account exists, a reset link has been sent."
+      invalid_token: "Invalid or expired reset link."
+      password_updated: "Password updated. Sign in."
+    registrations:
+      account_created: "Account created."
+    two_factor:
+      invalid_method: "Invalid 2FA method."
+      invalid_code: "Invalid code."
+      too_many_attempts: "Too many attempts."
+      session_expired: "Session expired. Please sign in again."
+      attempts_exceeded: "Too many verification attempts. Sign in again."
+      no_identity: "No identity found."
+    two_factor_credentials:
+      removal_failed: "The authentication method could not be removed."
+      added: "2FA method added."
+      removed: "2FA method removed."
+      not_found: "2FA method not found."
+    invitations:
+      sent: "If the recipient is valid, an invitation will be sent."
+      could_not_send: "Could not send invitation."
+      revoked: "Invitation revoked."
+      invalid_token: "Invalid invitation token."
+      expired: "Invitation has expired."
+      accepted: "Complete your registration."
+    impersonations:
+      started: "Impersonation started."
+      not_found: "User not found."
+      ended: "Impersonation ended."
+      all_ended: "All impersonations ended."
+    oauth:
+      signed_in: "Signed in."
+      linked: "Account linked."
+      already_linked: "Already linked."
+      failed: "Authentication failed."
+      no_identity: "No identity found for this account."
+      creation_failed: "Could not create account."
+    lockable:
+      locked: "Account is locked. Try again in %{duration}."
+    password_trackable:
+      reused: "was used recently. Choose a different password."
+    failure:
+      unauthenticated: "You need to sign in."
+    user_selection:
+      session_expired: "Session expired. Please sign in again."
+      invalid_selection: "Invalid selection. Please sign in again."

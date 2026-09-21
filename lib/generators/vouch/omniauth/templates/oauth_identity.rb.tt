@@ -1,0 +1,5 @@
+class OauthIdentity < ApplicationRecord
+  include Vouch::OAuthIdentity::Concern
+
+  belongs_to :<%= owner_association %><%= owner_class_option %>
+end

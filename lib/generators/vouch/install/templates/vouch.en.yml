@@ -1,0 +1,10 @@
+# Host-app overrides for Vouch I18n keys.
+#
+# This file is loaded AFTER the gem's defaults so any keys here win.
+# See the gem's config/locales/vouch.en.yml for the full list.
+en:
+  vouch:
+    # sessions:
+    #   invalid_credentials: "Email or password is wrong."
+    # passwords:
+    #   reset_sent: "Check your inbox for a reset link."

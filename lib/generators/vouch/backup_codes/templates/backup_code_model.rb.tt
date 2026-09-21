@@ -1,0 +1,10 @@
+# frozen_string_literal: true
+
+# Single-use recovery code for the <%= parent_class %> 2FA credential. The
+# BackupCodable concern on <%= parent_class %> creates these rows with a
+# BCrypt-hashed <%= "`code_digest`" %> at enrollment; a matching submitted
+# code stamps <%= "`used_at`" %> and takes the row out of rotation.
+class <%= backup_code_class %> < ApplicationRecord
+  self.table_name = "<%= join_table_name %>"
+  belongs_to :<%= parent_singular %>, class_name: "<%= parent_class %>"
+end

@@ -1,0 +1,10 @@
+class <%= controller_class_name %> < Vouch::ImpersonationsController
+  auth_scope :<%= auth_scope_name %>
+
+  private
+
+  # The host must explicitly authorize impersonation.
+  def authorize_impersonation!
+    head :forbidden
+  end
+end

@@ -1,0 +1,12 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    create_table :oauth_identities do |t|
+      t.references :<%= owner_association %>, null: false, foreign_key: { to_table: :<%= owner_table %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
+      t.string     :provider, null: false
+      t.string     :uid,      null: false
+      t.json       :auth_data
+      t.timestamps
+    end
+    add_index :oauth_identities, [:provider, :uid], unique: true
+  end
+end

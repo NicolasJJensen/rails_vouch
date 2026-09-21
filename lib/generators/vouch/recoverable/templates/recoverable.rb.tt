@@ -1,0 +1,8 @@
+class <%= host_migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    change_table :<%= table_name %> do |t|
+      t.bigint   :recovery_attempts, default: 0, null: false
+      t.datetime :recovery_locked_at
+    end
+  end
+end

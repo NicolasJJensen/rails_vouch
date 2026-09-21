@@ -1,0 +1,64 @@
+name: Compatibility
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ruby: "3.2"
+            rails: "~> 8.0.0"
+            suite: full
+          - ruby: "3.3"
+            rails: "~> 8.1.0"
+            suite: full
+
+    runs-on: ubuntu-latest
+    env:
+      VOUCH_RAILS: ${{ matrix.rails }}
+      VOUCH_RELEASE_DEPS: "1"
+      RAILS_ENV: test
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vouch_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d vouch_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: false
+
+      - name: Resolve released dependencies
+        run: bundle install
+
+      - name: Prepare test database
+        if: matrix.suite == 'full'
+        run: bundle exec rake app:db:prepare
+
+      - name: Run full suite
+        if: matrix.suite == 'full'
+        run: bundle exec rspec
+
+      - name: Verify standalone transaction boundaries
+        run: AUTH_AR_VERSION="$(bundle exec ruby -e 'require "logger"; require "active_record"; print ActiveRecord::VERSION::STRING')" bundle exec ruby spec/compatibility/transactions.rb

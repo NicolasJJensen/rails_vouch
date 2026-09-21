@@ -1,0 +1,10 @@
+class <%= @account_class %> < ApplicationRecord
+  self.table_name = "<%= model_table(@account_class) %>"
+  include Vouch::Authenticatable
+
+  has_secure_password
+<% unless @single_model -%>
+
+  has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", foreign_key: :<%= model_association(@account_class) %>_id
+<% end -%>
+end

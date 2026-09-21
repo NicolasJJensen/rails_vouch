@@ -1,0 +1,12 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    change_table :<%= table_name %> do |t|
+      t.string :verification_nonce
+      t.datetime :verified_at
+      t.bigint   :verification_version, default: 0, null: false
+      t.bigint   :verification_attempts,  default: 0, null: false
+      t.datetime :verification_locked_at
+    end
+    add_index :<%= table_name %>, :verified_at
+  end
+end

@@ -1,0 +1,11 @@
+<h1>Choose an account</h1>
+
+<%%= form_with url: <%= @controller_route_scope %>_select_path, method: :post do %>
+  <%% @identities.each do |identity| %>
+    <p>
+      <%%= radio_button_tag :identity_id, identity.id, false, id: "identity_#{identity.id}" %>
+      <%%= label_tag "identity_#{identity.id}", "#{identity.class.model_name.human} ##{identity.id}" %>
+    </p>
+  <%% end %>
+  <%%= submit_tag "Continue" %>
+<%% end %>

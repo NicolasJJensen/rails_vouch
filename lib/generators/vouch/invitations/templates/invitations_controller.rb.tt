@@ -1,0 +1,24 @@
+# frozen_string_literal: true
+
+# Invitation authorization and account provisioning are host-owned policy.
+class <%= scope_module %>::InvitationsController < Vouch::InvitationsController
+  auth_scope :<%= auth_scope_name %>
+
+  private
+
+  def authorize_invitation!
+    raise Vouch::ConfigurationError, <<~MSG.squish
+      Define invitation authorization for this host, then return without
+      rendering or raising when the current identity may invite.
+    MSG
+  end
+
+  def build_invited_identity(identifier)
+    normalized_identifier = identifier.to_s.strip.downcase
+    <%= invitation_account_class %>.find_by("LOWER(email_address) = ?", normalized_identifier) || <%= invitation_account_class %>.create!(
+      email_address: normalized_identifier,
+      registration_required: true,
+      password:      SecureRandom.base64(48).truncate_bytes(64)
+    )
+  end
+end

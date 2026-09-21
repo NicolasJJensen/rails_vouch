@@ -1,0 +1,19 @@
+<h1>Sign in</h1>
+
+<%% if flash[:alert] %>
+  <p role="alert"><%%= flash[:alert] %></p>
+<%% end %>
+
+<%%= form_with url: <%= @controller_route_scope %>_session_path, method: :post do %>
+  <p>
+    <%%= label_tag :email_address, "Email address" %>
+    <%%= email_field_tag :email_address, params[:email_address], autocomplete: "email", required: true %>
+  </p>
+  <p>
+    <%%= label_tag :password, "Password" %>
+    <%%= password_field_tag :password, nil, autocomplete: "current-password", required: true %>
+  </p>
+  <%%= submit_tag "Sign in" %>
+<%% end %>
+
+<p><%%= link_to "Create an account", new_<%= @controller_route_scope %>_registration_path %></p>

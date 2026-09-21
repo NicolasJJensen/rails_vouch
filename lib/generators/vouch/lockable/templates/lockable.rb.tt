@@ -1,0 +1,10 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    change_table :<%= table_name %> do |t|
+      t.bigint   :consecutive_locks, default: 0, null: false
+      t.integer  :failed_attempts, default: 0, null: false
+      t.datetime :locked_at
+    end
+    add_index :<%= table_name %>, :locked_at
+  end
+end

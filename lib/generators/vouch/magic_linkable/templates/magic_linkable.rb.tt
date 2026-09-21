@@ -1,0 +1,9 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    change_table :<%= table_name %> do |t|
+      t.string :sign_in_nonce
+      t.bigint   :sign_in_attempts,  default: 0, null: false
+      t.datetime :sign_in_locked_at
+    end
+  end
+end

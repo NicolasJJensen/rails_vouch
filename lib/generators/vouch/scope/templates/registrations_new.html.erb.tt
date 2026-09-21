@@ -1,0 +1,27 @@
+<h1>Create an account</h1>
+
+<%% if @account.errors.any? %>
+  <div role="alert"><%%= @account.errors.full_messages.to_sentence %></div>
+<%% end %>
+
+<%%= form_with url: <%= @controller_route_scope %>_registration_path, scope: :<%= @account_param_key %>, method: :post do |form| %>
+  <p>
+    <%%= form.label :email_address %>
+    <%%= form.email_field :email_address, value: @account.email_address, autocomplete: "email", required: true %>
+  </p>
+  <p>
+    <%%= form.label :password %>
+    <%%= form.password_field :password, autocomplete: "new-password", required: true %>
+  </p>
+  <p>
+    <%%= form.label :password_confirmation %>
+    <%%= form.password_field :password_confirmation, autocomplete: "new-password", required: true %>
+  </p>
+<% if @tenant_class %>
+  <p>
+    <%%= label_tag "<%= @tenant_param_key %>[name]", "Name" %>
+    <%%= text_field_tag "<%= @tenant_param_key %>[name]", params.dig(:<%= @tenant_param_key %>, :name), required: true %>
+  </p>
+<% end %>
+  <%%= form.submit "Create account" %>
+<%% end %>

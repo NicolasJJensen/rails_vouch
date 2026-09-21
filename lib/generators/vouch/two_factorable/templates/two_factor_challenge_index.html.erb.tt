@@ -1,0 +1,8 @@
+<h1>Choose a verification method</h1>
+
+<ul>
+  <%% @credentials.each do |credential| %>
+    <%% credential_param = "#{credential.model_name.singular}-#{credential.to_param}" %>
+    <li><%%= link_to credential.two_factor_label, <%= auth_scope_name %>_two_factor_challenge_path(credential_param) %></li>
+  <%% end %>
+</ul>

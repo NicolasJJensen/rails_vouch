@@ -1,0 +1,11 @@
+class <%= @controller_class %> < Vouch::<%= @controller_base %>
+  auth_scope :<%= @controller_route_scope %>
+<% if @controller_base == "RegistrationsController" && @tenant_class -%>
+
+  private
+
+  def registration_tenant_attributes(_account)
+    params.require(:<%= @tenant_param_key %>).permit(:name)
+  end
+<% end -%>
+end

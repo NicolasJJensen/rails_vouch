@@ -1,0 +1,4 @@
+class <%= @tenant_class %> < ApplicationRecord
+  self.table_name = "<%= model_table(@tenant_class) %>"
+  has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", foreign_key: :<%= model_association(@tenant_class) %>_id
+end
