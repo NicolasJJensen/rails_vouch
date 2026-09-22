@@ -6,6 +6,62 @@ RSpec.describe Vouch::RouteBuilder do
   let(:route_paths) { Rails.application.routes.routes.map { |r| r.path.spec.to_s } }
 
   describe "route generation" do
+    it "infers a single-model scope from a model string or class" do
+      expect(Vouch::Mapping.inferred_scope_name(model: "User")).to eq(:user)
+      expect(Vouch::Mapping.inferred_scope_name(model: User)).to eq(:user)
+    end
+
+    it "infers split-model scopes from the identity reference" do
+      expect(Vouch::Mapping.inferred_scope_name(identity: "User")).to eq(:user)
+      expect(Vouch::Mapping.inferred_scope_name(identity: User)).to eq(:user)
+    end
+
+    it "preserves namespaces when inferring a scope" do
+      expect(Vouch::Mapping.inferred_scope_name(model: "Admin::User")).to eq(:admin_user)
+      expect(Vouch::Mapping.inferred_scope_name(model: "Admin/User")).to eq(:admin_user)
+      stub_const("Admin::User", Class.new)
+      expect(Vouch::Mapping.inferred_scope_name(model: Admin::User)).to eq(:admin_user)
+    end
+
+    it "retains an explicitly supplied scope when model inference is available" do
+      mapping = Vouch::Mapping.new(:staff, model: "User")
+
+      expect(mapping.scope_name).to eq(:staff)
+    end
+
+    it "allows the route DSL to infer a single-model scope" do
+      test_routes = ActionDispatch::Routing::RouteSet.new
+      test_routes.draw do
+        Vouch::RouteBuilder.new(self).scope(model: "Account") { |auth| auth.sessions }
+      end
+
+      expect(Vouch.mapping_for(:account).account_class_name).to eq("Account")
+    ensure
+      Vouch.deregister_mapping(:account)
+    end
+
+    it "rejects replacing a scope with a different model configuration" do
+      test_routes = ActionDispatch::Routing::RouteSet.new
+      stub_const("InferenceCollision", Class.new)
+      test_routes.draw do
+        Vouch::RouteBuilder.new(self).scope(:inference_collision, model: "Account") { |auth| auth.sessions }
+      end
+
+      expect {
+        test_routes.draw do
+          Vouch::RouteBuilder.new(self).scope(model: "InferenceCollision") { |auth| auth.sessions }
+        end
+      }.to raise_error(Vouch::ConfigurationError, /already mapped to a different model/i)
+    ensure
+      Vouch.deregister_mapping(:inference_collision)
+    end
+
+    it "rejects an anonymous model when scope inference cannot produce a name" do
+      expect {
+        Vouch::RouteBuilder.new(ActionDispatch::Routing::RouteSet.new).scope(model: Class.new) { |auth| auth.sessions }
+      }.to raise_error(Vouch::ConfigurationError, /infer a valid authentication scope/i)
+    end
+
     it "generates session routes" do
       expect(route_paths).to include("/users/sign_in(.:format)")
       expect(route_paths).to include("/users/sign_out(.:format)")

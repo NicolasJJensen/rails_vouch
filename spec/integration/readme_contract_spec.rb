@@ -19,7 +19,7 @@ RSpec.describe "documentation executable contracts" do
   it "keeps the split-model route sample at the generated baseline" do
     source = documentation_ruby_block(
       path: "README.md",
-      containing: 'auth.scope :user, account: "Account"'
+      containing: 'auth.scope account: "Account"'
     )
     expect(source).to include("Vouch.routes(self)")
 
@@ -59,62 +59,32 @@ RSpec.describe "documentation executable contracts" do
     expect(account.reload).to be_two_factor_enabled
   end
 
-  it "documents manual route scaffold paste before the scope command" do
-    readme = File.read(Rails.root.join("..", "..", "README.md"))
-    install = readme.index("vouch:install")
-    paste = readme.index("paste", install)
-    scope = readme.index("vouch:scope", install)
-
-    expect(install).to be_present
-    expect(paste).to be_present
-    expect(scope).to be_present
-    expect(paste).to be < scope
-  end
-
-  it "represents the install output paste before running the scope generator" do
+  it "installs the documented single-model setup without manual route edits" do
     directory = Dir.mktmpdir("vouch-readme-install")
     FileUtils.mkdir_p(File.join(directory, "config"))
-    output = Dir.chdir(directory) do
-      generator = Vouch::Generators::InstallGenerator.new([])
-      generator.destination_root = directory
-      capture(:stdout) { generator.invoke_all }
-    end
-
-    output = output.gsub(/\e\[[0-9;]*m/, "")
-    scaffold = output[/Vouch\.routes\(self\) do \|auth\|.*?^\s*end/m]
-    expect(scaffold).to include("Vouch.routes(self)")
     File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
       Rails.application.routes.draw do
-        #{scaffold}
+        root "dashboard#show"
       end
     RUBY
 
     Dir.chdir(directory) do
-      generator = Vouch::Generators::ScopeGenerator.new(
-        ["users", "Account:account", "User:identity"]
-      )
+      installer = Vouch::Generators::InstallGenerator.new([])
+      installer.destination_root = directory
+      installer.invoke_all
+      generator = Vouch::Generators::ScopeGenerator.new(["users", "User"], single_model: true)
       generator.destination_root = directory
       generator.invoke_all
     end
 
     routes = File.read(File.join(directory, "config/routes.rb"))
-    expect(routes).to include('auth.scope :user, account: "Account", identity: "User"')
-    expect(routes).to include("auth.sessions")
-    expect(routes).to include("auth.registrations")
-    expect(routes).to include("auth.user_selection")
+    expect(routes.scan("Vouch.routes(self)").size).to eq(1)
+    expect(routes).to include('auth.scope :user, model: "User"')
+    expect(routes).to include('root "dashboard#show"', "auth.sessions", "auth.registrations")
+    expect(routes).not_to include("auth.user_selection")
+    model = File.read(File.join(directory, "app/models/user.rb"))
+    expect(model).to include("normalizes :email_address", "uniqueness: { case_sensitive: false }")
   ensure
     FileUtils.rm_rf(directory) if directory
-  end
-
-  private
-
-  def capture(stream)
-    original = stream == :stdout ? $stdout : $stderr
-    captured = StringIO.new
-    stream == :stdout ? $stdout = captured : $stderr = captured
-    yield
-    captured.string
-  ensure
-    stream == :stdout ? $stdout = original : $stderr = original
   end
 end

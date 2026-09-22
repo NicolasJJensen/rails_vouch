@@ -2,6 +2,7 @@
 
 require "rails/generators/base"
 require "ripper"
+require_relative "../route_editor"
 
 module Vouch
   module Generators
@@ -53,7 +54,11 @@ module Vouch
       end
 
       def scope_declaration?(line)
-        line.match?(/^\s*[a-zA-Z_]\w*\.scope\s+:#{Regexp.escape(auth_scope_name.to_s)}(?:\s|,|$)/)
+        receiver = line[/^\s*([a-zA-Z_]\w*)\.scope\b/, 1]
+        return false unless receiver
+
+        tree = Ripper.sexp("#{line}\nend\n")
+        tree && RouteEditor.scope_names(tree, receiver).include?(auth_scope_name.to_s)
       end
 
       def scope_block(lines, start)

@@ -88,6 +88,67 @@ RSpec.describe "Vouch generators" do
     expect(routes).to include('auth.scope :member, model: "Member"')
   end
 
+  it "creates the wrapper automatically and is safe to rerun" do
+    @generator_directory = run_generator(Vouch::Generators::ScopeGenerator, ["members", "Member"], { single_model: true }, routes: <<~RUBY)
+      Rails.application.routes.draw do
+      end
+    RUBY
+    routes_path = File.join(@generator_directory, "config/routes.rb")
+    routes = File.read(routes_path)
+    expect(routes).to include("Vouch.routes(self)")
+    expect(routes.scan("auth.scope :member").length).to eq(1)
+
+    Dir.chdir(@generator_directory) do
+      generator = Vouch::Generators::ScopeGenerator.new(["members", "Member"], single_model: true)
+      generator.destination_root = @generator_directory
+      generator.invoke_all
+    end
+    expect(File.read(routes_path).scan("auth.scope :member").length).to eq(1)
+  end
+
+  it "does not edit routes containing fake or ambiguous wrappers" do
+    routes = <<~RUBY
+      text = <<~ROUTES
+        Vouch.routes(self) do |auth|
+        end
+      ROUTES
+      Rails.application.routes.draw do; end
+    RUBY
+    @generator_directory = run_generator(Vouch::Generators::InstallGenerator, [], routes: routes)
+    expect(File.read(File.join(@generator_directory, "config/routes.rb"))).to eq(routes)
+  end
+
+  it "does not treat an explicit different scope using the same model as a duplicate" do
+    @generator_directory = run_generator(Vouch::Generators::ScopeGenerator, ["operators", "User"], { single_model: true }, routes: <<~RUBY)
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope :customers, model: "User" do
+            auth.sessions
+          end
+        end
+      end
+    RUBY
+    routes = File.read(File.join(@generator_directory, "config/routes.rb"))
+    expect(routes).to include('auth.scope :operator, model: "User"')
+  end
+
+  it "adds impersonation to an inferred scope" do
+    @generator_directory = run_generator(
+      Vouch::Generators::ImpersonationGenerator, ["users"], {}, routes: <<~RUBY
+        Rails.application.routes.draw do
+          Vouch.routes(self) do |auth|
+            auth.scope model: "User" do
+              auth.sessions
+            end
+          end
+        end
+      RUBY
+    )
+    routes = File.read(File.join(@generator_directory, "config/routes.rb"))
+    expect(routes).to include('auth.impersonation controller: "users/impersonations"')
+    expect(Ripper.sexp(routes)).not_to be_nil
+  end
+
   it "adds impersonation to an existing scope and writes a safely denying host controller" do
     @generator_directory = run_generator(
       Vouch::Generators::ImpersonationGenerator,

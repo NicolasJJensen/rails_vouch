@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
 require "rails/generators/base"
-require "ripper"
 require "digest"
 require "rails/generators/active_record"
 require "vouch/model_metadata"
+require_relative "../route_editor"
 
 module Vouch
   module Generators
@@ -170,17 +170,27 @@ module Vouch
 
       def show_routes_block
         block = build_routes_block
-        if insert_route(block)
+        path = File.join(destination_root, "config/routes.rb")
+        wrapper = <<~RUBY
+          Vouch.routes(self) do |auth|
+            # Add scopes with `bin/rails g vouch:scope <name> Account:account User:identity`
+          end
+        RUBY
+        RouteEditor.ensure_wrapper(path, wrapper) if File.file?(path)
+        result = RouteEditor.insert_scope(path, block)
+        if result == :inserted
           say_status :route, "Added scope to config/routes.rb", :green
+        elsif result == :duplicate
+          say_status :route, "Scope already exists in config/routes.rb", :green
         else
-          say_status :route, "Add to config/routes.rb (inside Vouch.routes(self)):", :yellow
-          say "\n#{block}"
+          say_status :route, "Could not update config/routes.rb automatically; merge this configuration into your Rails routes:", :yellow
+          say "\nVouch.routes(self) do |auth|\n#{block.lines.map { |line| line.strip.empty? ? line : "  #{line}" }.join}\nend"
         end
       end
 
       def show_guidance
         say "\nNext steps:"
-        say "- Replace the generated baseline views with host-owned UI and add account validations."
+        say "- Customize the generated views and email defaults, and add application-specific account validations."
         say "- For tenant scopes, adapt the generated name parameter and required tenant associations to the host schema."
         say "- For optional features, add authenticates_with, the model concern and association, migration, controller and route, delivery hook, and views. Invitations also require Vouch::Invitable::Concern plus belongs_to :inviter (optional) and has_many :invitees on the generated identity model."
       end
@@ -236,42 +246,6 @@ module Vouch
               auth.user_selection
             end
         RUBY
-      end
-
-      def insert_route(block)
-        path = File.join(destination_root, "config/routes.rb")
-        return false unless File.file?(path)
-
-        lines = File.readlines(path)
-        start = lines.index { |line| line.match?(/Vouch\.routes\(self\)\s+do\s*\|auth\|/) }
-        return false unless start
-
-        tokens = Ripper.lex(lines[start..].join)
-        depth = 0
-        closing_line = nil
-        tokens.each do |position, type, value, _state|
-          next unless type == :on_kw
-          return false if %w[if unless while until for case begin def class module].include?(value)
-          depth += 1 if value == 'do'
-          if value == 'end'
-            depth -= 1
-            if depth.zero?
-              closing_line = position.first
-              break
-            end
-          end
-        end
-        return false unless closing_line
-        # Ripper positions are one-based relative to the sliced source, while
-        # `start` and the insertion index are zero-based line indexes.
-        insert_at = start + closing_line - 1
-        return false unless lines[insert_at].match?(/\A\s*end\s*(?:#.*)?\z/)
-
-        indent = lines[insert_at][/\A\s*/]
-        indented_block = block.lines.map { |line| line.strip.empty? ? line : "#{indent}#{line}" }.join
-        lines.insert(insert_at, "#{indented_block}\n")
-        File.write(path, lines.join)
-        true
       end
     end
   end

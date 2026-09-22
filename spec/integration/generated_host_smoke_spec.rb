@@ -152,8 +152,6 @@ RSpec.describe "generated host smoke test", :generated_host do
       YAML
       write_file(directory, "config/routes.rb", <<~RUBY)
         Rails.application.routes.draw do
-          Vouch.routes(self) do |auth|
-          end
           root "#{path_name}/dashboard#show"
         end
       RUBY
@@ -167,11 +165,11 @@ RSpec.describe "generated host smoke test", :generated_host do
         end
       RUBY
       write_file(directory, "app/controllers/#{path_name}/dashboard_controller.rb", <<~RUBY)
-        class #{namespace}::DashboardController < Vouch::BaseController
-          auth_scope :#{route_scope}
+        class #{namespace}::DashboardController < ApplicationController
+          before_action :authenticate_#{route_scope}!
 
           def show
-            render plain: current_account.email_address
+            render plain: current_#{route_scope}_account.email_address
           end
         end
       RUBY
@@ -351,6 +349,9 @@ RSpec.describe "generated host smoke test", :generated_host do
           .sub(/(create_table[^\n]*\n)/, "\\1      t.string :login\n")
           .sub(/(    end\n    add_index)/, "    end\n    add_index :#{owner_table}, :login, unique: true\n    add_index")
         File.write(owner_migration, owner_migration_body)
+        owner_source = File.read(File.join(directory, owner_path))
+        owner_source = owner_source.sub(/^  validates :email_address,.*\n/, "")
+        write_file(directory, owner_path, owner_source)
         write_file(directory, "app/models/generated_login_resolver.rb", <<~RUBY)
           class GeneratedLoginResolver < Vouch::LoginResolver::Base
             def valid?(params)
@@ -454,7 +455,14 @@ RSpec.describe "generated host smoke test", :generated_host do
       expect(migration_result).to include("generated host migration passed")
 
       login_result = run_host(directory, "runner", <<~RUBY)
-        account = #{variant == :single ? model_name : owner_name}.create!(email_address: "generated@example.com", password: "secret123"#{variant == :namespaced ? ', login: "generated-login"' : ''})
+        account = #{variant == :single ? model_name : owner_name}.create!(email_address: " Generated@Example.COM ", password: "secret123"#{variant == :namespaced ? ', login: "generated-login"' : ''})
+        abort "email was not normalized" unless account.email_address == "generated@example.com"
+        unless #{variant == :namespaced}
+          duplicate = account.class.new(email_address: " GENERATED@EXAMPLE.COM ", password: "secret123")
+          abort "duplicate email was accepted" if duplicate.valid? || !duplicate.errors.added?(:email_address, :taken, value: "generated@example.com")
+          blank = account.class.new(email_address: " ", password: "secret123")
+          abort "blank email was accepted" if blank.valid? || !blank.errors.of_kind?(:email_address, :blank)
+        end
         #{"tenant = #{tenant_name}.create!(name: \"Generated tenant\")" if variant == :tenant}
         #{"#{model_name}.create!(#{owner_name.demodulize.underscore}: account#{", #{Vouch::ModelMetadata.new(tenant_name).association_key}: tenant" if variant == :tenant})" unless variant == :single}
         OauthIdentity.create!(#{Vouch::ModelMetadata.new(variant == :single ? model_name : owner_name).association_key}: account,

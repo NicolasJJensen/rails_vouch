@@ -4,7 +4,7 @@ This guide covers setup choices beyond the baseline installation in the [README]
 
 ## Generators and custom names
 
-If the install generator reports that `Vouch.routes(self)` should be pasted into `config/routes.rb`, paste that scaffold before running the scope generator:
+The install and scope generators add the route wrapper automatically in a standard Rails routes file. Create a split-model scope with:
 
 ```sh
 bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
@@ -12,6 +12,8 @@ bin/rails db:migrate
 ```
 
 For a single model, use `bin/rails generate vouch:scope members Member --single-model`. Generator primary-key options support UUID hosts. Namespaced model arguments such as `Admin::Account` and `Admin::Phone` are supported; generators create namespace paths and explicit table names where Rails needs them. Already loaded models provide table metadata, but generators do not trigger model autoloading before migrations, so inspect migrations for custom tables when a model is not loaded.
+
+Generated account models include email normalization and presence/case-insensitive uniqueness validation, backed by the generated database index. Keep or adapt these defaults when using another identifier. Repeated route generation preserves an existing scope; ambiguous routes are left untouched with manual instructions.
 
 Feature generators use the same model naming rules. Password-reset and two-factor UI generation requires both the model argument and the route scope/controller namespace:
 
@@ -26,7 +28,7 @@ See [invitations](invitations.md), [impersonation](impersonation.md), and [contr
 
 ## Non-email identifiers
 
-The baseline scope uses `email_address`. For a non-email login identifier, keep lookup, account creation, and generated host views in the host. Add the identifier column and make `email_address` optional if login replaces it, adapting the table name for a custom account table:
+The baseline scope uses `email_address`. When replacing it with `login`, remove the generated email presence/uniqueness validation and replace the normalization with the login rules below. If you retain email as an optional field, choose its validation rules explicitly. For a non-email login identifier, keep lookup, account creation, and generated host views in the host. Add the identifier column and make `email_address` optional if login replaces it, adapting the table name for a custom account table:
 
 ```ruby
 class AddLoginToAccounts < ActiveRecord::Migration[8.0]

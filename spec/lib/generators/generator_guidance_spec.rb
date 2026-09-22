@@ -23,7 +23,7 @@ RSpec.describe "authentication generator guidance" do
 
     expect(output).to include("Next steps")
     expect(output).to include("authenticates_with")
-    expect(output).to include("host-owned")
+    expect(output).to include("email defaults", "application-specific account validations")
     expect(output).to match(/delivery|resolver|controller/i)
   ensure
     FileUtils.rm_rf(directory)

@@ -2,7 +2,26 @@
 
 The baseline route setup is in the [README](../README.md). This guide covers controller inheritance, route selection, and customization. See [authentication policy](authentication-policy.md) for completion rules and [sessions and hooks](sessions-and-hooks.md) for lifecycle behavior.
 
-## Controller integration
+## Application controllers
+
+Vouch adds a small helper module to Rails controllers automatically. Keep inheriting from `ApplicationController` and require authentication only on the pages that need it:
+
+```ruby
+class DashboardController < ApplicationController
+  before_action :authenticate_user!
+
+  def show
+    @membership = current_user
+    @account = current_user_account
+  end
+end
+```
+
+Each registered scope defines `authenticate_<scope>!`, `current_<scope>`, `current_<scope>_account`, and `<scope>_signed_in?`. The last three are available in views. For `:admin_user`, for example, use `authenticate_admin_user!` and `current_admin_user`. The account accessor derives the account from the completed identity; pending MFA or identity selection never counts as authenticated. With one model, the identity and account are the same record.
+
+The filter redirects to that scope's sign-in route and preserves GET destinations. Helpers follow current mappings and custom route helper prefixes. They do not add a global authentication filter or registration/completion internals to your application controllers. Existing methods defined by your application can override these helpers.
+
+## Authentication controllers
 
 Auth controllers inherit `Vouch::BaseController`, which supplies scope-aware guards. The configured parent defaults to `ApplicationController`:
 
@@ -13,7 +32,7 @@ Vouch.configure do |config|
 end
 ```
 
-Declare `authentication_callbacks` only when the parent already installs authentication filters. Public auth actions skip those filters; protected actions retain them. Configure the parent before loading auth controllers. Auth code uses `current_identity` and `current_account`, independent of a host `current_user`. Override redirects when the host does not use `root_path`.
+Declare `authentication_callbacks` only when the parent already installs authentication filters. Public auth actions skip those filters; protected actions retain them. Configure the parent before loading auth controllers. Vouch’s own auth controllers continue to use scope-aware `current_identity` and `current_account` internally, independently of application overrides to `current_user`. Keep feature controllers inheriting from their Vouch base class; ordinary application controllers do not need that superclass. Override redirects when the host does not use `root_path`.
 
 Use `auth_scope` when namespace inference is unsuitable:
 

@@ -70,6 +70,7 @@ module Vouch
     def register_mapping(scope, mapping)
       mappings[scope.to_sym] = mapping
       configured_warden_configs.each { |config| configure_warden_scope(config, mapping) }
+      ApplicationHelpers.define_scope(scope)
     end
 
     # Internal — used by tests. Removes a scope mapping.

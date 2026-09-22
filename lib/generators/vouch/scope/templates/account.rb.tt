@@ -3,6 +3,9 @@ class <%= @account_class %> < ApplicationRecord
   include Vouch::Authenticatable
 
   has_secure_password
+
+  normalizes :email_address, with: ->(value) { value.strip.downcase }
+  validates :email_address, presence: true, uniqueness: { case_sensitive: false }
 <% unless @single_model -%>
 
   has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", foreign_key: :<%= model_association(@account_class) %>_id

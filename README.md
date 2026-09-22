@@ -36,14 +36,7 @@ bundle install
 bin/rails generate vouch:install
 ```
 
-The installer creates configuration and locale files and prints a route scaffold. Copy and paste the scaffold inside your existing `Rails.application.routes.draw` block in `config/routes.rb`:
-
-```ruby
-Rails.application.routes.draw do
-  Vouch.routes(self) do |auth|
-  end
-end
-```
+The installer creates configuration and locale files and adds a `Vouch.routes(self)` block to `config/routes.rb`. The scope generator also creates that block if it is missing, so no manual route setup is needed for a standard Rails routes file.
 
 ### Generate authentication
 
@@ -51,7 +44,7 @@ end
 bin/rails generate vouch:scope users User --single-model
 ```
 
-This creates the `User` model, its migration, session and registration controllers, and basic accessible views. It also adds the authentication scope to the route scaffold:
+This creates the `User` model, its migration, session and registration controllers, and basic accessible views. It also adds the authentication scope to `config/routes.rb`:
 
 ```ruby
 Vouch.routes(self) do |auth|
@@ -62,11 +55,11 @@ Vouch.routes(self) do |auth|
 end
 ```
 
-This is the resulting route block, not a second block to add. If the generator cannot insert it automatically, paste its output into the scaffold.
+This is generated for you. Re-running route generation does not add a duplicate scope. For an unusual or ambiguous routes file, the generator leaves it unchanged and prints the required route code.
 
-### Configure the model and migrate
+### Review the model and migrate
 
-Keep the generated model's `Vouch::Authenticatable` inclusion and `has_secure_password`. Add email normalization and validation:
+The generated model includes password authentication, email normalization, and validation:
 
 ```ruby
 # app/models/user.rb
@@ -98,12 +91,12 @@ Start your Rails server and open `/users/sign_up` to create an account, or `/use
 
 ### Protect a page
 
-Inherit from `Vouch::BaseController` and select the authentication scope:
+Keep your normal controller superclass and add the authentication filter:
 
 ```ruby
 # app/controllers/dashboard_controller.rb
-class DashboardController < Vouch::BaseController
-  auth_scope :user
+class DashboardController < ApplicationController
+  before_action :authenticate_user!
 
   def show
   end
@@ -113,22 +106,23 @@ end
 Add `root "dashboard#show"` inside your application's routes block, alongside `Vouch.routes(self)`, and create `app/views/dashboard/show.html.erb`:
 
 ```erb
-<p>Signed in as <%= current_account.email_address %></p>
+<p>Signed in as <%= current_user.email_address %></p>
 <%= button_to "Sign out", user_sign_out_path, method: :delete %>
 ```
 
-Unauthenticated visitors are redirected to sign-in. `Vouch::BaseController` inherits from `ApplicationController` by default, so your application's shared controller behavior still applies.
+Unauthenticated visitors are redirected to sign-in, with GET destinations saved for their return. Helpers are added to Rails controllers automatically; pages remain public unless you add an authentication filter.
 
 ### Access the signed-in user
 
-Controllers inheriting from `Vouch::BaseController` and their views have these helpers:
+Each authentication scope supplies helpers to controllers and views:
 
 | Helper | Value |
 | --- | --- |
-| `current_identity` | The signed-in application identity. |
-| `current_account` | The account that owns its credentials. |
+| `current_user` | The signed-in application identity. |
+| `current_user_account` | The account that owns its credentials. |
+| `user_signed_in?` | Whether this scope has completed authentication. |
 
-In this single-model example, both return the same `User`. Vouch does not define your application's `current_user` helper. For existing authentication filters, alternative parent controllers, and redirect overrides, see [controller integration](docs/controllers.md).
+In this single-model example, `current_user` and `current_user_account` return the same `User`. In a split-model scope, they return the membership and account respectively. A pending MFA or identity-selection flow does not count as signed in. An `:admin` scope supplies `authenticate_admin!`, `current_admin`, `current_admin_account`, and `admin_signed_in?`. See [controller integration](docs/controllers.md) for filters, overrides, and Vouch’s own authentication controllers.
 
 ## Accounts, identities, and tenants
 
@@ -148,17 +142,19 @@ For a new application using this structure, use this generator **instead of** th
 bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
 ```
 
-The corresponding routes select identity selection explicitly:
+The scope name can be omitted in hand-written routes; Vouch infers `:user` from `identity: "User"`. Select identity selection explicitly:
 
 ```ruby
 Vouch.routes(self) do |auth|
-  auth.scope :user, account: "Account", identity: "User", tenant: "Organisation" do
+  auth.scope account: "Account", identity: "User", tenant: "Organisation" do
     auth.sessions
     auth.registrations
     auth.user_selection
   end
 end
 ```
+
+For a single model, `auth.scope model: "User"` likewise infers `:user`. Namespaces are preserved: `Admin::User` infers `:admin_user`. Pass an explicit name, such as `auth.scope :operator, model: "User"`, to use the same model in a separate authentication scope. Scope names determine session separation and default routes; they do not grant roles or permissions.
 
 Review the generated tenant fields and registration behavior for your application's schema. See [setup](docs/setup.md) and [model mapping](docs/model-mapping.md) for namespaced models, custom associations, UUIDs, and additional scopes.
 

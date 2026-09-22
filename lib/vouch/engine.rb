@@ -6,6 +6,15 @@
 #
 module Vouch
   class Engine < Rails::Engine
+    initializer "vouch.application_helpers" do
+      ActiveSupport.on_load(:action_controller_base) do
+        include Vouch::ApplicationHelpers
+      end
+      ActiveSupport.on_load(:action_controller_api) do
+        include Vouch::ApplicationHelpers
+      end
+    end
+
     # Warden middleware is installed by default. Hosts that already install
     # Warden can set `install_middleware = false` and call
     # `Vouch.configure_warden(manager)` from their middleware setup.

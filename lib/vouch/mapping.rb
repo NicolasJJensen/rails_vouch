@@ -44,6 +44,24 @@ module Vouch
                 :password_archive_association,
                 :credential_associations
 
+    # Derive the public authentication scope from a model reference without
+    # resolving the constant. This keeps route loading safe while Rails is
+    # still setting up autoloaded model namespaces.
+    def self.inferred_scope_name(model: nil, identity: nil)
+      reference = model || identity
+      return nil if reference.nil?
+
+      name = if reference.respond_to?(:name) && reference.name.present?
+        reference.name
+      else
+        reference.to_s
+      end
+      normalized = name.to_s.underscore.tr("/", "_")
+      return nil unless normalized.match?(/\A[a-z][a-z0-9_]*\z/)
+
+      normalized.to_sym
+    end
+
     def initialize(scope_name, account: nil, identity: nil, model: nil,
                    tenant: nil, path: nil, as: nil,
                    associations: {}, oauth_callback_path: nil,
@@ -98,6 +116,12 @@ module Vouch
 
     def account_class
       account_class_name.constantize
+    end
+
+    # Route reloads may recreate an equivalent mapping. A different mapping
+    # under the same scope would otherwise be silently replaced.
+    def equivalent_to?(other)
+      other.is_a?(self.class) && stable_model_configuration == other.send(:stable_model_configuration)
     end
 
     def identity_class
@@ -261,6 +285,10 @@ module Vouch
     end
 
     private
+
+    def stable_model_configuration
+      [account_class_name, identity_class_name, tenant_class_name, split_model?]
+    end
 
     # Feature → required gem mapping. When a feature is enabled but its gem
     # isn't loadable, raise with actionable install instructions.

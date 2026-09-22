@@ -2,14 +2,9 @@
 #
 # Creates scope mappings and generates named routes for each auth scope.
 #
-# All features (block optional):
+# Select features explicitly; the scope name can be inferred from the identity:
 #   Vouch.routes(self) do |auth|
-#     auth.scope :user, account: "Account", identity: "User", tenant: "Organisation"
-#   end
-#
-# Specific features:
-#   Vouch.routes(self) do |auth|
-#     auth.scope :user, account: "Account", identity: "User" do
+#     auth.scope account: "Account", identity: "User" do
 #       auth.sessions
 #       auth.registrations
 #       auth.passwords
@@ -35,9 +30,23 @@ module Vouch
     #
     # With tenant:
     #   auth.scope :user, account: "Account", identity: "User", tenant: "Organisation"
-    def scope(scope_name, **opts, &block)
+    def scope(scope_name = nil, **opts, &block)
+      inferred_scope = scope_name.nil?
+      scope_name ||= Vouch::Mapping.inferred_scope_name(
+        model: opts[:model], identity: opts[:identity]
+      )
+      if inferred_scope && scope_name.nil? && (opts[:model] || opts[:identity])
+        raise Vouch::ConfigurationError, "Could not infer a valid authentication scope from the supplied model or identity."
+      end
       mapping = Vouch::Mapping.new(scope_name, **opts)
       validate_warden_scope_availability!(mapping)
+      existing_mapping = Vouch.mappings[scope_name.to_sym]
+      if inferred_scope && existing_mapping && !existing_mapping.equivalent_to?(mapping)
+        raise Vouch::ConfigurationError, <<~MSG.squish
+          Scope :#{scope_name} is already mapped to a different model configuration.
+          Supply an explicit, distinct scope name for this mapping.
+        MSG
+      end
       previous_current_mapping = @current_mapping
       previous_pending_impersonation_mappings = @pending_impersonation_mappings
       @current_mapping = mapping

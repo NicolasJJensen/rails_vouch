@@ -2,6 +2,23 @@
 
 Mappings connect account, identity, tenant, and feature associations. The baseline examples are in the [README](../README.md); see [OAuth](oauth.md), [controllers](controllers.md), and [warden](warden.md) for related integration.
 
+## Scope names
+
+Omit the first argument to infer an authentication scope from `model:` or, for split models, `identity:`:
+
+```ruby
+Vouch.routes(self) do |auth|
+  auth.scope model: "User" do
+    auth.sessions
+    auth.registrations
+  end
+end
+```
+
+`"User"` or `User` gives `:user`; `"Admin::User"` or `Admin::User` gives `:admin_user`. String references avoid loading model constants just to choose the scope name. Namespaces are preserved, and inferred names that collide with different model mappings raise a configuration error. Use explicit scope names to distinguish such mappings.
+
+A scope identifies its Warden session, default URL prefix, controller directory, and route helper prefix. It is independent of model names: `auth.scope :operator, model: "User"` and `auth.scope :customer, model: "User"` can use the same model with separate sessions. Scope names do not restrict which records can authenticate; supply the corresponding access policy yourself. `path:` and `as:` still override URL and route helper defaults.
+
 ## Explicit associations
 
 Only enabled features undergo concern discovery. Restrict discovery when needed:
