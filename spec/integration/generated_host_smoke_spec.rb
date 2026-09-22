@@ -18,13 +18,25 @@ require "generators/vouch/verifiable/verifiable_generator"
 require "generators/vouch/omniauth/omniauth_generator"
 
 RSpec.describe "generated host smoke test", :generated_host do
-  def readme_primary_account_oauth_association
-    readme = File.read(Rails.root.join("..", "..", "README.md"))
-    account_example = readme.scan(/```ruby\n(.*?)```/m).flatten
-      .find { |block| block.include?("class Account < ApplicationRecord") }
+  def documentation_account_example(path:, containing:)
+    documentation = File.read(Rails.root.join("..", "..", path))
+    account_example = documentation.scan(/```ruby\n(.*?)```/m).flatten
+      .find do |block|
+        block.include?("class Account < ApplicationRecord") && block.include?(containing)
+      end
+    raise "#{path} Account example must be non-empty and include #{containing.inspect}" unless account_example
+
+    account_example
+  end
+
+  def documentation_account_oauth_association
+    account_example = documentation_account_example(
+      path: "docs/oauth.md",
+      containing: "has_many :oauth_identities"
+    )
     association = account_example[/^  has_many :(?:oauth_identities|omni_auth_identities)(?:,.*)?(?:\n    .*)?$/]
 
-    raise "README primary Account example must declare an OAuth identity association" unless association
+    raise "docs/oauth.md Account example must declare an OAuth identity association" unless association
 
     association
   end
@@ -188,7 +200,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         owner_source = File.read(File.join(directory, owner_path))
         write_file(directory, owner_path, owner_source.sub(
           "has_secure_password",
-          "has_secure_password\n\n#{readme_primary_account_oauth_association}"
+          "has_secure_password\n\n#{documentation_account_oauth_association}"
         ))
       end
       omniauth = Vouch::Generators::OmniauthGenerator.new([oauth_owner_name])

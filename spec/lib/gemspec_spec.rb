@@ -13,6 +13,11 @@ RSpec.describe "rails_vouch gem package" do
     expect(files).to include("README.md")
     expect(files).to include("CHANGELOG.md")
     expect(files).to include("docs/credential-adapter-contract.md")
+
+    readme = File.read(File.expand_path("../../README.md", __dir__))
+    guides = readme.scan(/\]\((docs\/[^)#]+\.md)(?:#[^)]*)?\)/).flatten.uniq
+    expect(guides).not_to be_empty
+    expect(files).to include(*guides)
   end
 
   it "excludes the internal review notes" do

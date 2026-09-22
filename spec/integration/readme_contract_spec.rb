@@ -8,14 +8,19 @@ require "tmpdir"
 require "generators/vouch/install/install_generator"
 require "generators/vouch/scope/scope_generator"
 
-RSpec.describe "README executable contracts" do
-  def readme_ruby_block(containing:)
-    blocks = File.read(Rails.root.join("..", "..", "README.md")).scan(/```ruby\n(.*?)```/m).flatten
-    blocks.find { |block| block.include?(containing) }.to_s
+RSpec.describe "documentation executable contracts" do
+  def documentation_ruby_block(path:, containing:)
+    blocks = File.read(Rails.root.join("..", "..", path)).scan(/```ruby\n(.*?)```/m).flatten
+    block = blocks.find { |candidate| candidate.include?(containing) }
+    expect(block).to be_present, "expected a non-empty Ruby example containing #{containing.inspect} in #{path}"
+    block
   end
 
-  it "keeps the primary route sample at the generated baseline" do
-    source = readme_ruby_block(containing: 'auth.scope :user, account: "Account"')
+  it "keeps the split-model route sample at the generated baseline" do
+    source = documentation_ruby_block(
+      path: "README.md",
+      containing: 'auth.scope :user, account: "Account"'
+    )
     expect(source).to include("Vouch.routes(self)")
 
     previous_mapping = Vouch.mappings[:user]
@@ -36,8 +41,12 @@ RSpec.describe "README executable contracts" do
     end
   end
 
-  it "executes the README account MFA example without replacing the persisted preference" do
-    source = readme_ruby_block(containing: "class Account < ApplicationRecord")
+  it "executes the verification and MFA Account example without replacing the persisted preference" do
+    source = documentation_ruby_block(
+      path: "docs/verification-and-mfa.md",
+      containing: "class Account < ApplicationRecord"
+    )
+    expect(source).to include("authenticates_with :two_factorable")
     expect(source).not_to include("def two_factor_enabled?")
     account = create(:account, two_factor_enabled: false)
     credential = account.two_factor_credentials.create!(verified_at: Time.current,
