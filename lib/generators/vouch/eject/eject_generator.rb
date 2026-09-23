@@ -14,27 +14,19 @@ module Vouch
     #   bin/rails g vouch:eject users sessions
     #   bin/rails g vouch:eject admins passwords
     #
-    # `--concrete` is retained as a deprecated compatibility alias for the
-    # normal ejection path. Ejected controllers continue to use the runtime
-    # mapping helpers so they follow the host's configured scope.
-    #
-    #   bin/rails g vouch:eject users omni_auths --concrete
-    #
     class EjectGenerator < Rails::Generators::Base
       argument :scope,           type: :string, banner: "scope"
       argument :controller_name, type: :string, banner: "controller_name"
 
-      class_option :concrete, type: :boolean, default: false,
-                              desc: "Deprecated compatibility alias; retain runtime auth_mapping helpers"
       class_option :auth_scope, type: :string, default: nil,
                                 desc: "Authentication scope for the emitted controller (independent of its namespace)"
 
       CONTROLLERS = {
         "sessions"               => "SessionsController",
+        "membership_sessions"    => "MembershipSessionsController",
         "registrations"          => "RegistrationsController",
         "passwords"              => "PasswordsController",
         "invitations"            => "InvitationsController",
-        "user_selections"        => "UserSelectionsController",
         "two_factor_challenge"   => "TwoFactorChallengeController",
         "two_factor_credentials" => "TwoFactorCredentialsController",
         "omni_auths"             => "OmniAuthsController",
@@ -51,10 +43,6 @@ module Vouch
       end
 
       def copy_controller
-        if options[:concrete]
-          say "--concrete is deprecated and retains Vouch runtime helpers (auth_mapping)."
-        end
-
         body   = rewrite_class_declaration(File.read(source_path))
         body   = add_auth_scope(body) if options[:auth_scope].present?
         target = "app/controllers/#{scope}/#{controller_name}_controller.rb"
@@ -81,7 +69,7 @@ module Vouch
 
       def add_auth_scope(body)
         body.sub(
-          /\A(class .*\n)/,
+          /^(class .*\n)/,
           "\\1  auth_scope #{options[:auth_scope].to_sym.inspect}\n"
         )
       end

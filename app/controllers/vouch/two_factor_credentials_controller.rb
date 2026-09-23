@@ -5,7 +5,8 @@
 # POST   /users/two_factor_credentials          - create method
 # DELETE /users/two_factor_credentials/:id      - remove method
 #
-class Vouch::TwoFactorCredentialsController < Vouch::BaseController
+class Vouch::TwoFactorCredentialsController < ::ApplicationController
+  include Vouch::Authentication
 
   def index
     @credentials = two_factor_credentials_for(current_account)

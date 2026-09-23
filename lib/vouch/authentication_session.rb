@@ -43,7 +43,7 @@ module Vouch
     end
 
     def scoped_keys
-      [key(:return_to), dynamic_key(Vouch.configuration.credential_drafts_session_suffix), key(:invited_user)]
+      [key(:destination_scope), key(:completion), key(:return_to), dynamic_key(Vouch.configuration.credential_drafts_session_suffix), key(:invited_user)]
     end
 
     def rails_session

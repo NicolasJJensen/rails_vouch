@@ -25,7 +25,8 @@ RSpec.describe 'Scope generator integration contracts' do
   it 'emits the association used by a custom account model' do
     generate('members', 'Owner:account', 'Member:identity')
     routes = File.read("#{@directory}/config/routes.rb")
-    expect(routes).to include('identity_account: :owner')
+    expect(routes).to include('auth.scope :owner, model: "Owner"')
+    expect(routes).to include('account_scope: :owner, identity: "Member"')
     expect(File.read("#{@directory}/app/models/member.rb")).to include('belongs_to :owner')
   end
 
@@ -53,7 +54,8 @@ RSpec.describe 'Scope generator integration contracts' do
     SOURCE
     generate('members', 'Owner:account', 'Member:identity')
     source = File.read("#{@directory}/config/routes.rb")
-    expect(source).to match(/auth\.sessions\(path_names:.*\)\n\s+end\n\s+auth\.scope :member/)
+    expect(source).to match(/auth\.sessions\(path_names:.*\)\n\s+end\n\s+auth\.scope :owner/)
+    expect(source).to include('auth.scope :member, account_scope: :owner')
     expect { RubyVM::InstructionSequence.compile(source) }.not_to raise_error
   end
 

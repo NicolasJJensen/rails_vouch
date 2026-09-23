@@ -8,6 +8,7 @@ RSpec.describe 'Controller integration policy' do
   before do
     allow(controller).to receive(:session).and_return(session)
     allow(controller).to receive(:warden).and_return(proxy)
+    allow(proxy).to receive(:logout)
     allow(controller).to receive(:reset_session) { session.clear }
   end
 
@@ -26,6 +27,7 @@ RSpec.describe 'Controller integration policy' do
     controller.send(:reset_session_with_preserved_keys)
     expect(session).to include('cart' => {'items' => [1]})
     expect(session).not_to have_key('discard')
+    expect(proxy).to have_received(:logout).with(:user, :user_account)
   end
 
   it 'session policy restores only explicitly preserved other Warden scopes' do

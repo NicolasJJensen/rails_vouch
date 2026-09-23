@@ -263,6 +263,7 @@ RSpec.describe Vouch::RouteBuilder do
       end
       account = Struct.new(:id, :password_digest).new(1, "x" * 32)
       mapping = double(scope_name: :reload_spec_scope,
+                       membership_scope?: false,
                        identity_class: first_identity,
                        account_for: account)
 

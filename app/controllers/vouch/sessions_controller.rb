@@ -1,10 +1,12 @@
-class Vouch::SessionsController < Vouch::BaseController
+class Vouch::SessionsController < ::ApplicationController
+  include Vouch::Authentication
 
   only_allow_unauthenticated_access only: %i[new create]
 
   def new; end
 
   def create
+    session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
     session.delete(two_factor_session_key)
     session.delete(selection_session_key)
     session.delete(signed_in_via_session_key)
@@ -21,7 +23,7 @@ class Vouch::SessionsController < Vouch::BaseController
 
     case complete_sign_in(account)
     when :signed_in
-      redirect_back_or_default after_sign_in_path
+      redirect_after_authentication
     when :needs_two_factor
       redirect_to two_factor_challenges_path
     when :needs_selection
@@ -36,8 +38,7 @@ class Vouch::SessionsController < Vouch::BaseController
     signed_out = false
     hook_execution = prepare_lifecycle_hooks(:sign_out, current_identity)
     run_lifecycle_operation(hook_execution) do
-      warden.logout(auth_scope_name, account_scope_name, impersonation_scope)
-      session.keys.grep(/\Awarden\.#{Regexp.escape(auth_scope_name.to_s)}\./).each { |key| session.delete(key) }
+      Vouch.logout_scope(warden, session, auth_scope_name)
       signed_out = true
     end
     return head(:forbidden) unless signed_out

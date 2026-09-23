@@ -122,4 +122,38 @@ RSpec.describe Vouch::Generators::RouteEditor do
     expect(described_class.insert_scope(@path, "auth.sessions")).to eq(:unsafe)
     expect(File.read(@path)).to eq(source)
   end
+  it "inserts a feature using the scope block variable without duplicating it" do
+    write(in_wrapper(<<~RUBY))
+      auth.scope :account, model: "Account" do |login|
+        login.sessions
+      end
+    RUBY
+    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:inserted)
+    expect(File.read(@path)).to include("login.passwords")
+    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:duplicate)
+  end
+
+  it "does not mistake a commented feature for a configured route" do
+    write(in_wrapper(<<~RUBY))
+      auth.scope :account, model: "Account" do
+        # auth.passwords
+        auth.sessions
+      end
+    RUBY
+    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:inserted)
+  end
+
+  it "leaves conditional route blocks untouched instead of inserting into a nested branch" do
+    original = in_wrapper(<<~RUBY)
+      auth.scope :account, model: "Account" do
+        if enabled?
+          auth.sessions
+        end
+      end
+    RUBY
+    write(original)
+    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:unsafe)
+    expect(File.read(@path)).to eq(original)
+  end
+
 end

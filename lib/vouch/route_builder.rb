@@ -61,7 +61,7 @@ module Vouch
           raise Vouch::ConfigurationError, <<~MSG.squish
             Scope :#{scope_name} requires a route block. Select the baseline
             routes explicitly, for example: auth.sessions; auth.registrations
-            (and auth.user_selection for split-model scopes), then add optional
+            then add optional
             feature routes after installing their host model support.
           MSG
         end
@@ -70,7 +70,7 @@ module Vouch
         Vouch.register_mapping(scope_name, mapping)
         published = true
         register_warden_scope(mapping)
-        register_account_scope(mapping)
+        register_account_scope(mapping) unless mapping.membership_scope?
         @pending_impersonation_mappings.each { |pending| register_impersonation_scope(pending) }
       rescue StandardError
         if published
@@ -98,10 +98,15 @@ module Vouch
         router.get    sign_in,  to: "#{ctrl}#new",     as: :"new_#{prefix}_session"
         router.post   sign_in,  to: "#{ctrl}#create",   as: :"#{prefix}_session"
         router.delete sign_out, to: "#{ctrl}#destroy",  as: :"#{prefix}_sign_out"
+        if m.split_model? && !m.membership_scope?
+          router.get "select", to: "#{m.path}/membership_sessions#new", as: :"#{prefix}_select"
+          router.post "select", to: "#{m.path}/membership_sessions#create"
+        end
       end
     end
 
     def registrations(path_names: {}, controller: nil)
+      require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.path}/registrations"
       sign_up = path_names[:sign_up] || "sign_up"
@@ -114,6 +119,7 @@ module Vouch
     end
 
     def passwords(controller: nil)
+      require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.path}/passwords"
 
@@ -123,18 +129,8 @@ module Vouch
       end
     end
 
-    def user_selection(path_names: {}, controller: nil)
-      m = @current_mapping
-      ctrl = controller || "#{m.path}/user_selections"
-      select_path = path_names[:select] || "select"
-
-      router.scope m.path, as: m.helper_prefix do
-        router.get  select_path, to: "#{ctrl}#index",  as: :select
-        router.post select_path, to: "#{ctrl}#create"
-      end
-    end
-
     def two_factor(challenge_controller: nil, credentials_controller: nil)
+      require_credentials_scope!
       m = @current_mapping
       challenge_ctrl = challenge_controller || "#{m.path}/two_factor_challenge"
       creds_ctrl     = credentials_controller || "#{m.path}/two_factor_credentials"
@@ -176,6 +172,7 @@ module Vouch
 
     def oauth_callbacks(controller: nil, callback_path: nil, failure_path: nil,
                         callback_methods: nil, failure_methods: nil)
+      require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.path}/omni_auths"
 
@@ -195,6 +192,12 @@ module Vouch
     private
 
     attr_reader :router
+
+    def require_credentials_scope!
+      return unless @current_mapping.membership_scope?
+
+      raise Vouch::ConfigurationError, "Configure credential routes on :#{@current_mapping.parent_scope_name}, not membership scope :#{@current_mapping.scope_name}."
+    end
 
     # Use the same revocation contract for established and pending sessions.
     def register_warden_scope(mapping)
@@ -221,6 +224,10 @@ module Vouch
         next nil unless ActiveSupport::SecurityUtils.secure_compare(
           fingerprint.to_s, current.to_s
         )
+        if mapping.membership_scope?
+          parent = env["warden"]&.user(mapping.parent_scope_name)
+          next nil unless parent && parent.class == account.class && parent.id == account.id
+        end
 
         identity
       end

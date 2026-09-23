@@ -1,6 +1,6 @@
-# Upgrading existing schemas
+# Updating existing schemas
 
-The current release is **0.1.0**, the initial release. The notes here are pre-release and manual-schema migration guidance for applications that already adopted development versions or generated partial schemas; they do not describe a released version-to-version transition. Start with the [README](../README.md), then use the feature guides for the relevant contract.
+These notes apply to applications using development versions or partially generated schemas. They do not describe a published version-to-version upgrade. Start with the [README](../README.md), then use the feature guides for the relevant contract.
 
 ## Authentication proof columns
 
@@ -28,3 +28,9 @@ Outstanding OTP challenges without nonces become invalid. The unified session fi
 ## Compatibility boundaries
 
 Ruby >= 3.2 and Rails >= 8, < 9 are required, with per-version Ruby minimums. PostgreSQL is the tested database. Ordinary scalar primary keys, including UUIDs and renamed keys, are supported; composite keys are outside the contract. Cookie and server-side session storage remain host choices.
+
+## Account-first scopes
+
+Separate the credentials scope from each membership scope using `account_scope:` as shown in [model mapping](model-mapping.md). Existing scope names and session meanings change when migrating a combined mapping; plan for existing users to sign in again. Do not infer current tenant from the account when several memberships exist.
+
+Application pages should inherit an application-defined protected base. Gem endpoints now inherit `ApplicationController` and include `Vouch::Authentication`; remove `parent_controller` and `authentication_callbacks` configuration. Keep authentication requirements out of `ApplicationController`. Single-model scopes expose only their primary current-record helper.

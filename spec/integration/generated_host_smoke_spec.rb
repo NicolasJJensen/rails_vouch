@@ -104,6 +104,9 @@ RSpec.describe "generated host smoke test", :generated_host do
     view_path = namespace.underscore
     owner_table = Vouch::ModelMetadata.new(owner_name).table_name
     route_scope = scope_name.singularize
+    account_scope = variant == :single ? route_scope : Vouch::Mapping.inferred_scope_name(model: owner_name).to_s
+    account_path_name = account_scope.pluralize
+    account_namespace = account_path_name.camelize
 
     begin
       write_file(directory, "config/boot.rb", <<~RUBY)
@@ -141,6 +144,14 @@ RSpec.describe "generated host smoke test", :generated_host do
           config.cache_classes = true
           config.eager_load = false
           config.action_controller.allow_forgery_protection = false
+          config.action_mailer.delivery_method = :test
+          config.action_mailer.default_url_options = { host: "www.example.com" }
+          config.active_job.queue_adapter = :inline
+        end
+      RUBY
+      write_file(directory, "app/mailers/application_mailer.rb", <<~RUBY)
+        class ApplicationMailer < ActionMailer::Base
+          default from: "noreply@example.test"
         end
       RUBY
       write_file(directory, "config/database.yml", <<~YAML)
@@ -169,7 +180,8 @@ RSpec.describe "generated host smoke test", :generated_host do
           before_action :authenticate_#{route_scope}!
 
           def show
-            render plain: current_#{route_scope}_account.email_address
+            identity = request.env.fetch("warden").user(:#{route_scope})
+            render plain: identity.#{variant == :single ? 'email_address' : "#{Vouch::ModelMetadata.new(owner_name).association_key}.email_address"}
           end
         end
       RUBY
@@ -265,7 +277,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         invitations.destination_root = directory
         Dir.chdir(directory) { invitations.invoke_all }
         password_reset = Vouch::Generators::PasswordResetableGenerator.new([owner_name],
-          auth_scope: route_scope, controller_path: path_name)
+          auth_scope: account_scope, controller_path: account_path_name)
         password_reset.destination_root = directory
         Dir.chdir(directory) { password_reset.invoke_all }
         credential_name = "#{owner_name.deconstantize}::TwoFactorCredential"
@@ -323,20 +335,13 @@ RSpec.describe "generated host smoke test", :generated_host do
           end
         RUBY
         two_factor = Vouch::Generators::TwoFactorableGenerator.new([credential_name],
-          auth_scope: route_scope, controller_path: path_name)
+          auth_scope: account_scope, controller_path: account_path_name)
         two_factor.destination_root = directory
         Dir.chdir(directory) { two_factor.invoke_all }
         routes_path = File.join(directory, "config/routes.rb")
         routes = File.read(routes_path)
-        updated_routes = routes.sub(/^([ \t]*)auth\.user_selection\n([ \t]*)end\b/) do
-          "#{Regexp.last_match(1)}auth.passwords\n" \
-            "#{Regexp.last_match(1)}auth.two_factor\n" \
-            "#{Regexp.last_match(1)}auth.user_selection\n" \
-            "#{Regexp.last_match(1)}auth.invitations\n" \
-            "#{Regexp.last_match(2)}end"
-        end
-        raise "generated invitation route was not inserted" if updated_routes == routes
-        write_file(directory, "config/routes.rb", updated_routes)
+        Vouch::Generators::RouteEditor.insert_feature(routes_path, account_scope, "auth.two_factor")
+        Vouch::Generators::RouteEditor.insert_feature(routes_path, route_scope, "auth.invitations")
         impersonation = Vouch::Generators::ImpersonationGenerator.new([path_name], auth_scope: route_scope)
         impersonation.destination_root = directory
         Dir.chdir(directory) { impersonation.invoke_all }
@@ -383,11 +388,11 @@ RSpec.describe "generated host smoke test", :generated_host do
 
           Rails.application.config.after_initialize do
             module #{namespace}; end
-            require_dependency Rails.root.join("app/controllers/#{path_name}/passwords_controller").to_s
+            require_dependency Rails.root.join("app/controllers/#{account_path_name}/passwords_controller").to_s
             require_dependency Rails.root.join("app/controllers/#{path_name}/invitations_controller").to_s
             require_dependency Rails.root.join("app/controllers/#{path_name}/impersonations_controller").to_s
 
-            #{namespace}::PasswordsController.on_password_reset_token_generation do |_account, token|
+            #{account_namespace}::PasswordsController.on_password_reset_token_generation do |_account, token|
               FileUtils.mkdir_p(Rails.root.join("tmp"))
               File.write(Rails.root.join("tmp/password_reset_delivery"), token.to_s)
             end
@@ -406,10 +411,10 @@ RSpec.describe "generated host smoke test", :generated_host do
             end
           end
         RUBY
-        registrations_path = "app/controllers/#{path_name}/registrations_controller.rb"
+        registrations_path = "app/controllers/#{account_path_name}/registrations_controller.rb"
         write_file(directory, registrations_path, <<~RUBY)
-          class #{namespace}::RegistrationsController < Vouch::RegistrationsController
-            auth_scope :#{route_scope}
+          class #{account_path_name.camelize}::RegistrationsController < Vouch::RegistrationsController
+            auth_scope :#{account_scope}
 
             private
 
@@ -421,14 +426,14 @@ RSpec.describe "generated host smoke test", :generated_host do
           end
         RUBY
       end
-      write_file(directory, "app/controllers/#{path_name}/omni_auths_controller.rb", <<~RUBY)
-        class #{namespace}::OmniAuthsController < Vouch::OmniAuthsController
-          auth_scope :#{route_scope}
+      write_file(directory, "app/controllers/#{account_path_name}/omni_auths_controller.rb", <<~RUBY)
+        class #{account_path_name.camelize}::OmniAuthsController < Vouch::OmniAuthsController
+          auth_scope :#{account_scope}
         end
       RUBY
       routes_path = File.join(directory, "config/routes.rb")
       routes = File.read(routes_path)
-      oauth_routes = routes.sub(/^([ \t]*)auth\.(?:registrations|user_selection)\n/) do
+      oauth_routes = routes.sub(/^([ \t]*)auth\.registrations\n/) do
         "#{Regexp.last_match(0)}#{Regexp.last_match(0)[/\A[ \t]*/]}auth.oauth_callbacks\n"
       end
       raise "generated OAuth route was not inserted" if oauth_routes == routes
@@ -468,12 +473,14 @@ RSpec.describe "generated host smoke test", :generated_host do
         OauthIdentity.create!(#{Vouch::ModelMetadata.new(variant == :single ? model_name : owner_name).association_key}: account,
           provider: "generated_provider", uid: "generated-oauth")
         oauth_session = ActionDispatch::Integration::Session.new(Rails.application)
-        oauth_session.get("/#{path_name}/auth/generated_provider/callback", env: {
+        oauth_session.get("/#{account_path_name}/auth/generated_provider/callback", env: {
           "omniauth.auth" => OmniAuth::AuthHash.new(provider: "generated_provider", uid: "generated-oauth", info: {email: account.email_address})
         })
-        abort "OAuth callback status: \#{oauth_session.response.status}" unless oauth_session.response.redirect?
-        oauth_session.get("/")
-        abort "OAuth callback did not retain the signed-in session" unless oauth_session.response.successful? && oauth_session.response.body.include?(account.email_address)
+        abort "OAuth callback status: \#{oauth_session.response.status}; exception=\#{oauth_session.response.request.env['action_dispatch.exception']&.full_message}" unless oauth_session.response.redirect?
+        if #{variant == :single}
+          oauth_session.get("/")
+          abort "OAuth callback did not retain the signed-in session" unless oauth_session.response.successful? && oauth_session.response.body.include?(account.email_address)
+        end
         if #{variant == :single}
           account.define_singleton_method(:deliver_verification_code) { |code| @delivered_code = code }
           proof = account.start_verification!
@@ -482,18 +489,33 @@ RSpec.describe "generated host smoke test", :generated_host do
       abort "installed verification replayed" if account.reload.complete_verification!(code, token: proof.token).ok?
         end
         session = ActionDispatch::Integration::Session.new(Rails.application)
+        unless #{variant == :single}
+          session.get("/#{account_path_name}/sign_in", params: { format: :html })
+          account_login_params = #{variant == :namespaced ? '{ login: account.login, password: "secret123" }' : '{ email_address: account.email_address, password: "secret123" }'}
+          session.post("/#{account_path_name}/sign_in", params: account_login_params)
+          abort "account sign-in did not establish the account session: \#{session.response.status} \#{session.response.body.to_s[0, 300]}" unless session.response.redirect?
+          session.get("/#{path_name}/sign_in", params: { format: :html })
+          if #{model_name}.where(#{Vouch::ModelMetadata.new(owner_name).association_key}: account).count == 1
+            abort "single membership did not auto-select" unless session.response.redirect?
+          else
+            abort "membership selection form status: \#{session.response.status}" unless session.response.successful?
+            identity_id = #{model_name}.where(#{Vouch::ModelMetadata.new(owner_name).association_key}: account).first.id
+            session.post("/#{path_name}/sign_in", params: { identity_id: identity_id })
+            abort "membership selection did not establish the identity session" unless session.response.redirect?
+          end
+        end
         if #{variant == :single}
           session.get("/#{path_name}/sign_in", params: {format: :html})
           abort "sign-in form status: \#{session.response.status}" unless session.response.successful?
           abort "sign-in form did not use the resolver parameter" unless session.response.body.include?('name="email_address"')
 
-          session.get("/#{path_name}/sign_up", params: {format: :html})
+          session.get("/#{account_path_name}/sign_up", params: {format: :html})
           abort "registration form status: \#{session.response.status}" unless session.response.successful?
           registration_param_key = #{model_name}.model_name.param_key
           expected_email_input = 'name="' + registration_param_key + '[email_address]"'
           abort "registration form did not use the account parameter key" unless session.response.body.include?(expected_email_input)
 
-          session.post("/#{path_name}/sign_up", params: {
+          session.post("/#{account_path_name}/sign_up", params: {
             registration_param_key => {
               email_address: "registered@example.test",
               password: "secret123",
@@ -504,16 +526,17 @@ RSpec.describe "generated host smoke test", :generated_host do
           session = ActionDispatch::Integration::Session.new(Rails.application)
         end
         if #{variant == :namespaced}
-          session.get("/#{path_name}/sign_in", params: { format: :html })
+          session = ActionDispatch::Integration::Session.new(Rails.application)
+          session.get("/#{account_path_name}/sign_in", params: { format: :html })
           unless session.response.successful?
             exception = session.response.request.env['action_dispatch.exception']
             abort "sign-in form status: \#{session.response.status}; location=\#{session.response.headers['Location'].inspect}; exception=\#{exception&.class}: \#{exception&.message}; body=\#{session.response.body.to_s[0, 500].inspect}"
           end
-          session.get("/#{path_name}/sign_up", params: { format: :html })
+          session.get("/#{account_path_name}/sign_up", params: { format: :html })
           abort "registration form status: \#{session.response.status}" unless session.response.successful?
         end
         if #{variant == :namespaced}
-          session.post("/#{path_name}/sign_up", params: { #{owner_name}.model_name.param_key => { login: " Registered-Login ", password: "secret123", password_confirmation: "secret123" } })
+          session.post("/#{account_path_name}/sign_up", params: { #{owner_name}.model_name.param_key => { login: " Registered-Login ", password: "secret123", password_confirmation: "secret123" } })
           unless session.response.redirect?
             exception = session.response.request.env['action_dispatch.exception']
             abort "custom registration status: \#{session.response.status}; content_type=\#{session.response.media_type.inspect}; body=\#{session.response.body.to_s[0, 1000].inspect}; exception=\#{exception&.class}: \#{exception&.message}; backtrace=\#{exception&.backtrace&.first(10).inspect}"
@@ -521,13 +544,13 @@ RSpec.describe "generated host smoke test", :generated_host do
           registered = #{owner_name}.find_by(login: "registered-login")
           abort "custom registration did not persist login" unless registered
           password_session = ActionDispatch::Integration::Session.new(Rails.application)
-          password_session.get("/#{path_name}/password/new", params: { format: :html })
+          password_session.get("/#{account_path_name}/password/new", params: { format: :html })
           unless password_session.response.successful?
             exception = password_session.response.request.env["action_dispatch.exception"]
             abort "password reset form status: \#{password_session.response.status}; location=\#{password_session.response.headers['Location'].inspect}; exception=\#{exception&.class}: \#{exception&.message}; body=\#{password_session.response.body.to_s[0, 500].inspect}"
           end
           abort "password reset form did not use the resolver parameter" unless password_session.response.body.include?('name="email_address"')
-          password_session.post("/#{path_name}/password", params: { email_address: account.email_address })
+          password_session.post("/#{account_path_name}/password", params: { email_address: account.email_address })
           unless password_session.response.redirect?
             request = password_session.response.request
             exception = request.env["action_dispatch.exception"]
@@ -536,14 +559,17 @@ RSpec.describe "generated host smoke test", :generated_host do
           abort "password reset request did not persist delivery token" unless account.reload.password_reset_token_digest.present?
           delivered_reset_token = File.read(Rails.root.join("tmp/password_reset_delivery")) if File.exist?(Rails.root.join("tmp/password_reset_delivery"))
           abort "password reset delivery hook did not run" unless delivered_reset_token&.length.to_i >= 20
+          delivered_mail = ActionMailer::Base.deliveries.last
+          abort "generated password reset email did not contain its reset URL" unless delivered_mail&.body&.decoded&.include?("/password/edit?token=")
           # Registration signs its browser session in. Start the seed-account
           # sign-in flow in a fresh browser session to avoid redirecting the
           # already-authenticated registered account.
           session = ActionDispatch::Integration::Session.new(Rails.application)
         end
         if #{variant == :tenant}
-          session.get("/#{path_name}/sign_up", params: {format: :html})
-          abort "tenant registration form status: \#{session.response.status}" unless session.response.successful?
+          session = ActionDispatch::Integration::Session.new(Rails.application)
+          session.get("/#{account_path_name}/sign_up", params: {format: :html})
+          abort "tenant registration form status: \#{session.response.status} location=\#{session.response.headers['Location'].inspect}" unless session.response.successful?
           registration_form = session.response.body[/<form\\b.*?<\\/form>/m]
           abort "tenant registration form was not rendered" unless registration_form
           registration_action = registration_form[/\\baction=\"([^\"]+)\"/, 1]
@@ -577,6 +603,7 @@ RSpec.describe "generated host smoke test", :generated_host do
             generated_mapping.identity_tenant_association.name => registered_tenant
           )
           abort "tenant registration did not persist the account, tenant, and identity links" unless registered_account && registered_tenant && registered_identity
+          session.get("/#{path_name}/sign_in", params: { format: :html })
           signed_identity = session.response.request.env.fetch("warden").user(:#{route_scope})
           abort "tenant registration did not authenticate the generated identity" unless signed_identity&.id == registered_identity.id
           session = ActionDispatch::Integration::Session.new(Rails.application)
@@ -592,16 +619,8 @@ RSpec.describe "generated host smoke test", :generated_host do
           sign_in_method = sign_in_form[/\\bmethod="([^"]+)"/, 1]
           sign_in_fields = sign_in_form.scan(/<input\\b[^>]*\\bname="([^"]+)"/).flatten
           abort "generated sign-in form did not expose its route" unless sign_in_action && sign_in_method
-          abort "generated sign-in form fields changed" unless sign_in_fields.include?("email_address") && sign_in_fields.include?("password")
+          abort "generated sign-in form fields changed" unless sign_in_fields.include?("identity_id")
 
-          session.public_send(sign_in_method, sign_in_action, params: {
-            email_address: account.email_address,
-            password: "secret123"
-          })
-          abort "generated sign-in form submission status: \#{session.response.status}" unless session.response.redirect?
-
-          session.get("/#{path_name}/select", params: { format: :html })
-          abort "generated identity-selection form status: \#{session.response.status}" unless session.response.successful?
           selection_form = session.response.body[/<form\\b.*?<\\/form>/m]
           abort "generated identity-selection form was not rendered" unless selection_form
           selection_action = selection_form[/\\baction="([^"]+)"/, 1]
@@ -615,14 +634,18 @@ RSpec.describe "generated host smoke test", :generated_host do
           selected_identity = session.response.request.env.fetch("warden").user(:#{route_scope})
           abort "generated identity-selection form did not authenticate the selected identity" unless selected_identity&.id == second_identity.id
           session.get("/")
-          abort "selected identity dashboard status: \#{session.response.status}" unless session.response.successful?
+          abort "selected identity dashboard status: \#{session.response.status} body=\#{session.response.body.to_s[0, 500]} exception=\#{session.response.request.env['action_dispatch.exception']&.full_message}" unless session.response.successful?
           abort "selected identity session was not retained" unless session.response.body.include?(account.email_address)
           restored_identity = session.response.request.env.fetch("warden").user(:#{route_scope})
           abort "selected identity was not restored from the session" unless restored_identity&.id == second_identity.id
         end
         unless #{variant == :custom}
-          session.post("/#{path_name}/sign_in", params: { #{variant == :namespaced ? 'login: account.login' : 'email_address: account.email_address'}, password: "secret123" })
+          session.post("/#{variant == :single ? path_name : account_path_name}/sign_in", params: { #{variant == :namespaced ? 'login: account.login' : 'email_address: account.email_address'}, password: "secret123" })
           abort "login status: \#{session.response.status}" unless session.response.redirect?
+          if #{variant != :single}
+            session.get("/#{path_name}/sign_in", params: { format: :html })
+            abort "membership login status: \#{session.response.status}" unless session.response.redirect?
+          end
           session.get("/")
           abort "dashboard status: \#{session.response.status}" unless session.response.successful?
           abort "cookie session was not retained" unless session.response.body.include?(account.email_address)
@@ -641,14 +664,14 @@ RSpec.describe "generated host smoke test", :generated_host do
         end
         if #{variant == :namespaced}
           raw_reset_token = account.generate_password_reset_token!.value
-          password_session.get("/#{path_name}/password/edit", params: { token: raw_reset_token, format: :html })
+          password_session.get("/#{account_path_name}/password/edit", params: { token: raw_reset_token, format: :html })
           abort "password reset edit status: \#{password_session.response.status}; location=\#{password_session.response.headers['Location'].inspect}; body=\#{password_session.response.body.to_s[0, 500].inspect}" unless password_session.response.successful?
           abort "password reset edit form did not nest account parameters" unless password_session.response.body.include?('name="#{Vouch::ModelMetadata.new(owner_name).param_key}[password]"')
           reset_params = { #{owner_name}.model_name.param_key => { password: "replacement123", password_confirmation: "replacement123" } }
           invalid_reset_params = { #{owner_name}.model_name.param_key => { password: "short", password_confirmation: "mismatch" } }
-          password_session.patch("/#{path_name}/password", params: invalid_reset_params.merge(token: raw_reset_token))
+          password_session.patch("/#{account_path_name}/password", params: invalid_reset_params.merge(token: raw_reset_token))
           abort "invalid password reset status: \#{password_session.response.status}" unless password_session.response.status == 422
-          password_session.patch("/#{path_name}/password", params: reset_params.merge(token: raw_reset_token))
+          password_session.patch("/#{account_path_name}/password", params: reset_params.merge(token: raw_reset_token))
           unless password_session.response.redirect?
             exception = password_session.response.request.env['action_dispatch.exception']
             abort "password reset update status: \#{password_session.response.status}; body=\#{password_session.response.body.to_s[0, 1000].inspect}; exception=\#{exception&.class}: \#{exception&.message}; backtrace=\#{exception&.backtrace&.first(10).inspect}"
@@ -660,20 +683,21 @@ RSpec.describe "generated host smoke test", :generated_host do
           credential.enable_two_factor!
           reset_account.enable_two_factor!
           reset_login_session = ActionDispatch::Integration::Session.new(Rails.application)
-          reset_login_session.post("/#{path_name}/sign_in", params: { login: account.login, password: "replacement123" })
+          reset_login_session.post("/#{account_path_name}/sign_in", params: { login: account.login, password: "replacement123" })
           abort "password reset login status: \#{reset_login_session.response.status}" unless reset_login_session.response.redirect?
-          reset_login_session.get("/#{path_name}/two_factor_challenges", params: { format: :html })
+          reset_login_session.get("/#{account_path_name}/two_factor_challenges", params: { format: :html })
           abort "two-factor chooser status: \#{reset_login_session.response.status}" unless reset_login_session.response.successful?
           credential_param = "#{owner_name.deconstantize.underscore.gsub('/', '_')}_two_factor_credential-\#{credential.id}"
           abort "two-factor chooser did not use a typed credential ID" unless reset_login_session.response.body.include?(credential_param)
-          reset_login_session.get("/#{path_name}/two_factor_challenges/\#{credential_param}", params: { format: :html })
+          reset_login_session.get("/#{account_path_name}/two_factor_challenges/\#{credential_param}", params: { format: :html })
           abort "two-factor challenge form status: \#{reset_login_session.response.status}" unless reset_login_session.response.successful?
           delivered_code = File.read(Rails.root.join("tmp/two_factor_delivery"))
-          reset_login_session.patch("/#{path_name}/two_factor_challenges/\#{credential_param}", params: { code: delivered_code })
+          reset_login_session.patch("/#{account_path_name}/two_factor_challenges/\#{credential_param}", params: { code: delivered_code })
           unless reset_login_session.response.redirect?
             exception = reset_login_session.response.request.env["action_dispatch.exception"]
             abort "two-factor challenge submission status: \#{reset_login_session.response.status}; exception=\#{exception&.class}: \#{exception&.message}; body=\#{reset_login_session.response.body.to_s[0, 500].inspect}"
           end
+          reset_login_session.get("/#{path_name}/sign_in")
           reset_login_session.get("/")
           abort "two-factor completion did not retain the signed-in session" unless reset_login_session.response.successful?
           abort "custom identifier was not normalized" unless account.reload.login == "generated-login"

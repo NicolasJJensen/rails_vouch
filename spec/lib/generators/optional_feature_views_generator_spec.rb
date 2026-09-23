@@ -48,6 +48,39 @@ RSpec.describe "optional feature view generators" do
     expect(Dir[File.join(directory, "db/migrate/*.rb")]).to be_empty
   end
 
+  it "wires password reset authentication, delivery, and account routes idempotently" do
+    directory = Dir.mktmpdir("vouch-password-reset")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    FileUtils.mkdir_p(File.join(directory, "config"))
+    File.write(File.join(directory, "app/models/account.rb"), "class Account < ApplicationRecord\n  include Vouch::Authenticatable\nend\n")
+    File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope :account, model: "Account" do
+            auth.sessions
+            auth.registrations
+          end
+        end
+      end
+    RUBY
+
+    2.times do
+      generator = Vouch::Generators::PasswordResetableGenerator.new(
+        ["Account"], auth_scope: "account", controller_path: "accounts"
+      )
+      generator.destination_root = directory
+      Dir.chdir(directory) { generator.invoke_all }
+    end
+
+    model = File.read(File.join(directory, "app/models/account.rb"))
+    routes = File.read(File.join(directory, "config/routes.rb"))
+    expect(model.scan("authenticates_with :password_resetable").length).to eq(1)
+    expect(model).to include("AccountPasswordResetMailer.reset")
+    expect(routes.scan("auth.passwords").length).to eq(1)
+    expect(File).to exist(File.join(directory, "app/mailers/account_password_reset_mailer.rb"))
+  end
+
   it "generates only challenge UI for MFA with an explicit authentication scope" do
     directory = generate(Vouch::Generators::TwoFactorableGenerator, ["Totp"],
       auth_scope: "user", controller_path: "users")

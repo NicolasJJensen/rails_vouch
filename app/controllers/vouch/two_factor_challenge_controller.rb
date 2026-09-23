@@ -1,4 +1,5 @@
-class Vouch::TwoFactorChallengeController < Vouch::BaseController
+class Vouch::TwoFactorChallengeController < ::ApplicationController
+  include Vouch::Authentication
 
   allow_unauthenticated_access
   before_action :find_pending_account
@@ -35,7 +36,7 @@ class Vouch::TwoFactorChallengeController < Vouch::BaseController
       case complete_sign_in(@account, context: session[two_factor_session_key], credential: @credential)
       when :signed_in
         session.delete(two_factor_session_key)
-        redirect_back_or_default after_sign_in_path
+        redirect_after_authentication
       when :needs_selection
         session.delete(two_factor_session_key)
         redirect_to select_path

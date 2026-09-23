@@ -12,7 +12,7 @@ module Vouch
     # The including example group supplies `credential_adapter`. This keeps
     # provider-specific issuance and clock control in the host test suite.
     module CredentialAdapterContract
-      SHARED_EXAMPLE_NAME = "an Vouch credential adapter"
+      SHARED_EXAMPLE_NAME = "a Vouch credential adapter"
 
       def self.install!(rspec = Object.const_get(:RSpec))
         return if @installed_for.equal?(rspec)

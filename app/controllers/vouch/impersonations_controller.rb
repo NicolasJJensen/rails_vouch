@@ -1,4 +1,5 @@
-class Vouch::ImpersonationsController < Vouch::BaseController
+class Vouch::ImpersonationsController < ::ApplicationController
+  include Vouch::Authentication
   before_action :authorize_impersonation!, only: :create
 
   def create
@@ -9,8 +10,13 @@ class Vouch::ImpersonationsController < Vouch::BaseController
     hook_execution = prepare_lifecycle_hooks(:impersonation_start, current_identity, target)
     run_lifecycle_operation(hook_execution) do
       reset_session_with_preserved_keys
+      clear_linked_authentication_scopes if auth_mapping.membership_scope?
       warden.set_user(original, scope: impersonation_scope, store: true)
       session[impersonation_return_to_session_key] = return_path
+      if auth_mapping.membership_scope?
+        target_account = auth_mapping.account_for(target)
+        warden.set_user(target_account, scope: auth_mapping.parent_scope_name, store: true)
+      end
       warden.set_user(target, scope: auth_scope_name, store: true)
       changed = true
     end
@@ -28,7 +34,11 @@ class Vouch::ImpersonationsController < Vouch::BaseController
     hook_execution = prepare_lifecycle_hooks(:impersonation_end, current_identity, original)
     run_lifecycle_operation(hook_execution) do
       reset_session_with_preserved_keys
+      clear_linked_authentication_scopes if auth_mapping.membership_scope?
       warden.logout(impersonation_scope)
+      if auth_mapping.membership_scope?
+        warden.set_user(auth_mapping.account_for(original), scope: auth_mapping.parent_scope_name, store: true)
+      end
       warden.set_user(original, scope: auth_scope_name, store: true)
       changed = true
     end
@@ -52,5 +62,9 @@ class Vouch::ImpersonationsController < Vouch::BaseController
     safe_local_path(uri.path) if uri.host.nil? || uri.host == request.host
   rescue URI::InvalidURIError
     nil
+  end
+
+  def clear_linked_authentication_scopes
+    Vouch.logout_scope(warden, session, auth_mapping.parent_scope_name)
   end
 end

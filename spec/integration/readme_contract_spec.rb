@@ -19,25 +19,35 @@ RSpec.describe "documentation executable contracts" do
   it "keeps the split-model route sample at the generated baseline" do
     source = documentation_ruby_block(
       path: "README.md",
-      containing: 'auth.scope account: "Account"'
+      containing: 'auth.scope :account, model: "Account"'
     )
     expect(source).to include("Vouch.routes(self)")
 
-    previous_mapping = Vouch.mappings[:user]
+    previous_mappings = Vouch.mappings.dup
+    serializers = Warden::SessionSerializer.instance_methods(false).to_h do |name|
+      [name, Warden::SessionSerializer.instance_method(name)]
+    end
     routes = ActionDispatch::Routing::RouteSet.new
     routes.draw { eval(source, binding, "README.md") } # rubocop:disable Security/Eval
 
     helpers = routes.url_helpers
     expect(helpers).to respond_to(:new_user_session_path)
-    expect(helpers).to respond_to(:new_user_registration_path)
-    expect(helpers).to respond_to(:user_select_path)
+    expect(helpers).to respond_to(:new_account_registration_path)
+    expect(helpers).to respond_to(:new_account_session_path)
+    expect(helpers).not_to respond_to(:user_select_path)
     expect(helpers).not_to respond_to(:new_user_password_path)
     expect(helpers).not_to respond_to(:new_user_two_factor_credential_path)
   ensure
-    if defined?(previous_mapping) && previous_mapping
-      Vouch.mappings[:user] = previous_mapping
-    else
-      Vouch.deregister_mapping(:user) if defined?(Vouch)
+    if defined?(previous_mappings) && previous_mappings
+      Vouch.mappings.replace(previous_mappings)
+      Vouch::ApplicationHelpers.refresh!
+      Vouch.configured_warden_configs.each { |config| Vouch.configure_warden(config) }
+    end
+    if serializers
+      (Warden::SessionSerializer.instance_methods(false) - serializers.keys).each do |name|
+        Warden::SessionSerializer.send(:remove_method, name)
+      end
+      serializers.each { |name, method| Warden::SessionSerializer.send(:define_method, name, method) }
     end
   end
 

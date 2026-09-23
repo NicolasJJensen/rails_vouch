@@ -34,7 +34,6 @@ module Vouch
 
     # Warden middleware knobs — read by the engine when registering the manager.
     attr_accessor :warden_default_strategies, :warden_failure_app,
-                  :parent_controller, :authentication_callbacks,
                   :pending_authentication_ttl, :preserved_session_keys,
                   :preserved_auth_scopes, :oauth_mfa_providers,
                   :authentication_policy, :install_middleware
@@ -53,8 +52,6 @@ module Vouch
       @warden_default_strategies = [:password]
       @warden_failure_app        = "Vouch::FailureApp"
 
-      @parent_controller          = "ApplicationController"
-      @authentication_callbacks    = []
       @pending_authentication_ttl  = 10.minutes
       @preserved_session_keys      = []
       @preserved_auth_scopes       = []

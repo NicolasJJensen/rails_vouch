@@ -19,7 +19,7 @@ example:
 RSpec.describe AuthenticatorCredential do
   let(:credential_adapter) { AuthenticatorCredentialTestAdapter.new(self) }
 
-  it_behaves_like "an Vouch credential adapter"
+  it_behaves_like "a Vouch credential adapter"
 end
 ```
 

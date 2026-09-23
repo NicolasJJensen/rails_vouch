@@ -2,7 +2,7 @@
 
 require "rails_helper"
 
-RSpec.describe "Users::UserSelections", type: :request do
+RSpec.describe "Users::MembershipSessions", type: :request do
   let(:organisation1) { create(:organisation) }
   let(:organisation2) { create(:organisation) }
   let(:account) do
@@ -42,15 +42,15 @@ RSpec.describe "Users::UserSelections", type: :request do
 
   def invalidate_selection_after_guard(account)
     callback = :invalidate_selection_after_guard
-    Users::UserSelectionsController.define_method(callback) do
+    Users::MembershipSessionsController.define_method(callback) do
       Account.find(account.id).update!(password: "rotated-password")
     end
-    Users::UserSelectionsController.append_before_action callback
+    Users::MembershipSessionsController.append_before_action callback
     yield
   ensure
-    Users::UserSelectionsController.skip_before_action callback, raise: false
-    Users::UserSelectionsController.send(:remove_method, callback) if
-      Users::UserSelectionsController.method_defined?(callback)
+    Users::MembershipSessionsController.skip_before_action callback, raise: false
+    Users::MembershipSessionsController.send(:remove_method, callback) if
+      Users::MembershipSessionsController.method_defined?(callback)
   end
 
   describe "GET /users/select" do

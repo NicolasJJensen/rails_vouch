@@ -1,4 +1,5 @@
-class Vouch::PasswordsController < Vouch::BaseController
+class Vouch::PasswordsController < ::ApplicationController
+  include Vouch::Authentication
 
   only_allow_unauthenticated_access
 

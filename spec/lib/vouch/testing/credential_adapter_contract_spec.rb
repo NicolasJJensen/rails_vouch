@@ -86,12 +86,12 @@ RSpec.describe Vouch::Testing::CredentialAdapterContract do
   context "with the bundled courier OTP protocol" do
     let(:credential_adapter) { ContractAdapter.new(self, protocol: :otp) }
 
-    it_behaves_like "an Vouch credential adapter"
+    it_behaves_like "a Vouch credential adapter"
   end
 
   context "with the dummy host TOTP protocol" do
     let(:credential_adapter) { ContractAdapter.new(self, protocol: :totp) }
 
-    it_behaves_like "an Vouch credential adapter"
+    it_behaves_like "a Vouch credential adapter"
   end
 end

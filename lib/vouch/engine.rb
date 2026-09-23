@@ -2,16 +2,18 @@
 #
 # Mounts Warden middleware and optionally configures OmniAuth providers.
 # The engine adds app/controllers/ to the autoload paths so the gem's
-# two-layer controllers (base + thin defaults) are available to the host app.
+# authentication endpoint controllers are available to the host app.
 #
 module Vouch
   class Engine < Rails::Engine
     initializer "vouch.application_helpers" do
       ActiveSupport.on_load(:action_controller_base) do
         include Vouch::ApplicationHelpers
+        include Vouch::Redirects
       end
       ActiveSupport.on_load(:action_controller_api) do
         include Vouch::ApplicationHelpers
+        include Vouch::Redirects
       end
     end
 

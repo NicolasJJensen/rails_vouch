@@ -58,9 +58,38 @@ module Vouch
       [scope, :"#{scope}_account", :"#{scope}_impersonation"]
     end
 
-    # Returns the single registered scope name, or nil when zero or more
-    # than one scope is registered. Used by controller_helpers for path-
-    # inference fallback.
+    def dependent_mappings(scope)
+      each_mapping.select { |mapping| mapping.parent_scope_name == scope.to_sym }
+    end
+
+    def authenticated_identity(warden, scope)
+      mapping = mapping_for(scope)
+      identity = warden.user(scope)
+      return identity unless identity && mapping.membership_scope?
+
+      account = warden.user(mapping.parent_scope_name)
+      owner = mapping.account_for(identity)
+      return identity if account && owner && account.class == owner.class && account.id == owner.id
+
+      nil
+    end
+
+    def logout_scope(warden, session, scope)
+      mapping = mapping_for(scope)
+      if mapping.membership_scope? && warden.user(:"#{scope}_impersonation")
+        scope = mapping.parent_scope_name
+      end
+      scopes = [scope.to_sym] + dependent_mappings(scope).map(&:scope_name)
+      scopes.each do |name|
+        mapping = mapping_for(name)
+        owned = [name, :"#{name}_impersonation"]
+        owned << mapping.account_scope_name unless mapping.membership_scope?
+        warden.logout(*owned)
+        session.keys.grep(/\Awarden\.#{Regexp.escape(name.to_s)}\./).each { |key| session.delete(key) }
+      end
+    end
+
+    # Controller namespace inference may fall back only when there is one mapping.
     def single_registered_scope
       return nil unless mappings.size == 1
       mappings.keys.first
@@ -68,6 +97,7 @@ module Vouch
 
     # Internal — RouteBuilder calls this to register a scope mapping.
     def register_mapping(scope, mapping)
+      ApplicationHelpers.validate_mapping!(mapping)
       mappings[scope.to_sym] = mapping
       configured_warden_configs.each { |config| configure_warden_scope(config, mapping) }
       ApplicationHelpers.define_scope(scope)
@@ -76,6 +106,7 @@ module Vouch
     # Internal — used by tests. Removes a scope mapping.
     def deregister_mapping(scope)
       mappings.delete(scope.to_sym)
+      ApplicationHelpers.refresh!
     end
 
     # The raw mapping registry. Exposed primarily for test setup/teardown.
@@ -123,7 +154,7 @@ module Vouch
     def configure_warden_scope(warden_config, mapping)
       warden_config.scope_defaults(
         mapping.scope_name,
-        strategies: configuration.warden_default_strategies
+        strategies: mapping.membership_scope? ? [] : configuration.warden_default_strategies
       )
     end
 
@@ -139,7 +170,9 @@ module Vouch
       impersonation: "impersonation_return_to",
       signed_in_via: "signed_in_via",
       selection: "selection",
-      oauth_registration: "oauth_registration"
+      oauth_registration: "oauth_registration",
+      destination_scope: "destination_scope",
+      completion: "completion"
     }.freeze
 
     def self.key_for(scope, purpose)

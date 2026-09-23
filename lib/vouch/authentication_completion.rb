@@ -7,6 +7,9 @@ module Vouch
     def complete_sign_in(account, hook: :sign_in, method: :password, context: nil,
                          credential: nil, refresh_oauth: false, signed_in_via: nil,
                          **hook_opts, &block)
+      if method == :registration
+        session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
+      end
       context ||= build_pending_authentication_context(account, hook, method, refresh_oauth, hook_opts)
       account.reload
       return :denied unless Vouch::PendingAuthentication.valid?(context, account)

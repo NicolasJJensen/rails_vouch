@@ -1,5 +1,7 @@
 # Authentication integration fixes
 
+> Historical engineering record. For the current API and setup, start with the [README](../README.md).
+
 This records the implementation following the 7 September 2026 review. New regressions reproduced the gem defects before their fixes.
 
 ## Fixes and regression coverage
@@ -44,3 +46,5 @@ Run the complete suite with:
 ```sh
 bundle exec rspec
 ```
+
+Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](model-mapping.md).

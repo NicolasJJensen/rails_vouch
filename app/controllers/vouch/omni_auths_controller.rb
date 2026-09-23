@@ -1,4 +1,5 @@
-class Vouch::OmniAuthsController < Vouch::BaseController
+class Vouch::OmniAuthsController < ::ApplicationController
+  include Vouch::Authentication
   allow_unauthenticated_access
 
   def callback
@@ -33,10 +34,11 @@ class Vouch::OmniAuthsController < Vouch::BaseController
   end
 
   def finish_oauth(account, refresh_oauth: false, lifecycle_execution: nil, lifecycle_completed: false)
+    session[Vouch::Session.key_for(auth_scope_name, :completion)] = lifecycle_completed ? "sign_up" : "sign_in"
     outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth, auth_hash: @auth_hash, refresh_oauth: refresh_oauth)
     finish_lifecycle_hooks(lifecycle_execution, completed: lifecycle_completed) if lifecycle_execution
     case outcome
-    when :signed_in then redirect_back_or_default after_sign_in_path
+    when :signed_in then redirect_after_authentication
     when :needs_two_factor then redirect_to two_factor_challenges_path
     when :needs_selection then redirect_to select_path
     else failure

@@ -62,11 +62,22 @@ module Vouch
       normalized.to_sym
     end
 
-    def initialize(scope_name, account: nil, identity: nil, model: nil,
+    def initialize(scope_name, account: nil, identity: nil, model: nil, account_scope: nil,
                    tenant: nil, path: nil, as: nil,
                    associations: {}, oauth_callback_path: nil,
                    oauth_failure_path: nil, oauth_callback_methods: nil,
                    oauth_failure_methods: nil)
+      @parent_scope_name = account_scope&.to_sym
+      if @parent_scope_name
+        if account || model || !identity
+          raise ConfigurationError, "account_scope: requires identity: and cannot be combined with account: or model:."
+        end
+        parent = Vouch.mapping_for(@parent_scope_name)
+        if parent.split_model?
+          raise ConfigurationError, "An account_scope must reference a single-model credentials scope."
+        end
+        account = parent.account_class_name
+      end
       if model && (account || identity || tenant)
         conflicting = []
         conflicting << "account:" if account
@@ -154,11 +165,18 @@ module Vouch
       @split_model
     end
 
-    # Warden scope name for the mid-flow account tier. Set after password
-    # verification (and 2FA, if enabled), cleared once an identity is bound
-    # to the primary scope. Mirrors the impersonation scope pattern.
+    attr_reader :parent_scope_name
+
+    def membership_scope?
+      !parent_scope_name.nil?
+    end
+
     def account_scope_name
-      :"#{scope_name}_account"
+      parent_scope_name || :"#{scope_name}_account"
+    end
+
+    def current_helper_name
+      membership_scope? ? :"current_#{parent_scope_name}_#{scope_name}" : :"current_#{scope_name}"
     end
 
     def tenant?
@@ -287,7 +305,7 @@ module Vouch
     private
 
     def stable_model_configuration
-      [account_class_name, identity_class_name, tenant_class_name, split_model?]
+      [account_class_name, identity_class_name, tenant_class_name, split_model?, parent_scope_name]
     end
 
     # Feature → required gem mapping. When a feature is enabled but its gem

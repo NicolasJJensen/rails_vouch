@@ -215,15 +215,36 @@ module Vouch
     end
 
     def after_sign_in_path
-      root_path
+      after_sign_in_path_for(current_identity, scope: auth_scope_name)
     end
 
     def after_sign_out_path
-      new_session_path
+      after_sign_out_path_for(scope: auth_scope_name)
     end
 
     def after_sign_up_path
-      root_path
+      after_sign_up_path_for(current_identity, scope: auth_scope_name)
+    end
+
+    def redirect_after_authentication(**options)
+      target = session.delete(Vouch::Session.key_for(auth_scope_name, :destination_scope))
+      if target && Vouch.registered_scope?(target)
+        mapping = Vouch.mapping_for(target)
+        if mapping.parent_scope_name == auth_scope_name
+          completion = session.delete(Vouch::Session.key_for(auth_scope_name, :completion))
+          session[Vouch::Session.key_for(mapping.scope_name, :completion)] = completion if completion
+          destination = session.delete(return_to_session_key)
+          session[Vouch::Session.key_for(mapping.scope_name, :return_to)] ||= destination if destination
+          return redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path"), **options
+        end
+      end
+      completion = session.delete(Vouch::Session.key_for(auth_scope_name, :completion))
+      if completion == "sign_up"
+        session.delete(return_to_session_key)
+        redirect_to after_sign_up_path, **options
+      else
+        redirect_back_or_default after_sign_in_path, **options
+      end
     end
 
     def failed_login_message
@@ -297,11 +318,15 @@ module Vouch
     end
 
     def current_identity
-      warden.user(auth_scope_name)
+      Vouch.authenticated_identity(warden, auth_scope_name)
     end
 
     def current_account
-      pending_select_account || (current_identity && auth_mapping.account_for(current_identity))
+      if auth_mapping.membership_scope?
+        warden.user(auth_mapping.parent_scope_name)
+      else
+        pending_select_account || (current_identity && auth_mapping.account_for(current_identity))
+      end
     end
 
     def pending_select_account

@@ -11,7 +11,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
   end
 
   before do
-    @original_hooks = [Users::OmniAuthsController, Users::UserSelectionsController,
+    @original_hooks = [Users::OmniAuthsController, Users::MembershipSessionsController,
       Users::TwoFactorChallengeController].to_h { |klass| [klass, klass.__hooks] }
     allow_any_instance_of(Account).to receive(:oauth_attributes_for_update) do |_account, auth|
       {email_address: auth.info.email}
@@ -113,7 +113,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
 
   it "does not refresh the profile when a selection hook aborts" do
     create(:user, account: account)
-    Users::UserSelectionsController.before_oauth_sign_in { throw :abort }
+    Users::MembershipSessionsController.before_oauth_sign_in { throw :abort }
     callback
     expect(response).to redirect_to("/users/select")
     post "/users/select", params: {identity_id: identity.id}

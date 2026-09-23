@@ -2,6 +2,12 @@
 
 Authentication session behavior is part of the integration contract. This guide extends the [README](../README.md); see [authentication policy](authentication-policy.md) and [persistence](persistence.md) for related boundaries.
 
+## Account and membership sessions
+
+An account scope owns credential authentication and required MFA. Linked membership scopes select identities under that account. Membership rotation preserves its parent account and sibling membership sessions. Account sign-out clears all dependent memberships; membership sign-out normally clears only that membership. Ending a membership during impersonation clears the parent as well, so no untracked target account remains authenticated.
+
+A direct account login uses its account redirect. A membership guard records the requested scope and protected URL, then resumes that scope after account authentication. The selected membership must still belong to the current account on every restored request.
+
 ## Session rotation and preservation
 
 Authentication rotates the session. CSRF, flash, locale, return destination, credential drafts, and a pending invitation survive by default. Intermediate context is scoped to its flow.
@@ -20,7 +26,7 @@ Preserved scopes are re-established through Warden serialization. Arbitrary sess
 Lifecycle hooks support `before_*`, `after_*`, and `around_*` for sign-in, sign-out, sign-up, OAuth sign-in/link/account creation, and impersonation start/end. Event hooks use `on_*` for password reset token generation, password change, invitation token generation/acceptance, and MFA verification.
 
 ```ruby
-class Users::PasswordsController < Vouch::PasswordsController
+class Accounts::PasswordsController < Vouch::PasswordsController
   on_password_reset_token_generation do |account, token|
     AccountMailer.password_reset(account, token).deliver_later
   end

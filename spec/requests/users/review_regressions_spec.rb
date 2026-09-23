@@ -324,8 +324,8 @@ RSpec.describe 'Second-factor completion hooks', type: :request do
       verified_at: Time.current, two_factor_enabled_at: Time.current)
     account.enable_two_factor!
     hook_credential = nil
-    preserve_hooks(Users::UserSelectionsController, :two_factor_verification) do
-      Users::UserSelectionsController.on_two_factor_verification do |_account, _identity, credential|
+    preserve_hooks(Users::MembershipSessionsController, :two_factor_verification) do
+      Users::MembershipSessionsController.on_two_factor_verification do |_account, _identity, credential|
         hook_credential = credential
       end
       post '/users/sign_in', params: {email_address: account.email_address, password: 'password123'}

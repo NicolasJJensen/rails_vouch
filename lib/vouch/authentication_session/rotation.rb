@@ -8,8 +8,18 @@ module Vouch
         preserved = keys.uniq.each_with_object({}) do |key, values|
           values[key] = rails_session[key] if rails_session.key?(key)
         end
-        scopes = Vouch.configuration.preserved_auth_scopes.map(&:to_sym) - [scope, account_scope]
+        mapping = controller.send(:auth_mapping)
+        related = if mapping.membership_scope?
+          [mapping.parent_scope_name] + Vouch.dependent_mappings(mapping.parent_scope_name).map(&:scope_name)
+        else
+          []
+        end
+        related += related.map { |name| :"#{name}_impersonation" }
+        revoked = [scope] + Vouch.dependent_mappings(scope).map(&:scope_name)
+        revoked << account_scope unless mapping.membership_scope?
+        scopes = (Vouch.configuration.preserved_auth_scopes.map(&:to_sym) + related).uniq - revoked
         identities = scopes.to_h { |other_scope| [other_scope, warden.user(other_scope)] }
+        warden.logout(*revoked)
         controller.reset_session
         preserved.each { |key, value| rails_session[key] = value }
         identities.each { |other_scope, identity| warden.set_user(identity, scope: other_scope, store: true) if identity }

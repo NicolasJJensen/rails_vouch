@@ -1,24 +1,20 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes are recorded here. These entries describe unreleased work and are intentionally not assigned a release date or version.
 
 ## [Unreleased]
 
 ### Added
 
-- Application-controller helpers for each authentication scope, including `authenticate_user!`, `current_user`, `current_user_account`, and `user_signed_in?`.
-- Optional route scope names inferred from the model or identity, preserving model namespaces.
-- Automatic route wrapper creation and duplicate scope detection in generators.
+- Account-first authentication scopes with separate account and membership sessions.
+- Account login, MFA, membership selection, and independent logout semantics.
+- `Vouch::MembershipSessionsController` for membership authentication and `Vouch::SessionsController` for account authentication.
+- Shared host redirect hooks receiving the authenticated identity and scope.
+- Password-reset generator wiring for the model feature, routes, mailer hook, and explicit reset-token revocation.
 
 ### Changed
 
-- Generated account models now normalize email addresses and validate presence and case-insensitive uniqueness.
-
-## [0.1.0] - 2026-09-21
-
-### Added
-
-- Initial release.
+- Gem endpoint controllers inherit `ApplicationController` and include `Vouch::Authentication`; generated application controllers subclass those endpoints.
+- The public API no longer uses `Vouch::BaseController`, `parent_controller`, `authentication_callbacks`, or the `--concrete` generator option.
+- Split scopes use `account_scope:` with `identity:` and optional `tenant:`; tenant is not inferred from a login scope.
+- Guides now explain complete setup flows, route helpers, redirect precedence, account/membership ownership, and reset-token revocation.

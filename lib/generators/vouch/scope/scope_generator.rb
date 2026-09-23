@@ -24,13 +24,14 @@ module Vouch
                                    desc: "Single-model scope (account == identity)"
       class_option :primary_key_type, type: :string, default: nil,
                                        desc: "Primary key type for generated tables (for example, uuid)"
+      class_option :account_scope, type: :string, default: nil,
+                                   desc: "Authentication scope name for the generated account mapping"
 
       ROLES = %i[account identity tenant].freeze
       CONTROLLERS = {
         "sessions"               => "SessionsController",
         "registrations"           => "RegistrationsController",
         "passwords"               => "PasswordsController",
-        "user_selections"         => "UserSelectionsController",
         "two_factor_challenge"   => "TwoFactorChallengeController",
         "two_factor_credentials" => "TwoFactorCredentialsController",
         "invitations"             => "InvitationsController",
@@ -108,14 +109,20 @@ module Vouch
         @identity_class = @models[:identity]
         @tenant_class = @models[:tenant]
         @single_model = options[:single_model]
+        @existing_models = {
+          account: model_file_exists?(@account_class),
+          identity: model_file_exists?(@identity_class),
+          tenant: model_file_exists?(@tenant_class)
+        }
 
-        template "account.rb.tt", model_metadata(@account_class).model_path
+        template "account.rb.tt", model_metadata(@account_class).model_path unless @existing_models[:account]
         unless @single_model
-          template "identity.rb.tt", model_metadata(@identity_class).model_path
+          template "identity.rb.tt", model_metadata(@identity_class).model_path unless @existing_models[:identity]
         end
         if @tenant_class
-          template "tenant.rb.tt", model_metadata(@tenant_class).model_path
+          template "tenant.rb.tt", model_metadata(@tenant_class).model_path unless @existing_models[:tenant]
         end
+        add_existing_associations
       end
 
       def create_controllers
@@ -123,19 +130,23 @@ module Vouch
         route_scope = @generated_scope_name.to_s.singularize
         @account_param_key = model_metadata(@account_class).param_key
         @tenant_param_key = model_metadata(@tenant_class).param_key if @tenant_class
-        controller_names = if @single_model
-                             %w[sessions registrations]
-                           else
-                             %w[sessions registrations user_selections]
-                           end
+        controllers = if @single_model
+                        [[namespace, "sessions", "SessionsController", route_scope],
+                         [namespace, "registrations", "RegistrationsController", route_scope]]
+                      else
+                        account_namespace = account_route_scope.to_s.pluralize
+                        [[account_namespace, "sessions", "SessionsController", account_route_scope],
+                         [account_namespace, "registrations", "RegistrationsController", account_route_scope],
+                         [namespace, "sessions", "MembershipSessionsController", route_scope]]
+                      end
 
-        controller_names.each do |name|
-          class_name = CONTROLLERS.fetch(name)
-          @controller_class = "#{namespace.camelize}::#{class_name}"
-          @controller_base = class_name
-          @controller_route_scope = route_scope
-          template "controller.rb.tt",
-                   "app/controllers/#{namespace}/#{name}_controller.rb"
+        controllers.each do |controller_namespace, name, base, controller_scope|
+          @controller_class = "#{controller_namespace.camelize}::#{name.camelize}Controller"
+          @controller_base = base
+          @controller_route_scope = controller_scope
+          @account_registration = !@single_model && controller_namespace == account_route_scope.to_s.pluralize && name == "registrations"
+          controller_path = "app/controllers/#{controller_namespace}/#{name}_controller.rb"
+          template "controller.rb.tt", controller_path unless File.file?(File.join(destination_root, controller_path))
         end
       end
 
@@ -143,33 +154,42 @@ module Vouch
         namespace = @generated_scope_name.to_s.pluralize
         view_namespace = namespace.camelize.underscore
 
-        template "sessions_new.html.erb.tt", "app/views/#{view_namespace}/sessions/new.html.erb"
-        template "registrations_new.html.erb.tt", "app/views/#{view_namespace}/registrations/new.html.erb"
-        return if @single_model
+        if @single_model
+          @controller_route_scope = @generated_scope_name.to_s.singularize
+          template_unless_exists "sessions_new.html.erb.tt", "app/views/#{view_namespace}/sessions/new.html.erb"
+          template_unless_exists "registrations_new.html.erb.tt", "app/views/#{view_namespace}/registrations/new.html.erb"
+          return
+        end
 
-        template "user_selections_index.html.erb.tt", "app/views/#{view_namespace}/user_selections/index.html.erb"
+        account_namespace = account_route_scope.to_s.pluralize
+        @controller_route_scope = account_route_scope
+        template_unless_exists "sessions_new.html.erb.tt", "app/views/#{account_namespace}/sessions/new.html.erb"
+        template_unless_exists "registrations_new.html.erb.tt", "app/views/#{account_namespace}/registrations/new.html.erb"
+        @controller_route_scope = @generated_scope_name.to_s.singularize
+        template_unless_exists "membership_sessions_new.html.erb.tt", "app/views/#{view_namespace}/sessions/new.html.erb"
       end
 
       # Emit one migration per table so each can be reviewed, reordered, or
       # squashed independently. Order matters for foreign keys: tenant first,
       # account second, identity last.
       def create_migrations
-        if @tenant_class
+        if @tenant_class && !@existing_models[:tenant]
           migration_template "tenant_migration.rb.tt",
                              "db/migrate/create_#{model_table(@tenant_class)}.rb"
         end
 
-        migration_template "account_migration.rb.tt",
-                           "db/migrate/create_#{model_table(@account_class)}.rb"
+        unless @existing_models[:account]
+          migration_template "account_migration.rb.tt",
+                             "db/migrate/create_#{model_table(@account_class)}.rb"
+        end
 
-        unless @single_model
+        unless @single_model || @existing_models[:identity]
           migration_template "identity_migration.rb.tt",
                              "db/migrate/create_#{model_table(@identity_class)}.rb"
         end
       end
 
       def show_routes_block
-        block = build_routes_block
         path = File.join(destination_root, "config/routes.rb")
         wrapper = <<~RUBY
           Vouch.routes(self) do |auth|
@@ -177,14 +197,21 @@ module Vouch
           end
         RUBY
         RouteEditor.ensure_wrapper(path, wrapper) if File.file?(path)
-        result = RouteEditor.insert_scope(path, block)
+        results = route_blocks.map { |block| RouteEditor.insert_scope(path, block) }
+        result = if results.any? { |value| value == :unsafe }
+                   :unsafe
+                 elsif results.any? { |value| value == :inserted }
+                   :inserted
+                 else
+                   :duplicate
+                 end
         if result == :inserted
           say_status :route, "Added scope to config/routes.rb", :green
         elsif result == :duplicate
           say_status :route, "Scope already exists in config/routes.rb", :green
         else
           say_status :route, "Could not update config/routes.rb automatically; merge this configuration into your Rails routes:", :yellow
-          say "\nVouch.routes(self) do |auth|\n#{block.lines.map { |line| line.strip.empty? ? line : "  #{line}" }.join}\nend"
+          say "\nVouch.routes(self) do |auth|\n#{route_blocks.join("\n").lines.map { |line| line.strip.empty? ? line : "  #{line}" }.join}\nend"
         end
       end
 
@@ -192,7 +219,7 @@ module Vouch
         say "\nNext steps:"
         say "- Customize the generated views and email defaults, and add application-specific account validations."
         say "- For tenant scopes, adapt the generated name parameter and required tenant associations to the host schema."
-        say "- For optional features, add authenticates_with, the model concern and association, migration, controller and route, delivery hook, and views. Invitations also require Vouch::Invitable::Concern plus belongs_to :inviter (optional) and has_many :invitees on the generated identity model."
+        say "- Follow the feature guides to generate password reset, MFA, OAuth, or invitation support and configure their delivery."
       end
 
       private
@@ -219,6 +246,38 @@ module Vouch
         @model_metadata[name] ||= Vouch::ModelMetadata.new(name)
       end
 
+      def model_file_exists?(name)
+        return false unless name
+
+        File.file?(File.join(destination_root, model_metadata(name).model_path))
+      end
+
+      def template_unless_exists(source, destination)
+        template source, destination unless File.file?(File.join(destination_root, destination))
+      end
+
+      def add_existing_associations
+        return if @single_model
+
+        add_has_many(@account_class, model_association(@identity_class).pluralize,
+                     @identity_class, model_association(@account_class)) if @existing_models[:account]
+        if @tenant_class && @existing_models[:tenant]
+          add_has_many(@tenant_class, model_association(@identity_class).pluralize,
+                       @identity_class, model_association(@tenant_class))
+        end
+      end
+
+      def add_has_many(owner_class, association, child_class, foreign_key)
+        path = File.join(destination_root, model_metadata(owner_class).model_path)
+        contents = File.read(path)
+        return if contents.match?(/^\s*has_many\s+:#{Regexp.escape(association)}\b/)
+
+        foreign_key = "#{foreign_key}_id" unless foreign_key.to_s.end_with?("_id")
+        inject_into_class(path, model_metadata(owner_class).declaration_name(contents)) do
+          "\n  has_many :#{association}, class_name: \"#{child_class}\", foreign_key: :#{foreign_key}\n"
+        end
+      end
+
       def build_routes_block
         route_scope = @generated_scope_name.to_s.singularize
         if options[:single_model]
@@ -230,22 +289,47 @@ module Vouch
           RUBY
         end
 
-        settings = %(account: "#{@account_class}", identity: "#{@identity_class}")
+        settings = %(account_scope: :#{account_route_scope}, identity: "#{@identity_class}")
         settings += %(, tenant: "#{@tenant_class}") if @tenant_class
-        associations = {account_identities: model_association(@identity_class).pluralize,
-          identity_account: model_association(@account_class)}
-        if @tenant_class
-          associations[:identity_tenant] = model_association(@tenant_class)
-          associations[:tenant_identities] = model_association(@identity_class).pluralize
-        end
-        pairs = associations.map { |key, value| "#{key}: :#{value}" }.join(', ')
         <<~RUBY.rstrip
-            auth.scope :#{route_scope}, #{settings}, associations: {#{pairs}} do
+            auth.scope :#{account_route_scope}, model: "#{@account_class}" do
               auth.sessions
               auth.registrations
-              auth.user_selection
+            end
+            auth.scope :#{route_scope}, #{settings} do
+              auth.sessions
             end
         RUBY
+      end
+
+      def route_blocks
+        return [build_routes_block] if options[:single_model]
+
+        route_scope = @generated_scope_name.to_s.singularize
+        settings = %(account_scope: :#{account_route_scope}, identity: "#{@identity_class}")
+        settings += %(, tenant: "#{@tenant_class}") if @tenant_class
+        [
+          <<~RUBY.rstrip,
+            auth.scope :#{account_route_scope}, model: "#{@account_class}" do
+              auth.sessions
+              auth.registrations
+            end
+          RUBY
+          <<~RUBY.rstrip
+            auth.scope :#{route_scope}, #{settings} do
+              auth.sessions
+            end
+          RUBY
+        ]
+      end
+
+      def account_route_scope
+        inferred = if defined?(Vouch::Mapping)
+                     Vouch::Mapping.inferred_scope_name(model: @account_class)
+                   else
+                     @account_class.to_s.underscore.tr("/", "_").to_sym
+                   end
+        (options[:account_scope].presence || inferred || :account).to_sym
       end
     end
   end

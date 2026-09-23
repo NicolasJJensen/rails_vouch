@@ -1,5 +1,7 @@
 # Agreed authentication fixes
 
+> Historical engineering record. For the current API and setup, start with the [README](../README.md).
+
 The implementation covers the 14 findings and the accepted design improvements. Session storage remains the host's responsibility. The compatibility suite does not test Devise coexistence.
 
 ## Regression scoreboard
@@ -13,7 +15,7 @@ The implementation covers the 14 findings and the accepted design improvements. 
 | 5. Premature Warden events | Suppress callbacks, clear the temporary password-proof cache, and emit final authentication with the identity | No event before MFA, exactly one event after completion, no authenticated identity inside transactional hooks |
 | 6. Reset token survives password change | Clear reset state on persisted password changes | Direct password update invalidates an outstanding reset link |
 | 7. Renamed primary keys | Resolve records through each model's primary key | Warden restoration with a renamed key, existing UUID coverage |
-| 8. Polymorphic tenant reflection | Skip polymorphic relationships and require explicit ambiguous selections | Polymorphic tenant discovery and custom association traversal |
+| 8. Polymorphic tenant reflection | Reject polymorphic tenant relationships; explicit names resolve ambiguity only between concrete relationships | Polymorphic tenant discovery and custom association traversal |
 | 9. Custom account model names | Generate matching relationship declarations and route overrides | Generated Owner/Member host migrates, boots, authenticates, and restores its cookie, including bounded index names on Rails 7 |
 | 10. Namespaced generation | Parse the final role separator and align tables, classes, and foreign keys | Namespaced generated host migration and real authentication |
 | 11. Migration-blocking schema checks | Validate schema on feature use | Unmigrated class inclusion, missing-column errors on use, generated feature installation before migration |
@@ -64,3 +66,5 @@ Existing hosts must add the enabled feature nonce columns and `consecutive_locks
 Outstanding OTP challenges without nonces become invalid. Existing sessions using the previous fingerprint format expire on their next request.
 
 Persisted proofs have database replay protection. Unsaved credential drafts retain in-memory state and require host session protection. Hosts that wrap authentication in an additional outer transaction must coordinate response/session publication with that outer transaction. Lifecycle after hooks are transactional, not after-commit delivery hooks.
+
+Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](model-mapping.md).

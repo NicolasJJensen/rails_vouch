@@ -11,6 +11,7 @@ Warden::Strategies.add(:password) do
 
   def authenticate!
     mapping = Vouch.mapping_for(scope)
+    return fail!(I18n.t("vouch.sessions.invalid_credentials")) if mapping.membership_scope?
     account = mapping.account_class.first_by_auth_conditions(params.with_indifferent_access)
 
     if account && !account.locked? && account.authenticate(params["password"])

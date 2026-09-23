@@ -16,9 +16,11 @@ RSpec.describe "Warden host interoperability" do
     Warden::Manager.serialize_from_session(:host_admin_contract) { |id| User.find_by(id: id) }
     Warden::Manager.after_authentication do |record, _proxy, options|
       events << [record.id, options.fetch(:scope)]
+end
+    controller_class = Class.new(ActionController::Base) do
+      include Vouch::Authentication
+      auth_scope :user
     end
-
-    controller_class = Class.new(Vouch::BaseController) { auth_scope :user }
     app = lambda do |env|
       proxy = env.fetch("warden")
       case env.fetch("PATH_INFO")
@@ -67,43 +69,5 @@ RSpec.describe "Warden host interoperability" do
       added = Warden::SessionSerializer.instance_methods(false) - serializer_methods
       added.each { |method| Warden::SessionSerializer.send(:remove_method, method) }
     end
-  end
-
-  it "skips a configured host authentication callback only on public auth actions" do
-    allow(Vouch.configuration).to receive(:authentication_callbacks).and_return([:host_authentication])
-    controller_class = Class.new(Vouch::BaseController) do
-      attr_reader :host_callback_ran
-
-      before_action :host_authentication
-      allow_unauthenticated_access only: :public_action
-
-      def public_action
-        head :ok
-      end
-
-      def protected_action
-        head :ok
-      end
-
-      private
-
-      def host_authentication
-        @host_callback_ran = true
-      end
-    end
-
-    public_controller = controller_class.new
-    public_controller.set_request!(ActionDispatch::TestRequest.create)
-    public_controller.set_response!(ActionDispatch::TestResponse.new)
-    public_controller.process(:public_action)
-
-    protected_controller = controller_class.new
-    protected_controller.define_singleton_method(:current_identity) { Object.new }
-    protected_controller.set_request!(ActionDispatch::TestRequest.create)
-    protected_controller.set_response!(ActionDispatch::TestResponse.new)
-    protected_controller.process(:protected_action)
-
-    expect(public_controller.host_callback_ran).to be_nil
-    expect(protected_controller.host_callback_ran).to be(true)
   end
 end

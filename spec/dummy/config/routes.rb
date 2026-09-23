@@ -5,7 +5,6 @@ Rails.application.routes.draw do
     auth.scope :user, account: "Account", identity: "User", tenant: "Organisation" do |auth|
       auth.sessions
       auth.registrations
-      auth.user_selection
       auth.passwords
       auth.two_factor
       auth.invitations

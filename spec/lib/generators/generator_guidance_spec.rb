@@ -22,7 +22,7 @@ RSpec.describe "authentication generator guidance" do
     end
 
     expect(output).to include("Next steps")
-    expect(output).to include("authenticates_with")
+    expect(output).to include("feature guides")
     expect(output).to include("email defaults", "application-specific account validations")
     expect(output).to match(/delivery|resolver|controller/i)
   ensure

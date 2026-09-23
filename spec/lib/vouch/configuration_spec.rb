@@ -15,8 +15,8 @@ RSpec.describe Vouch::Configuration do
     end
 
     it "sets the host integration defaults" do
-      expect(config.parent_controller).to eq("ApplicationController")
-      expect(config.authentication_callbacks).to eq([])
+      expect(config).not_to respond_to(:parent_controller)
+      expect(config).not_to respond_to(:authentication_callbacks)
       expect(config.pending_authentication_ttl).to eq(10.minutes)
       expect(config.preserved_session_keys).to eq([])
       expect(config.preserved_auth_scopes).to eq([])

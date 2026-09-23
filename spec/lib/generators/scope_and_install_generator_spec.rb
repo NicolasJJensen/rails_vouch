@@ -289,30 +289,86 @@ RSpec.describe "Vouch generators" do
     )
 
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
-    expect(routes).to include("auth.sessions")
-    expect(routes).to include("auth.registrations")
-    expect(routes).to include("auth.user_selection")
+    expect(routes).to include('auth.scope :account, model: "Account"')
+    expect(routes).to include("auth.scope :user, account_scope: :account, identity: \"User\"")
+    expect(routes.scan("auth.sessions").length).to eq(2)
+    expect(routes).not_to include("auth.user_selection")
     expect(routes).not_to include("auth.passwords")
     expect(routes).not_to include("auth.two_factor")
     expect(routes).not_to include("auth.invitations")
     expect(routes).not_to include("auth.impersonation")
     expect(routes).not_to include("auth.oauth_callbacks")
 
+    expect(File).to exist(File.join(@generator_directory, "app/controllers/accounts/sessions_controller.rb"))
+    expect(File).to exist(File.join(@generator_directory, "app/controllers/accounts/registrations_controller.rb"))
     expect(File).to exist(File.join(@generator_directory, "app/controllers/users/sessions_controller.rb"))
-    expect(File).to exist(File.join(@generator_directory, "app/controllers/users/registrations_controller.rb"))
-    expect(File).to exist(File.join(@generator_directory, "app/controllers/users/user_selections_controller.rb"))
-    expect(File.read(File.join(@generator_directory, "app/views/users/sessions/new.html.erb"))).to include("user_session_path")
-    expect(File.read(File.join(@generator_directory, "app/views/users/registrations/new.html.erb"))).to include(
+    expect(File.read(File.join(@generator_directory, "app/controllers/users/sessions_controller.rb"))).to include(
+      "< Vouch::MembershipSessionsController"
+    )
+    expect(File.read(File.join(@generator_directory, "app/views/accounts/sessions/new.html.erb"))).to include("account_session_path")
+    expect(File.read(File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb"))).to include(
       "scope: :account, method: :post"
     )
-    expect(File.read(File.join(@generator_directory, "app/views/users/user_selections/index.html.erb"))).to include(
+    expect(File.read(File.join(@generator_directory, "app/views/users/sessions/new.html.erb"))).to include(
       "radio_button_tag :identity_id"
     )
-    expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/passwords_controller.rb"))
+    expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/user_selections_controller.rb"))
     expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/two_factor_challenge_controller.rb"))
     expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/invitations_controller.rb"))
     expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/impersonations_controller.rb"))
     expect(File).not_to exist(File.join(@generator_directory, "app/controllers/users/omni_auths_controller.rb"))
+  end
+
+  it "reuses shared account and tenant models when generating another membership scope" do
+    @generator_directory = run_generator(
+      Vouch::Generators::ScopeGenerator,
+      ["admins", "Account:account", "Admin:identity", "Organisation:tenant"],
+      routes: <<~RUBY
+        Rails.application.routes.draw do
+          Vouch.routes(self) do |auth|
+          end
+        end
+      RUBY
+    )
+    first_account = File.read(File.join(@generator_directory, "app/models/account.rb"))
+    first_registration = File.read(
+      File.join(@generator_directory, "app/controllers/accounts/registrations_controller.rb")
+    )
+    first_registration_view = File.read(
+      File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb")
+    )
+
+    Dir.chdir(@generator_directory) do
+      generator = Vouch::Generators::ScopeGenerator.new(
+        ["users", "Account:account", "User:identity", "Organisation:tenant"]
+      )
+      generator.destination_root = @generator_directory
+      generator.invoke_all
+    end
+
+    account = File.read(File.join(@generator_directory, "app/models/account.rb"))
+    organisation = File.read(File.join(@generator_directory, "app/models/organisation.rb"))
+    migrations = Dir[File.join(@generator_directory, "db/migrate/*.rb")].map { |path| File.basename(path) }
+    expect(account).to include(
+      'has_many :admins, class_name: "Admin", foreign_key: :account_id',
+      'has_many :users, class_name: "User", foreign_key: :account_id'
+    )
+    expect(organisation).to include(
+      'has_many :admins, class_name: "Admin", foreign_key: :organisation_id',
+      'has_many :users, class_name: "User", foreign_key: :organisation_id'
+    )
+    expect(migrations.count { |name| name.include?("create_accounts") }).to eq(1)
+    expect(migrations.count { |name| name.include?("create_organisations") }).to eq(1)
+    expect(account).to start_with(first_account.lines.first)
+    expect(File.read(File.join(@generator_directory, "app/controllers/accounts/registrations_controller.rb"))).to eq(
+      first_registration
+    )
+    expect(File.read(File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb"))).to eq(
+      first_registration_view
+    )
+    routes = File.read(File.join(@generator_directory, "config/routes.rb"))
+    expect(routes.scan("auth.scope :account").length).to eq(1)
+    expect(routes.scan("auth.scope :user").length).to eq(1)
   end
 
   it "generates only sessions and registrations for a single-model scope" do
@@ -361,8 +417,8 @@ RSpec.describe "Vouch generators" do
       ["users", "Account:account", "User:identity", "Organisation:tenant"]
     )
 
-    controller = File.read(File.join(@generator_directory, "app/controllers/users/registrations_controller.rb"))
-    view = File.read(File.join(@generator_directory, "app/views/users/registrations/new.html.erb"))
+    controller = File.read(File.join(@generator_directory, "app/controllers/accounts/registrations_controller.rb"))
+    view = File.read(File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb"))
 
     expect(controller).to include("def registration_tenant_attributes(_account)")
     expect(controller).to include("params.require(:organisation).permit(:name)")

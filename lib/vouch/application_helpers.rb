@@ -14,38 +14,54 @@ module Vouch
         expose_helpers(controller, helper_names)
       end
 
-      def define_scope(scope)
-        scope = scope.to_sym
-        identity_method = :"current_#{scope}"
-        account_method = :"current_#{scope}_account"
-        signed_in_method = :"#{scope}_signed_in?"
+      def validate_mapping!(mapping)
+        names = public_names(mapping)
+        Vouch.each_mapping do |other|
+          next if other.scope_name == mapping.scope_name
+          overlap = names & public_names(other)
+          next if overlap.empty?
 
-        define_method(identity_method) do
-          Vouch.mapping_for(scope)
-          request.env.fetch("warden").user(scope)
+          raise Vouch::ConfigurationError, "Authentication helpers collide: #{overlap.join(', ')}. Choose distinct scope names."
         end
+      end
 
-        define_method(account_method) do
-          identity = public_send(identity_method)
-          Vouch.mapping_for(scope).account_for(identity) if identity
-        end
+      def define_scope(_scope)
+        refresh!
+      end
 
-        define_method(signed_in_method) { public_send(identity_method).present? }
-
-        define_method(:"authenticate_#{scope}!") do
-          return if public_send(signed_in_method)
-
-          mapping = Vouch.mapping_for(scope)
-          session[Vouch::Session.key_for(scope, :return_to)] = request.fullpath if request.get?
-          redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path")
-        end
-
-        names = [identity_method, account_method, signed_in_method]
-        helper_names.concat(names).uniq!
-        controllers.each { |controller| expose_helpers(controller, names) }
+      def refresh!
+        Array(@generated_methods).each { |name| remove_method(name) if instance_methods(false).include?(name) }
+        @generated_methods = []
+        @helper_names = []
+        Vouch.each_mapping { |mapping| install_scope(mapping) }
+        controllers.each { |controller| expose_helpers(controller, helper_names) }
       end
 
       private
+
+      def public_names(mapping)
+        [mapping.current_helper_name, :"current_#{mapping.scope_name}",
+          :"#{mapping.scope_name}_signed_in?", :"authenticate_#{mapping.scope_name}!"].uniq
+      end
+
+      def install_scope(mapping)
+        scope = mapping.scope_name
+        identity_method = mapping.current_helper_name
+        signed_in_method = :"#{scope}_signed_in?"
+        define_method(identity_method) { Vouch.authenticated_identity(request.env.fetch("warden"), scope) }
+        short_name = :"current_#{scope}"
+        alias_method short_name, identity_method unless short_name == identity_method
+        define_method(signed_in_method) { public_send(identity_method).present? }
+        define_method(:"authenticate_#{scope}!") do
+          return if public_send(signed_in_method)
+
+          current_mapping = Vouch.mapping_for(scope)
+          session[Vouch::Session.key_for(scope, :return_to)] = request.fullpath if request.get?
+          redirect_to public_send(:"new_#{current_mapping.helper_prefix}_session_path")
+        end
+        @generated_methods.concat(public_names(mapping))
+        helper_names.concat([identity_method, short_name, signed_in_method]).uniq!
+      end
 
       def controllers
         @controllers ||= []

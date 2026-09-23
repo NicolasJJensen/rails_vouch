@@ -48,6 +48,44 @@ module Vouch
         insert(path, source, wrapper, block.gsub(/\bauth\./, "#{wrapper.fetch(:variable)}."))
       end
 
+      # Insert one explicitly selected route inside an existing named scope.
+      # The target must be a literal scope and a structurally unambiguous block.
+      def insert_feature(path, scope_name, feature)
+        return :unsafe unless File.file?(path)
+
+        source = File.read(path)
+        return :unsafe unless Ripper.sexp(source)
+        wrapper = matching_block(source, statement_matches(source, WRAPPER), WRAPPER_LINE)
+        return :unsafe unless wrapper
+
+        receiver = Regexp.escape(wrapper.fetch(:variable))
+        pattern = /^[ \t]*#{receiver}\.scope\s+:#{Regexp.escape(scope_name.to_s)}\b[^\n]*\bdo(?:[ \t]*\|[ \t]*(\w+)[ \t]*\|)?[ \t]*(?:#.*)?$/
+        matches = source.to_enum(:scan, pattern).map { Regexp.last_match }
+        matches.select! do |match|
+          line = source[0...match.begin(0)].count("\n")
+          line > wrapper[:start_line] && line < wrapper[:end_line]
+        end
+        block = matching_block(source, matches, pattern)
+        return :unsafe unless block
+
+        variable = block[:variable] || wrapper[:variable]
+        method = feature.split(".").last
+        body = source.lines[block[:start_line]..block[:end_line]].join
+        return :duplicate if feature_call?(Ripper.sexp(body), variable, method)
+
+        insert(path, source, block, "#{variable}.#{method}")
+      end
+
+      def feature_call?(node, variable, method)
+        return false unless node.is_a?(Array)
+        if %i[command_call call].include?(node[0])
+          receiver = node[1]
+          return true if %i[var_ref vcall].include?(receiver[0]) &&
+            receiver.dig(1, 1) == variable && node.dig(3, 1) == method
+        end
+        node.any? { |child| child.is_a?(Array) && feature_call?(child, variable, method) }
+      end
+
       def insert(path, source, block, content)
         lines = source.lines
         index = block.fetch(:end_line)

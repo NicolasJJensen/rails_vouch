@@ -39,12 +39,12 @@ RSpec.describe Vouch::Generators::EjectGenerator do
     File.read(File.join(tmpdir, path))
   end
 
-  describe "non-concrete eject" do
+  describe "eject" do
     it "copies the controller verbatim with the class declaration rewritten" do
       run_generator(["users", "sessions"], {})
 
       body = written("app/controllers/users/sessions_controller.rb")
-      expect(body).to include("class Users::SessionsController < Vouch::BaseController")
+      expect(body).to include("class Users::SessionsController < ::ApplicationController")
       expect(body).not_to include("class Vouch::SessionsController")
     end
 
@@ -60,14 +60,10 @@ RSpec.describe Vouch::Generators::EjectGenerator do
       run_generator(["portal", "sessions"], auth_scope: "user")
 
       body = written("app/controllers/portal/sessions_controller.rb")
-      expect(body).to include("class Portal::SessionsController < Vouch::BaseController")
+      expect(body).to include("class Portal::SessionsController < ::ApplicationController")
       expect(body).to include("  auth_scope :user")
 
-      stub_const("Portal", Module.new)
-      eval(body, TOPLEVEL_BINDING, "portal/sessions_controller.rb")
-      expect(Portal::SessionsController.allocate.send(:auth_mapping)).to eq(
-        Vouch.mapping_for(:user)
-      )
+      expect { RubyVM::InstructionSequence.compile(body) }.not_to raise_error
     end
 
     it "keeps runtime scope inference when no explicit scope is supplied" do
@@ -84,54 +80,4 @@ RSpec.describe Vouch::Generators::EjectGenerator do
     end
   end
 
-  describe "--concrete compatibility alias" do
-    it "warns and emits the same compilable controller as normal ejection" do
-      normal_dir = Dir.mktmpdir("eject-normal")
-      concrete_dir = Dir.mktmpdir("eject-concrete")
-      normal_output = run_generator_at(normal_dir, ["users", "sessions"])
-      concrete_output = run_generator_at(concrete_dir, ["users", "sessions"], concrete: true)
-      normal_body = File.read(File.join(normal_dir, "app/controllers/users/sessions_controller.rb"))
-      concrete_body = File.read(File.join(concrete_dir, "app/controllers/users/sessions_controller.rb"))
-
-      expect(concrete_output).to match(/deprecated|compatibility/i)
-      expect(concrete_output).to match(/runtime helpers|auth_mapping/i)
-      expect(concrete_body).to eq(normal_body)
-      expect { RubyVM::InstructionSequence.compile(concrete_body) }.not_to raise_error
-    ensure
-      FileUtils.rm_rf(normal_dir)
-      FileUtils.rm_rf(concrete_dir)
-    end
-
-    it "does not require a registered mapping" do
-      saved = Vouch.mappings.dup
-      Vouch.mappings.clear
-
-      output = run_generator(["ghosts", "sessions"], concrete: true)
-      body = written("app/controllers/ghosts/sessions_controller.rb")
-
-      expect(output).to match(/deprecated|compatibility/i)
-      expect(body).to include("class Ghosts::SessionsController")
-      expect { RubyVM::InstructionSequence.compile(body) }.not_to raise_error
-    ensure
-      Vouch.mappings.replace(saved)
-    end
-
-    it "preserves an explicitly selected runtime scope" do
-      normal_dir = Dir.mktmpdir("eject-normal-scope")
-      concrete_dir = Dir.mktmpdir("eject-concrete-scope")
-      run_generator_at(normal_dir, ["portal", "sessions"], auth_scope: "user")
-      output = run_generator_at(concrete_dir, ["portal", "sessions"],
-                                concrete: true, auth_scope: "user")
-
-      normal_body = File.read(File.join(normal_dir, "app/controllers/portal/sessions_controller.rb"))
-      concrete_body = File.read(File.join(concrete_dir, "app/controllers/portal/sessions_controller.rb"))
-
-      expect(output).to match(/deprecated|compatibility/i)
-      expect(concrete_body).to eq(normal_body)
-      expect(concrete_body).to include("auth_scope :user")
-    ensure
-      FileUtils.rm_rf(normal_dir)
-      FileUtils.rm_rf(concrete_dir)
-    end
-  end
 end

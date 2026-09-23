@@ -1,4 +1,5 @@
-class Vouch::RegistrationsController < Vouch::BaseController
+class Vouch::RegistrationsController < ::ApplicationController
+  include Vouch::Authentication
   only_allow_unauthenticated_access
 
   def new
@@ -7,7 +8,7 @@ class Vouch::RegistrationsController < Vouch::BaseController
     @account = if oauth
       auth_mapping.account_class.new_from_omniauth(oauth)
     elsif invitation && invitation_requires_registration?(invitation)
-      auth_mapping.account_for(invitation)
+      invitation_account_for(invitation)
     else
       auth_mapping.account_class.new
     end
@@ -21,7 +22,7 @@ class Vouch::RegistrationsController < Vouch::BaseController
       session.delete(invited_user_session_key)
       return redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
     end
-    @account = invitation ? auth_mapping.account_for(invitation) : auth_mapping.account_class.new(account_params)
+    @account = invitation ? invitation_account_for(invitation) : auth_mapping.account_class.new(account_params)
     identity = nil
     hook_execution = nil
     committed = @account.class.transaction(requires_new: true) do
@@ -60,7 +61,7 @@ class Vouch::RegistrationsController < Vouch::BaseController
     # the after phase after the sign-in attempt so any session state is ready.
     finish_lifecycle_hooks(hook_execution, completed: committed)
     case outcome
-    when :signed_in then redirect_to after_sign_up_path, notice: I18n.t('vouch.registrations.account_created')
+    when :signed_in then redirect_after_authentication notice: I18n.t('vouch.registrations.account_created')
     when :needs_two_factor then redirect_to two_factor_challenges_path
     when :needs_selection then redirect_to select_path
     else head :forbidden
@@ -98,10 +99,11 @@ class Vouch::RegistrationsController < Vouch::BaseController
     return head(:forbidden) unless committed
 
     clear_oauth_registration
+    session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
     outcome = complete_sign_in(@account, hook: :oauth_sign_in, method: :oauth, auth_hash: oauth)
     finish_lifecycle_hooks(hook_execution, completed: committed)
     case outcome
-    when :signed_in then redirect_to after_sign_up_path, notice: I18n.t('vouch.registrations.account_created')
+    when :signed_in then redirect_after_authentication notice: I18n.t('vouch.registrations.account_created')
     when :needs_two_factor then redirect_to two_factor_challenges_path
     when :needs_selection then redirect_to select_path
     else head :forbidden

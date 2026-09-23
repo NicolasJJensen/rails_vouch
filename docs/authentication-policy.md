@@ -2,6 +2,26 @@
 
 This guide explains how Vouch completes authentication after credentials, OAuth, or host-implemented magic links. Start with the [README](../README.md), then see [controllers](controllers.md), [OAuth](oauth.md), and [verification and MFA](verification-and-mfa.md).
 
+## Restrict eligible memberships
+
+A membership controller can restrict its account's eligible records:
+
+```ruby
+class Users::SessionsController < Vouch::MembershipSessionsController
+  auth_scope :user
+
+  private
+
+  def candidate_identities_for(account)
+    super.where(active: true)
+  end
+end
+```
+
+This example assumes an application-defined `active` column. Keep the account ownership constraint supplied by `super`. The selection form snapshots eligible IDs and submission reapplies the current policy. A scope name such as `admin` does not grant permissions.
+
+Account authentication completes required MFA before publishing the account session. Linked membership selection then uses that authenticated account, without asking for its password or repeating account MFA.
+
 ## Completion contract
 
 The Warden strategy name `:password` is reserved; custom strategies must use another name. Password verification uses `store: false`, and controllers explicitly establish the authenticated identity.

@@ -1,5 +1,7 @@
 # Review fixes
 
+> Historical engineering record. For the current API and setup, start with the [README](../README.md).
+
 The scope is the 25 findings from the September review and its design recommendations.
 Issue 15 reserves `:password` by agreement. It does not require a strategy rename.
 Issue 5 uses subject/version-bound challenges. OAuth callbacks use separate scope paths.
@@ -35,7 +37,7 @@ Additional policy, generator, compatibility, and concurrency tests are added wit
 
 Verifiable hosts need `verification_version` (bigint, default 0, non-null). Invitable identity models need `invitation_registration_required` (boolean, default false, non-null). Generators and dummy migrations include these fields. Callback-bypassing writes to credential subjects must perform equivalent verification invalidation.
 
-Auth controllers now inherit `Vouch::BaseController`. Existing host authentication callbacks can be declared in configuration. A host that already installs Warden can disable gem middleware installation and call `Vouch.configure_warden` on its manager.
+At the time of this review, auth controllers shared a base class and configurable inherited callbacks. That design has since been replaced by direct `ApplicationController` inheritance and the `Vouch::Authentication` concern; use an application-defined protected base for page guards. A host that already installs Warden can disable gem middleware installation and call `Vouch.configure_warden` on its manager.
 
 Default OAuth callback paths include the scope. Host OmniAuth middleware and provider redirect URLs must match. Local locks and MFA apply to OAuth by default; explicit provider assurance exemptions are configurable.
 
@@ -54,3 +56,5 @@ Generated-host test remnants were removed after validation. The test database mi
 ## Validation limits
 
 Local validation uses Ruby 3.3.6, Rails 8.1.3, PostgreSQL, and sibling dependency checkouts. The compatibility workflow exercises released dependencies and additional versions when CI runs; adding the workflow is not evidence that those jobs have passed. No live OAuth provider, Devise host, alternate database adapter, or browser presentation is certified by this suite.
+
+Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](model-mapping.md).

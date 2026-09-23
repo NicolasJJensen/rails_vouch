@@ -1,96 +1,146 @@
-# Model mapping and reflection
+# Accounts, memberships, and authentication scopes
 
-Mappings connect account, identity, tenant, and feature associations. The baseline examples are in the [README](../README.md); see [OAuth](oauth.md), [controllers](controllers.md), and [warden](warden.md) for related integration.
+An account owns credentials. A membership identifies how that account participates in an organisation. An authentication scope names one session context; a tenant identifies an organisation. Scope names do not grant application permissions.
 
-## Scope names
+## Single-tenant authentication
 
-Omit the first argument to infer an authentication scope from `model:` or, for split models, `identity:`:
+One model can own credentials and represent the authenticated person:
 
 ```ruby
-Vouch.routes(self) do |auth|
-  auth.scope model: "User" do
-    auth.sessions
-    auth.registrations
-  end
+auth.scope :user, model: "User" do
+  auth.sessions
+  auth.registrations
 end
 ```
 
-`"User"` or `User` gives `:user`; `"Admin::User"` or `Admin::User` gives `:admin_user`. String references avoid loading model constants just to choose the scope name. Namespaces are preserved, and inferred names that collide with different model mappings raise a configuration error. Use explicit scope names to distinguish such mappings.
+This exposes `current_user`, `user_signed_in?`, and `authenticate_user!`. There is no redundant account helper. A `model:` mapping cannot also declare `tenant:`.
 
-A scope identifies its Warden session, default URL prefix, controller directory, and route helper prefix. It is independent of model names: `auth.scope :operator, model: "User"` and `auth.scope :customer, model: "User"` can use the same model with separate sessions. Scope names do not restrict which records can authenticate; supply the corresponding access policy yourself. `path:` and `as:` still override URL and route helper defaults.
+## Multi-tenant authentication
 
-## Explicit associations
+A common database arrangement is:
 
-Only enabled features undergo concern discovery. Restrict discovery when needed:
-
-```ruby
-auth.scope :user, account: "Account", identity: "User",
-  associations: {two_factorable: [:phones, :authenticators]}
+```text
+accounts:      id, email_address, password_digest
+organisations: id, name
+users:         id, account_id, organisation_id
 ```
-
-Account, identity, and tenant relationships use one flat hash when discovery is ambiguous:
-
-```ruby
-auth.scope :member, account: "Owner", identity: "Membership", tenant: "Workspace",
-  path: "members", as: :member,
-  associations: {account_identities: :memberships, identity_account: :owner,
-    identity_tenant: :workspace, tenant_identities: :memberships} do
-  auth.sessions(path_names: {sign_in: "login"}, controller: "members/sessions")
-end
-```
-
-Omit overrides when exactly one matching association exists. Polymorphic associations are excluded from automatic relationship discovery. Paths, route helpers, selected features, and controller overrides remain independent of association names.
-
-## OAuth and password-history mapping
-
-OAuth identity ownership resolves separately from membership ownership. The resolver uses the account's OAuth association and its inverse metadata. If an OAuth row belongs to `owner` while membership belongs to another account association, configure `oauth_account: :owner`; this does not change `identity_account`. Polymorphic OAuth ownership can retain `belongs_to :account, polymorphic: true` and `has_many :oauth_identities, as: :account`, with `omniauthable: :oauth_identities` and `oauth_account: :account` when ambiguous.
-
-The generator covers the ordinary one-owner relationship. Keep legacy, nonstandard, or polymorphic ownership explicit in the host. For an OAuth model whose account owner is named `owner`, configure both the account collection and inverse owner:
 
 ```ruby
 class Account < ApplicationRecord
-  has_many :oauth_connections, class_name: "OAuthConnection", foreign_key: :owner_id
-end
-
-class OAuthConnection < ApplicationRecord
-  include Vouch::OAuthIdentity::Concern
-  belongs_to :owner, class_name: "Account"
-end
-
-auth.scope :user, account: "Account", identity: "User",
-  associations: {
-    account_identities: :users,
-    identity_account: :account,
-    omniauthable: :oauth_connections,
-    oauth_account: :owner
-  } do
-  auth.sessions
-  auth.oauth_callbacks
-end
-```
-
-Password-history association selection belongs on the account model:
-
-```ruby
-class Owner < ApplicationRecord
   include Vouch::Authenticatable
   has_secure_password
-  has_many :password_archives, class_name: "PasswordArchive", foreign_key: :owner_id
-  authenticates_with :password_trackable,
-    password_trackable: {association: :password_archives}
+  has_many :users
+end
+
+class User < ApplicationRecord
+  belongs_to :account
+  belongs_to :organisation
+end
+
+class Organisation < ApplicationRecord
+  has_many :users
 end
 ```
 
-The archive includes `Vouch::PasswordArchive::Concern`. Omit the option when exactly one association is discoverable. Every scope for that account uses the same selection; move conflicting route-level configuration to the model.
-
-Password-history correctness across concurrent updates belongs to the host's write policy. If multiple requests can change a password, lock and reload the account before assigning the new password:
+The account holds authentication features; the user is a membership. Existing model validations and other associations are omitted from this example.
 
 ```ruby
-account.with_lock do
-  account.update!(password: new_password, password_confirmation: new_password)
+auth.scope :account, model: "Account" do
+  auth.sessions
+  auth.registrations
+end
+
+auth.scope :user, account_scope: :account,
+  identity: "User", tenant: "Organisation" do
+  auth.sessions
 end
 ```
 
-Apply the same policy to every host password-writing path. A lock acquired after assigning a password on a stale object does not refresh the history used by that assignment. Database constraints and any optimistic locking policy remain host responsibilities.
+Declare the account scope before its membership scopes. `account_scope:` references a single-model credentials scope and derives the account class from it. Omit `tenant:` when separating credentials from identities without tenant ownership.
 
-Password validation also works without any registered routes. Without overrides, the gem discovers feature associations by concern inclusion. Ambiguous single-association features raise a configuration error, and explicit associations are validated. Resolver names and model references resolve through current Rails classes after reloading. The gem does not change global OTP/SMS inflections.
+The generated account email is unique. Email/password lookup identifies one account; membership selection then considers that account's eligible identities. Zero denies membership access, one selects automatically, and several require a choice. Required MFA completes before the account session is established. A direct account login does not guess a membership scope; a membership guard or link starts that continuation.
+
+The generator does not assume that one account can have only one membership per organisation. If that is your rule, add a unique composite index on `[:account_id, :organisation_id]` and matching model validation.
+
+## Shared account, separate user and admin memberships
+
+Add an `admins` table with `account_id` and `organisation_id`, an `Admin` model with both `belongs_to` associations, and `has_many :admins` on `Account` and `Organisation`:
+
+```ruby
+auth.scope :admin, account_scope: :account,
+  identity: "Admin", tenant: "Organisation" do
+  auth.sessions
+end
+```
+
+The sessions are independent selections beneath one account:
+
+```ruby
+current_account
+current_account_user  # alias: current_user
+current_account_admin # alias: current_admin
+```
+
+A user membership never satisfies `authenticate_admin!`. The membership controller's `candidate_identities_for(account)` can further restrict eligible records. The application still authorizes actions within the selected membership.
+
+Passwords, account lockout, and account-level MFA policy are shared because the credentials record is shared. Signing out of the account clears both membership sessions. Ending one membership session leaves the account and the other membership authenticated. User and admin memberships may belong to different organisations, so use `current_user.organisation` or `current_admin.organisation` explicitly.
+
+For separate administrator credentials, create another single-model account scope and reference it instead:
+
+```ruby
+auth.scope :admin_account, model: "AdminAccount" do
+  auth.sessions
+end
+
+auth.scope :admin, account_scope: :admin_account,
+  identity: "Admin", tenant: "Organisation" do
+  auth.sessions
+end
+```
+
+Here `Admin` belongs to `AdminAccount`. Platform-wide administrators can omit tenant mapping.
+
+## Names and helper generation
+
+When omitted, the scope name comes from `model:` or `identity:`: `User` becomes `:user`, and `Admin::Account` becomes `:admin_account`. Explicit names let the same model serve different authentication contexts.
+
+`Vouch::ApplicationHelpers` constructs helper methods from scope names when mappings are registered. A membership's qualified helper includes its parent scope, such as `current_account_user`; `current_user` is its short scope helper. Conflicting generated names raise an error during configuration rather than choosing a session at runtime.
+
+`path:` changes URL prefixes and `as:` changes route-helper prefixes. Neither changes the Warden scope or current-record helper names.
+
+## Custom associations and polymorphism
+
+Vouch resolves concrete Active Record relationships by their target classes. Specify association names if several relationships match:
+
+```ruby
+auth.scope :user, account_scope: :account,
+  identity: "User", tenant: "Organisation",
+  associations: {
+    account_identities: :memberships,
+    identity_account: :owner,
+    tenant_identities: :memberships,
+    identity_tenant: :workspace
+  } do
+  auth.sessions
+end
+```
+
+The named associations must still point to the mapped classes. Account/membership and tenant/membership relationships cannot be polymorphic; an explicit association name does not bypass that restriction. Composite primary keys are unsupported.
+
+OAuth ownership is a supported exception. An OAuth identity can belong polymorphically to its credentials owner; see [OAuth](oauth.md). Feature associations are resolved only for installed features.
+
+## Password history and verification
+
+Password-history association selection belongs on the credentials model:
+
+```ruby
+class Account < ApplicationRecord
+  has_many :password_archives
+  authenticates_with :password_trackable,
+    password_trackable: { association: :password_archives }
+end
+```
+
+Lock and reload the account before concurrent password writes so history uses the current digest. Every scope using the account shares that association selection.
+
+Run `bin/rails vouch:verify` after changing mappings. It validates loaded model and feature contracts without modifying the schema.

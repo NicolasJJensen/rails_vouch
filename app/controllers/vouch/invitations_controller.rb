@@ -1,4 +1,5 @@
-class Vouch::InvitationsController < Vouch::BaseController
+class Vouch::InvitationsController < ::ApplicationController
+  include Vouch::Authentication
   allow_unauthenticated_access only: :accept
   before_action :authorize_invitation!, only: :create
 
@@ -80,7 +81,13 @@ class Vouch::InvitationsController < Vouch::BaseController
 
     authentication_session.begin_invitation!(identity)
     if invitation_requires_registration?(identity)
-      redirect_to new_registration_path
+      if auth_mapping.membership_scope?
+        parent = Vouch.mapping_for(auth_mapping.parent_scope_name)
+        session[Vouch::Session.key_for(parent.scope_name, :destination_scope)] = auth_scope_name.to_s
+        redirect_to public_send(:"new_#{parent.helper_prefix}_registration_path")
+      else
+        redirect_to new_registration_path
+      end
     elsif current_identity && auth_mapping.account_for(identity) == current_account
       begin
         accepted = accept_pending_invitation(current_account)
