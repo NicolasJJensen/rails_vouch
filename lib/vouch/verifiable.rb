@@ -163,7 +163,10 @@ module Vouch
         (e.g. :address for Email, :e164 for Phone, :label for Totp).
       MSG
 
-      public_send(attr).to_s
+      return public_send(attr).to_s unless attr.is_a?(Array)
+
+      raise ArgumentError, "verification subject attributes cannot be empty" if attr.empty?
+      attr.map { |name| [name.to_s, public_send(name)] }.to_json
     end
 
     # Host delivery hook. Override in the including model.
@@ -208,20 +211,19 @@ module Vouch
     private
 
     def track_verifiable_subject_write(attr_name, value)
-      subject_attribute = canonical_verifiable_subject_attribute
-      return unless @verifiable_subject_ready && subject_attribute
+      subject_attributes = canonical_verifiable_subject_attributes
+      return unless @verifiable_subject_ready && subject_attributes.any?
       canonical_attribute = self.class.attribute_aliases[attr_name.to_s] || attr_name.to_s
-      return unless canonical_attribute == subject_attribute
+      return unless subject_attributes.include?(canonical_attribute)
       return if read_attribute(canonical_attribute).to_s == value.to_s
 
       invalidate_verification_for_subject_change!
     end
 
-    def canonical_verifiable_subject_attribute
-      subject_attribute = self.class.verifiable_subject_attribute
-      return unless subject_attribute
-
-      self.class.attribute_aliases[subject_attribute.to_s] || subject_attribute.to_s
+    def canonical_verifiable_subject_attributes
+      Array(self.class.verifiable_subject_attribute).map do |attribute|
+        self.class.attribute_aliases[attribute.to_s] || attribute.to_s
+      end.uniq
     end
 
     def invalidate_verification_for_subject_change!
@@ -239,8 +241,7 @@ module Vouch
     # Lock the current row before choosing the next version so both updates
     # advance the persisted counter instead of writing the same N + 1 value.
     def synchronize_verification_subject_version
-      subject_attribute = canonical_verifiable_subject_attribute
-      subject_changed = subject_attribute && will_save_change_to_attribute?(subject_attribute)
+      subject_changed = canonical_verifiable_subject_attributes.any? { |name| will_save_change_to_attribute?(name) }
       version_changed = will_save_change_to_attribute?(:verification_version)
       return true unless subject_changed || version_changed
 

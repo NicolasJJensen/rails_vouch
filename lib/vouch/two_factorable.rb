@@ -63,7 +63,7 @@ module Vouch
         verifiable_subject_attribute).
       MSG
 
-      public_send(attr).to_s
+      Array(attr).map { |name| public_send(name).to_s }.join(" · ")
     end
 
     def two_factor_enabled?

@@ -153,8 +153,12 @@ module Vouch
       if feature.to_sym == :verifiable && klass.respond_to?(:verifiable_subject_attribute)
         if configured.blank?
           errors << "scope :#{mapping.scope_name}: #{klass.name} must configure verifiable_subject_attribute"
-        elsif !attribute_available?(klass, configured)
-          errors << "scope :#{mapping.scope_name}: #{klass.name} requires configured subject attribute #{configured.inspect} for :verifiable"
+        else
+          Array(configured).each do |attribute|
+            unless attribute_available?(klass, attribute)
+              errors << "scope :#{mapping.scope_name}: #{klass.name} requires configured subject attribute #{attribute.inspect} for :verifiable"
+            end
+          end
         end
       elsif feature.to_sym == :two_factorable && klass.respond_to?(:two_factor_label_attribute) && configured.blank? && !klass.respond_to?(:verifiable_subject_attribute)
         errors << "scope :#{mapping.scope_name}: #{klass.name} must configure two_factor_label_attribute"

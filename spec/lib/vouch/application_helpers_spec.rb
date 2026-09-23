@@ -108,6 +108,28 @@ RSpec.describe Vouch::ApplicationHelpers, type: :controller do
     original ? Vouch.mappings[:member] = original : Vouch.deregister_mapping(:member)
   end
 
+  it "exposes the named tenant through the authenticated membership" do
+    allow(proxy).to receive(:user).with(:user).and_return(identity)
+    expect(controller.current_organisation).to eq(identity.organisation)
+    expect(controller).not_to respond_to(:current_tenant)
+    expect(controller.class._helper_methods).to include(:current_organisation)
+    allow(proxy).to receive(:user).with(:user).and_return(nil)
+    expect(controller.current_organisation).to be_nil
+  end
+
+  it "qualifies tenant helpers when multiple scopes can select different tenants" do
+    mapping = Vouch::Mapping.new(:customer, account: "Account", identity: "User", tenant: "Organisation")
+    mapping.resolve_reflections!
+    Vouch.register_mapping(:customer, mapping)
+    allow(proxy).to receive(:user).with(:user).and_return(identity)
+    allow(proxy).to receive(:user).with(:customer).and_return(nil)
+    expect(controller).not_to respond_to(:current_organisation)
+    expect(controller.current_user_organisation).to eq(identity.organisation)
+    expect(controller.current_customer_organisation).to be_nil
+  ensure
+    Vouch.deregister_mapping(:customer)
+  end
+
   it "also installs the small helper module on API controllers" do
     expect(ActionController::API.ancestors).to include(Vouch::ApplicationHelpers)
     expect(ActionController::API.new).to respond_to(:authenticate_user!, :current_user)

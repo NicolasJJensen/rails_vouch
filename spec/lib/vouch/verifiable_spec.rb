@@ -250,6 +250,46 @@ RSpec.describe Vouch::Verifiable do
     end
   end
 
+  describe "multi-attribute subjects" do
+    before do
+      klass = Class.new(PhoneVerification) do
+        attribute :domain, :string
+        alias_attribute :number, :e164
+        self.verifiable_subject_attribute = [:number, :domain]
+      end
+      stub_const("CompositeSubjectCredential", klass)
+    end
+
+    it "verifies the complete tuple without ambiguous concatenation" do
+      first = CompositeSubjectCredential.new(number: "ab", domain: "c")
+      second = CompositeSubjectCredential.new(number: "a", domain: "bc")
+      expect(first.verifiable_subject).not_to eq(second.verifiable_subject)
+      token = first.start_verification!.token
+      expect(second.complete_verification!(first.last_delivered_code, token: token)).to be_invalid
+      expect(first.complete_verification!(first.last_delivered_code, token: token)).to be_ok
+    end
+
+    it "invalidates a draft when either component changes and changes back" do
+      [:number, :domain].each do |attribute|
+        row = CompositeSubjectCredential.new(number: "alice", domain: "example.com")
+        token = row.start_verification!.token
+        code = row.last_delivered_code
+        original = row.public_send(attribute)
+        row[attribute] = "different"
+        row.assign_attributes(attribute => original)
+        expect(row.complete_verification!(code, token: token)).to be_invalid
+      end
+    end
+
+    it "clears successful verification when a second component changes" do
+      row = CompositeSubjectCredential.new(number: "alice", domain: "example.com")
+      row.start_verification!
+      expect(row.complete_verification!(row.last_delivered_code)).to be_ok
+      row.domain = "elsewhere.com"
+      expect(row).not_to be_verified
+    end
+  end
+
   describe "duplicate credential subjects" do
     it "allows persisted pending credentials with the same natural subject" do
       subject = "+15550009999"

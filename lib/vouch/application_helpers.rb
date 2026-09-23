@@ -40,8 +40,10 @@ module Vouch
       private
 
       def public_names(mapping)
-        [mapping.current_helper_name, :"current_#{mapping.scope_name}",
+        names = [mapping.current_helper_name, :"current_#{mapping.scope_name}",
           :"#{mapping.scope_name}_signed_in?", :"authenticate_#{mapping.scope_name}!"].uniq
+        names << :"current_#{mapping.scope_name}_#{tenant_name(mapping)}" if mapping.tenant?
+        names
       end
 
       def install_scope(mapping)
@@ -61,6 +63,31 @@ module Vouch
         end
         @generated_methods.concat(public_names(mapping))
         helper_names.concat([identity_method, short_name, signed_in_method]).uniq!
+        install_tenant_helper(mapping, identity_method) if mapping.tenant?
+      end
+
+      def tenant_name(mapping)
+        mapping.tenant_class_name.underscore.tr("/", "_")
+      end
+
+      def install_tenant_helper(mapping, identity_method)
+        name = tenant_name(mapping)
+        qualified = :"current_#{mapping.scope_name}_#{name}"
+        scope = mapping.scope_name
+        define_method(qualified) do
+          identity = public_send(identity_method)
+          identity&.public_send(Vouch.mapping_for(scope).identity_tenant_association.name)
+        end
+        helper_names << qualified
+        mappings = Vouch.each_mapping.to_a
+        return unless mappings.count { |candidate| candidate.tenant? && tenant_name(candidate) == name } == 1
+
+        short_name = :"current_#{name}"
+        return if mappings.any? { |candidate| public_names(candidate).include?(short_name) }
+
+        alias_method short_name, qualified
+        @generated_methods << short_name
+        helper_names << short_name
       end
 
       def controllers
