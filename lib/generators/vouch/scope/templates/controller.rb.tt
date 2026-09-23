@@ -1,5 +1,7 @@
 class <%= @controller_class %> < Vouch::<%= @controller_base %>
+<% unless @controller_class.deconstantize.underscore.split("/").last.singularize == @controller_route_scope.to_s -%>
   auth_scope :<%= @controller_route_scope %>
+<% end -%>
 <% if @controller_base == "RegistrationsController" && @tenant_class -%>
 
   private

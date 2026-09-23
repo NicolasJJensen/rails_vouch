@@ -49,9 +49,9 @@ RSpec.describe Vouch::Generators::EjectGenerator do
     end
 
     it "preserves auth_mapping references" do
-      run_generator(["users", "passwords"], {})
+      run_generator(["users", "password_resets"], {})
 
-      body = written("app/controllers/users/passwords_controller.rb")
+      body = written("app/controllers/users/password_resets_controller.rb")
       expect(body).to include("auth_mapping.account_class")
       expect(body).to include("auth_mapping.account_param_key")
     end
@@ -61,7 +61,7 @@ RSpec.describe Vouch::Generators::EjectGenerator do
 
       body = written("app/controllers/portal/sessions_controller.rb")
       expect(body).to include("class Portal::SessionsController < ::ApplicationController")
-      expect(body).to include("  auth_scope :user")
+      expect(body).to match(/include Vouch::Authentication\n  auth_scope :user/)
 
       expect { RubyVM::InstructionSequence.compile(body) }.not_to raise_error
     end

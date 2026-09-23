@@ -170,7 +170,7 @@ RSpec.describe "Vouch generators" do
 
     expect(routes).to include("auth.sessions\n      auth.impersonation controller: \"users/impersonations\"")
     expect(controller).to include("class Users::ImpersonationsController < Vouch::ImpersonationsController")
-    expect(controller).to include("auth_scope :user")
+    expect(controller).not_to include("auth_scope :user")
     expect(controller).to include("head :forbidden")
   end
 
@@ -433,7 +433,7 @@ RSpec.describe "Vouch generators" do
     )
     migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*oauth_identities.rb")].first)
 
-    expect(migration).to include("type: :uuid")
+    expect(migration).to include("t.uuid :account_id")
     expect(migration).to include(":auth_data")
     expect(migration).not_to include(":raw_info")
   end
@@ -468,7 +468,7 @@ RSpec.describe "Vouch generators" do
     )
     controller = File.read(File.join(@generator_directory, "app/controllers/users/invitations_controller.rb"))
 
-    expect(controller).to include("auth_scope :user")
+    expect(controller).not_to include("auth_scope :user")
     expect(controller).to include("find_by(\"LOWER(email_address) = ?\", normalized_identifier)")
     expect(controller).to include("email_address: normalized_identifier")
     expect(controller).to include("registration_required: true")

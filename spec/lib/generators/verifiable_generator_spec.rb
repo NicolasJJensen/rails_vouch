@@ -53,7 +53,7 @@ RSpec.describe Vouch::Generators::VerifiableGenerator do
       run_generator(["emails"])
 
       expect(read("app/models/email.rb")).to include("include Vouch::Verifiable")
-      expect(read("app/models/email.rb")).to include("verifiable_subject_attribute")
+      expect(read("app/models/email.rb")).to include("def deliver_verification_code")
     end
 
     it "is idempotent — a second run does not duplicate the include" do

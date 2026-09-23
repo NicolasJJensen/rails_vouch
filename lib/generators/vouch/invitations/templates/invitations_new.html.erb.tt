@@ -1,6 +1,6 @@
 <h1>Send invitation</h1>
 
-<%%= form_with url: <%= auth_scope_name %>_invitation_path, method: :post do %>
+<%%= form_with url: <%= route_helper_prefix %>_invitation_path, method: :post do %>
   <p>
     <%%= label_tag :email_address, "Email address" %>
     <%%= email_field_tag :email_address, nil, autocomplete: "email", required: true %>

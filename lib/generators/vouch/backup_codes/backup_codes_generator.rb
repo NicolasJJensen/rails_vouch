@@ -58,7 +58,7 @@ module Vouch
         unless contents.match?(/^\s*has_many\s*(?:\(\s*)?(?::backup_codes\b|["']backup_codes["'])/)
           wiring << <<~RUBY
             has_many :backup_codes, class_name: "#{backup_code_class}",
-                                    foreign_key: :#{parent_singular}_id, dependent: :destroy
+                                    #{parent_metadata.association_options(parent_singular)}, dependent: :destroy
           RUBY
         end
 
@@ -117,7 +117,7 @@ module Vouch
 
             include Vouch::BackupCodable
             has_many :backup_codes, class_name: "#{backup_code_class}",
-                                    foreign_key: :#{parent_singular}_id, dependent: :destroy
+                                    #{parent_metadata.association_options(parent_singular)}, dependent: :destroy
 
         SNIPPET
       end

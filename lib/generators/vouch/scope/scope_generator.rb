@@ -31,7 +31,7 @@ module Vouch
       CONTROLLERS = {
         "sessions"               => "SessionsController",
         "registrations"           => "RegistrationsController",
-        "passwords"               => "PasswordsController",
+        "password_resets"         => "PasswordResetsController",
         "two_factor_challenge"   => "TwoFactorChallengeController",
         "two_factor_credentials" => "TwoFactorCredentialsController",
         "invitations"             => "InvitationsController",
@@ -241,6 +241,18 @@ module Vouch
         model_metadata(name).association_key
       end
 
+      def model_primary_key_type(name)
+        primary_key_type&.to_sym || model_metadata(name).primary_key_types.values.first
+      end
+
+      def model_primary_keys(name)
+        model_metadata(name).primary_keys
+      end
+
+      def model_has_many_options(name)
+        model_metadata(name).association_options
+      end
+
       def model_metadata(name)
         @model_metadata ||= {}
         @model_metadata[name] ||= Vouch::ModelMetadata.new(name)
@@ -274,7 +286,7 @@ module Vouch
 
         foreign_key = "#{foreign_key}_id" unless foreign_key.to_s.end_with?("_id")
         inject_into_class(path, model_metadata(owner_class).declaration_name(contents)) do
-          "\n  has_many :#{association}, class_name: \"#{child_class}\", foreign_key: :#{foreign_key}\n"
+          "\n  has_many :#{association}, class_name: \"#{child_class}\", #{model_has_many_options(owner_class)}\n"
         end
       end
 

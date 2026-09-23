@@ -1,12 +1,16 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
     create_table :oauth_identities do |t|
-      t.references :<%= owner_association %>, null: false, foreign_key: { to_table: :<%= owner_table %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
-      t.string     :provider, null: false
-      t.string     :uid,      null: false
-      t.json       :auth_data
+<% owner_metadata.primary_keys.zip(owner_metadata.foreign_keys).each do |key, foreign| -%>
+      t.<%= primary_key_type || owner_primary_key_types[key] %> :<%= foreign %>, null: false
+<% end -%>
+      t.string :provider, null: false
+      t.string :uid, null: false
+      t.json :auth_data
       t.timestamps
     end
     add_index :oauth_identities, [:provider, :uid], unique: true
+    add_index :oauth_identities, <%= owner_metadata.foreign_keys.inspect %>
+    add_foreign_key :oauth_identities, :<%= owner_table %>, column: <%= owner_metadata.foreign_keys.one? ? owner_metadata.foreign_keys.first.to_sym.inspect : owner_metadata.foreign_keys.inspect %>, primary_key: <%= owner_primary_keys.one? ? owner_primary_keys.first.to_sym.inspect : owner_primary_keys.inspect %>
   end
 end

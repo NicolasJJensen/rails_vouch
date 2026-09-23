@@ -1,11 +1,18 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
     create_table :<%= model_table(@identity_class) %><%= ", id: :#{primary_key_type}" if primary_key_type %> do |t|
-      t.references :<%= model_association(@account_class) %>, null: false, index: { name: "<%= index_name(model_table(@identity_class), "#{model_association(@account_class)}_id") %>" }, foreign_key: { to_table: :<%= model_table(@account_class) %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
-<% if @tenant_class -%>
-      t.references :<%= model_association(@tenant_class) %>, null: false, index: { name: "<%= index_name(model_table(@identity_class), "#{model_association(@tenant_class)}_id") %>" }, foreign_key: { to_table: :<%= model_table(@tenant_class) %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
+<% [@account_class, @tenant_class].compact.each do |owner| -%>
+<% metadata = model_metadata(owner) -%>
+<% metadata.primary_keys.zip(metadata.foreign_keys).each do |key, foreign| -%>
+      t.<%= primary_key_type || metadata.primary_key_types[key] %> :<%= foreign %>, null: false
+<% end -%>
 <% end -%>
       t.timestamps
     end
+<% [@account_class, @tenant_class].compact.each do |owner| -%>
+<% metadata = model_metadata(owner) -%>
+    add_index :<%= model_table(@identity_class) %>, <%= metadata.foreign_keys.inspect %>, name: "<%= index_name(model_table(@identity_class), metadata.foreign_keys.join('_')) %>"
+    add_foreign_key :<%= model_table(@identity_class) %>, :<%= metadata.table_name %>, column: <%= metadata.foreign_keys.one? ? metadata.foreign_keys.first.to_sym.inspect : metadata.foreign_keys.inspect %>, primary_key: <%= metadata.primary_keys.one? ? metadata.primary_keys.first.to_sym.inspect : metadata.primary_keys.inspect %>
+<% end -%>
   end
 end

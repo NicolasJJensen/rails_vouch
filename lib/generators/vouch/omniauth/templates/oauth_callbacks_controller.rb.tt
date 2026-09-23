@@ -1,4 +1,4 @@
-class <%= controller_scope_path.camelize %>::TwoFactorChallengeController < Vouch::TwoFactorChallengeController
+class <%= controller_scope_path.camelize %>::OmniAuthsController < Vouch::OmniAuthsController
 <% unless controller_scope_path.camelize.underscore.split("/").last.singularize == auth_scope_name.to_s -%>
   auth_scope :<%= auth_scope_name %>
 <% end -%>

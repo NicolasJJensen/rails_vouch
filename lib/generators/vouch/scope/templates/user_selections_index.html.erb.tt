@@ -3,8 +3,8 @@
 <%%= form_with url: <%= @controller_route_scope %>_select_path, method: :post do %>
   <%% @identities.each do |identity| %>
     <p>
-      <%%= radio_button_tag :identity_id, identity.id, false, id: "identity_#{identity.id}" %>
-      <%%= label_tag "identity_#{identity.id}", "#{identity.class.model_name.human} ##{identity.id}" %>
+      <%%= radio_button_tag :identity_id, Vouch::RecordKey.to_param(identity), false, id: "identity_#{Vouch::RecordKey.to_param(identity)}" %>
+      <%%= label_tag "identity_#{Vouch::RecordKey.to_param(identity)}", "#{identity.class.model_name.human} ##{Vouch::RecordKey.to_param(identity)}" %>
     </p>
   <%% end %>
   <%%= submit_tag "Continue" %>

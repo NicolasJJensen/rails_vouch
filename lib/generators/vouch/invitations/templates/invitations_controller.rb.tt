@@ -2,7 +2,13 @@
 
 # Invitation authorization and account provisioning are host-owned policy.
 class <%= scope_module %>::InvitationsController < Vouch::InvitationsController
+<% unless controller_scope_path.camelize.underscore.split("/").last.singularize == auth_scope_name.to_s -%>
   auth_scope :<%= auth_scope_name %>
+<% end -%>
+
+  on_invitation_token_generation do |identifier, invitation|
+    VouchInvitationMailer.invitation(identifier, invitation).deliver_later
+  end
 
   private
 

@@ -28,6 +28,44 @@ module Vouch
 
       private
 
+      def route_declaration_for(model_name, selected_scope = nil)
+        path = File.join(destination_root, "config/routes.rb")
+        return unless File.file?(path)
+        declarations = File.read(path).lines.select { |line| line.match?(/\.scope\b/) }
+        matches = if selected_scope
+          declarations.select { |line| line.match?(/\.scope\s+:#{Regexp.escape(selected_scope.to_s)}\b/) }
+        else
+          declarations.select { |line| line.match?(/\b(?:model|identity|account):\s*["']#{Regexp.escape(model_name)}["']/) }
+        end
+        raise Thor::Error, "Several authentication scopes use #{model_name}; pass --auth-scope" if matches.length > 1
+        matches.first
+      end
+
+      def inferred_auth_scope(model_name)
+        declaration = route_declaration_for(model_name)
+        declaration&.match(/\.scope\s+:([a-zA-Z_][a-zA-Z0-9_]*)/)&.captures&.first || model_name.underscore.tr("/", "_")
+      end
+
+      def inferred_controller_path(model_name, scope_name)
+        declaration = route_declaration_for(model_name, scope_name) || route_declaration_for(model_name)
+        declaration&.match(/\bpath:\s*["']([^"']+)["']/)&.captures&.first || scope_name.to_s.pluralize
+      end
+
+      def route_helper_prefix
+        declaration = route_declaration_for(model_metadata.class_name, auth_scope_name)
+        declaration&.match(/\bas:\s*(?:["']([^"']+)["']|:([a-zA-Z_][a-zA-Z0-9_]*))/)&.captures&.compact&.first || auth_scope_name
+      end
+
+      def inject_model_code(path, metadata, wiring)
+        source = File.read(path)
+        dependency = source.scan(/^[ \t]*include Vouch::(?:Authenticatable|Verifiable|TwoFactorable)[ \t]*\n/).last
+        if dependency
+          inject_into_file(path, after: dependency) { wiring }
+        else
+          inject_into_class(path, metadata.declaration_name(source)) { wiring }
+        end
+      end
+
       def primary_key_type
         options[:primary_key_type].presence
       end

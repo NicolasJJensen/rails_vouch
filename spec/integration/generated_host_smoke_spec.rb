@@ -260,7 +260,7 @@ RSpec.describe "generated host smoke test", :generated_host do
             "#{Regexp.last_match(2)}end"
           ].join
         end
-        raise "generated single-model invitation route was not inserted" if updated_routes == routes
+        raise "generated single-model invitation route was not inserted" unless updated_routes.include?("auth.invitations")
         write_file(directory, "config/routes.rb", updated_routes)
       end
       if variant == :namespaced
@@ -388,11 +388,11 @@ RSpec.describe "generated host smoke test", :generated_host do
 
           Rails.application.config.after_initialize do
             module #{namespace}; end
-            require_dependency Rails.root.join("app/controllers/#{account_path_name}/passwords_controller").to_s
+            require_dependency Rails.root.join("app/controllers/#{account_path_name}/password_resets_controller").to_s
             require_dependency Rails.root.join("app/controllers/#{path_name}/invitations_controller").to_s
             require_dependency Rails.root.join("app/controllers/#{path_name}/impersonations_controller").to_s
 
-            #{account_namespace}::PasswordsController.on_password_reset_token_generation do |_account, token|
+            #{account_namespace}::PasswordResetsController.on_password_reset_token_generation do |_account, token|
               FileUtils.mkdir_p(Rails.root.join("tmp"))
               File.write(Rails.root.join("tmp/password_reset_delivery"), token.to_s)
             end
@@ -544,13 +544,13 @@ RSpec.describe "generated host smoke test", :generated_host do
           registered = #{owner_name}.find_by(login: "registered-login")
           abort "custom registration did not persist login" unless registered
           password_session = ActionDispatch::Integration::Session.new(Rails.application)
-          password_session.get("/#{account_path_name}/password/new", params: { format: :html })
+          password_session.get("/#{account_path_name}/password_reset/new", params: { format: :html })
           unless password_session.response.successful?
             exception = password_session.response.request.env["action_dispatch.exception"]
             abort "password reset form status: \#{password_session.response.status}; location=\#{password_session.response.headers['Location'].inspect}; exception=\#{exception&.class}: \#{exception&.message}; body=\#{password_session.response.body.to_s[0, 500].inspect}"
           end
           abort "password reset form did not use the resolver parameter" unless password_session.response.body.include?('name="email_address"')
-          password_session.post("/#{account_path_name}/password", params: { email_address: account.email_address })
+          password_session.post("/#{account_path_name}/password_reset", params: { email_address: account.email_address })
           unless password_session.response.redirect?
             request = password_session.response.request
             exception = request.env["action_dispatch.exception"]
@@ -560,7 +560,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           delivered_reset_token = File.read(Rails.root.join("tmp/password_reset_delivery")) if File.exist?(Rails.root.join("tmp/password_reset_delivery"))
           abort "password reset delivery hook did not run" unless delivered_reset_token&.length.to_i >= 20
           delivered_mail = ActionMailer::Base.deliveries.last
-          abort "generated password reset email did not contain its reset URL" unless delivered_mail&.body&.decoded&.include?("/password/edit?token=")
+          abort "generated password reset email did not contain its reset URL" unless delivered_mail&.body&.decoded&.include?("/password_reset/edit?token=")
           # Registration signs its browser session in. Start the seed-account
           # sign-in flow in a fresh browser session to avoid redirecting the
           # already-authenticated registered account.
@@ -664,14 +664,14 @@ RSpec.describe "generated host smoke test", :generated_host do
         end
         if #{variant == :namespaced}
           raw_reset_token = account.generate_password_reset_token!.value
-          password_session.get("/#{account_path_name}/password/edit", params: { token: raw_reset_token, format: :html })
+          password_session.get("/#{account_path_name}/password_reset/edit", params: { token: raw_reset_token, format: :html })
           abort "password reset edit status: \#{password_session.response.status}; location=\#{password_session.response.headers['Location'].inspect}; body=\#{password_session.response.body.to_s[0, 500].inspect}" unless password_session.response.successful?
           abort "password reset edit form did not nest account parameters" unless password_session.response.body.include?('name="#{Vouch::ModelMetadata.new(owner_name).param_key}[password]"')
           reset_params = { #{owner_name}.model_name.param_key => { password: "replacement123", password_confirmation: "replacement123" } }
           invalid_reset_params = { #{owner_name}.model_name.param_key => { password: "short", password_confirmation: "mismatch" } }
-          password_session.patch("/#{account_path_name}/password", params: invalid_reset_params.merge(token: raw_reset_token))
+          password_session.patch("/#{account_path_name}/password_reset", params: invalid_reset_params.merge(token: raw_reset_token))
           abort "invalid password reset status: \#{password_session.response.status}" unless password_session.response.status == 422
-          password_session.patch("/#{account_path_name}/password", params: reset_params.merge(token: raw_reset_token))
+          password_session.patch("/#{account_path_name}/password_reset", params: reset_params.merge(token: raw_reset_token))
           unless password_session.response.redirect?
             exception = password_session.response.request.env['action_dispatch.exception']
             abort "password reset update status: \#{password_session.response.status}; body=\#{password_session.response.body.to_s[0, 1000].inspect}; exception=\#{exception&.class}: \#{exception&.message}; backtrace=\#{exception&.backtrace&.first(10).inspect}"
@@ -777,6 +777,8 @@ RSpec.describe "generated host smoke test", :generated_host do
     stdout, stderr, status = Open3.capture3(environment, *command, chdir: directory)
     return stdout if status.success?
 
-    raise "generated host command failed (#{arguments.first}):\n#{stdout}\n#{stderr}"
+    log = File.join(directory, "log/test.log")
+    diagnostics = File.file?(log) ? File.readlines(log).last(100).join : ""
+    raise "generated host command failed (#{arguments.first}):\n#{stdout}\n#{stderr}\n#{diagnostics}"
   end
 end

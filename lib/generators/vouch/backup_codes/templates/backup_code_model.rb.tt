@@ -6,5 +6,5 @@
 # code stamps <%= "`used_at`" %> and takes the row out of rotation.
 class <%= backup_code_class %> < ApplicationRecord
   self.table_name = "<%= join_table_name %>"
-  belongs_to :<%= parent_singular %>, class_name: "<%= parent_class %>"
+  belongs_to :<%= parent_singular %>, class_name: "<%= parent_class %>", <%= parent_metadata.association_options(parent_singular) %>
 end

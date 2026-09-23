@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../feature_base"
+require_relative "../route_editor"
 
 module Vouch
   module Generators
@@ -26,6 +27,8 @@ module Vouch
       class_option :controller_path, type: :string, default: nil,
                                      desc: "Controller namespace path used by the authentication routes"
 
+      class_option :model_only, type: :boolean, default: false
+
       def validate_account_class!
         return if options[:single_model]
         return if account_class.present?
@@ -44,13 +47,47 @@ module Vouch
       end
 
       def create_invitations_controller
-        template "invitations_controller.rb.tt",
-                 "app/controllers/#{controller_scope_path}/invitations_controller.rb"
+        return if options[:model_only]
+        path = File.join(destination_root, "app/controllers/#{controller_scope_path}/invitations_controller.rb")
+        template "invitations_controller.rb.tt", path unless File.file?(path)
       end
 
       def create_invitations_view
-        template "invitations_new.html.erb.tt",
-                 "app/views/#{view_scope_path}/invitations/new.html.erb"
+        return if options[:model_only]
+        path = File.join(destination_root, "app/views/#{view_scope_path}/invitations/new.html.erb")
+        template "invitations_new.html.erb.tt", path unless File.file?(path)
+      end
+
+      def configure_model
+        path = File.join(destination_root, model_metadata.model_path)
+        return unless File.file?(path)
+        contents = File.read(path)
+        wiring = +"\n"
+        wiring << "  include Vouch::Invitable::Concern\n" unless contents.include?("include Vouch::Invitable::Concern")
+        wiring << "  belongs_to :inviter, class_name: \"#{identity_class_name}\", #{model_metadata.association_options("inviter")}, optional: true\n" unless contents.include?("belongs_to :inviter")
+        wiring << "  has_many :invitees, class_name: \"#{identity_class_name}\", #{model_metadata.association_options("inviter")}, dependent: :nullify\n" unless contents.include?("has_many :invitees")
+        inject_into_class(path, model_metadata.declaration_name(contents)) { wiring } unless wiring == "\n"
+      end
+
+      def configure_routes
+        return if options[:model_only]
+        path = File.join(destination_root, "config/routes.rb")
+        return unless File.file?(path)
+        RouteEditor.ensure_wrapper(path, "Vouch.routes(self) do |auth|\nend\n")
+        declaration = "auth.invitations controller: \"#{controller_scope_path}/invitations\""
+        result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
+        if result == :unsafe && options[:single_model]
+          result = RouteEditor.insert_scope(path, "auth.scope :#{auth_scope_name}, model: \"#{identity_class_name}\" do\n  #{declaration}\nend\n")
+        end
+        say "Add auth.invitations inside auth.scope :#{auth_scope_name} in config/routes.rb", :yellow if result == :unsafe
+      end
+
+      def create_delivery
+        return if options[:model_only]
+        mailer_path = File.join(destination_root, "app/mailers/vouch_invitation_mailer.rb")
+        template "invitation_mailer.rb.tt", mailer_path unless File.file?(mailer_path)
+        view_path = File.join(destination_root, "app/views/vouch_invitation_mailer/invitation.text.erb")
+        template "invitation_mailer.text.erb.tt", view_path unless File.file?(view_path)
       end
 
       private

@@ -1,7 +1,7 @@
 class <%= @identity_class %> < ApplicationRecord
   self.table_name = "<%= model_table(@identity_class) %>"
-  belongs_to :<%= model_association(@account_class) %>, class_name: "<%= @account_class %>"
+  belongs_to :<%= model_association(@account_class) %>, class_name: "<%= @account_class %>", <%= model_has_many_options(@account_class) %>
 <% if @tenant_class -%>
-  belongs_to :<%= model_association(@tenant_class) %>, class_name: "<%= @tenant_class %>"
+  belongs_to :<%= model_association(@tenant_class) %>, class_name: "<%= @tenant_class %>", <%= model_has_many_options(@tenant_class) %>
 <% end -%>
 end

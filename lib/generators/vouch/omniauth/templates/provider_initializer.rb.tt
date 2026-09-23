@@ -1,0 +1,6 @@
+Rails.application.config.middleware.use OmniAuth::Builder do
+  provider :<%= options[:provider] %>,
+    Rails.application.credentials.dig(:<%= options[:provider] %>, :client_id),
+    Rails.application.credentials.dig(:<%= options[:provider] %>, :client_secret),
+    path_prefix: "/<%= inferred_controller_path(owner_class, auth_scope_name) %>/auth"
+end

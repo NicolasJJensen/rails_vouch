@@ -34,6 +34,14 @@ module Vouch
                            "db/migrate/create_vouch_recovery_codes.rb"
       end
 
+      def configure_model
+        path = File.join(destination_root, model_metadata.model_path)
+        return unless File.file?(path)
+        source = File.read(path)
+        return if source.include?("include Vouch::Recoverable") || source.include?("authenticates_with :recoverable")
+        inject_into_class(path, model_metadata.declaration_name(source)) { "\n  include Vouch::Recoverable\n" }
+      end
+
       private
 
       def primary_key_type
@@ -46,6 +54,18 @@ module Vouch
 
       def model_metadata
         @model_metadata ||= Vouch::ModelMetadata.new(scope)
+      end
+
+      def recoverable_primary_keys
+        model_metadata.primary_keys
+      end
+
+      def recoverable_primary_key_type
+        (primary_key_type || model_metadata.primary_key_types[recoverable_primary_keys.first] || :bigint).to_sym
+      end
+
+      def composite_recoverable?
+        recoverable_primary_keys.length > 1
       end
 
       def host_migration_class_name

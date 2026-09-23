@@ -40,7 +40,7 @@ RSpec.describe 'Scope generator integration contracts' do
     expect(identity).to include('self.table_name = "admin_users"')
     migrations = Dir["#{@directory}/db/migrate/*.rb"].map { |path| File.read(path) }.join
     expect(migrations).to include('create_table :admin_users')
-    expect(migrations).to include('to_table: :admin_accounts')
+    expect(migrations).to include('add_foreign_key :admin_users, :admin_accounts')
   end
   it 'inserts the new mapping after an existing customized feature block' do
     File.write("#{@directory}/config/routes.rb", <<~SOURCE)

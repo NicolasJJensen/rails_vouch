@@ -1,5 +1,7 @@
 class <%= controller_class_name %> < Vouch::ImpersonationsController
+<% unless scope.camelize.underscore.split("/").last.singularize == auth_scope_name.to_s -%>
   auth_scope :<%= auth_scope_name %>
+<% end -%>
 
   private
 

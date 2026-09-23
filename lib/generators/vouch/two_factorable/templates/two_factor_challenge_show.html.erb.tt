@@ -4,8 +4,8 @@
   <p role="alert"><%%= flash[:alert] %></p>
 <%% end %>
 
-<%% credential_param = "#{@credential.model_name.singular}-#{@credential.to_param}" %>
-<%%= form_with url: <%= auth_scope_name %>_two_factor_challenge_path(credential_param), method: :patch do %>
+<%% credential_param = "#{@credential.model_name.singular}-#{Vouch::RecordKey.to_param(@credential)}" %>
+<%%= form_with url: <%= route_helper_prefix %>_two_factor_challenge_path(credential_param), method: :patch do %>
   <p>
     <%%= label_tag :code, "Verification code" %>
     <%%= text_field_tag :code, nil, autocomplete: "one-time-code", required: true %>
@@ -13,4 +13,4 @@
   <%%= submit_tag "Verify" %>
 <%% end %>
 
-<%%= button_to "Send another code", send_code_<%= auth_scope_name %>_two_factor_challenge_path(credential_param), method: :post %>
+<%%= button_to "Send another code", send_code_<%= route_helper_prefix %>_two_factor_challenge_path(credential_param), method: :post %>

@@ -135,7 +135,7 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `PATCH/PUT /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#update` |
 | | `DELETE /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#destroy` |
 | `auth.oauth_callbacks` | `GET /users/auth/:provider/callback` | No named helper | `Users::OmniAuthsController#callback` |
-| | `GET /users/auth/failure` | No named helper | `Users::OmniAuthsController#failure` |
+| | `GET /users/auth/failure` | `users_auth_failure_path` | `Users::OmniAuthsController#failure` |
 | `auth.invitations` | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
 | | `POST /users/invitation` | `user_invitation_path` | `Users::InvitationsController#create` |
 | | `GET /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |

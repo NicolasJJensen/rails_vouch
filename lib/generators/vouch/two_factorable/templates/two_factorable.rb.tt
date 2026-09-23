@@ -1,12 +1,16 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
-    change_table :<%= table_name %> do |t|
-      t.string :two_factor_nonce
-      t.datetime :two_factor_enabled_at
-      t.bigint   :two_factor_failed_attempts, default: 0, null: false
-      t.datetime :two_factor_locked_at
-      t.datetime :two_factor_last_used_at
-    end
-    add_index :<%= table_name %>, :two_factor_enabled_at
+    add_column :<%= table_name %>, :two_factor_nonce, :string unless column_exists?(:<%= table_name %>, :two_factor_nonce)
+    add_column :<%= table_name %>, :two_factor_enabled_at, :datetime unless column_exists?(:<%= table_name %>, :two_factor_enabled_at)
+    add_column :<%= table_name %>, :two_factor_failed_attempts, :bigint, default: 0, null: false unless column_exists?(:<%= table_name %>, :two_factor_failed_attempts)
+    add_column :<%= table_name %>, :two_factor_locked_at, :datetime unless column_exists?(:<%= table_name %>, :two_factor_locked_at)
+    add_column :<%= table_name %>, :two_factor_last_used_at, :datetime unless column_exists?(:<%= table_name %>, :two_factor_last_used_at)
+    add_column :<%= table_name %>, :verification_nonce, :string unless column_exists?(:<%= table_name %>, :verification_nonce)
+    add_column :<%= table_name %>, :verified_at, :datetime unless column_exists?(:<%= table_name %>, :verified_at)
+    add_column :<%= table_name %>, :verification_version, :bigint, default: 0, null: false unless column_exists?(:<%= table_name %>, :verification_version)
+    add_column :<%= table_name %>, :verification_attempts, :bigint, default: 0, null: false unless column_exists?(:<%= table_name %>, :verification_attempts)
+    add_column :<%= table_name %>, :verification_locked_at, :datetime unless column_exists?(:<%= table_name %>, :verification_locked_at)
+    add_index :<%= table_name %>, :two_factor_enabled_at unless index_exists?(:<%= table_name %>, :two_factor_enabled_at)
+    add_index :<%= table_name %>, :verified_at unless index_exists?(:<%= table_name %>, :verified_at)
   end
 end

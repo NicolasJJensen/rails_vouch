@@ -2,14 +2,17 @@ class <%= codes_migration_class_name %> < ActiveRecord::Migration[<%= Rails::VER
   def change
     create_table :vouch_recovery_codes<%= ", id: :#{primary_key_type}" if primary_key_type %> do |t|
       t.string   :recoverable_type, null: false
-      t.<%= primary_key_type || "bigint" %>   :recoverable_id, null: false
+      t.<%= recoverable_primary_key_type %>   :recoverable_id, null: <%= composite_recoverable? %>
+<% if composite_recoverable? -%>
+      t.string   :recoverable_key, null: false
+<% end -%>
       t.string   :code_digest,      null: false
       t.datetime :used_at
       t.timestamps
     end
 
     add_index :vouch_recovery_codes,
-              [:recoverable_type, :recoverable_id],
+              [<%= composite_recoverable? ? ":recoverable_type, :recoverable_key" : ":recoverable_type, :recoverable_id" %>],
               name: "index_vouch_recovery_codes_on_recoverable"
   end
 end

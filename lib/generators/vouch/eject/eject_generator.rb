@@ -12,7 +12,7 @@ module Vouch
     # the class declaration is rewritten for the host scope.
     #
     #   bin/rails g vouch:eject users sessions
-    #   bin/rails g vouch:eject admins passwords
+    #   bin/rails g vouch:eject admins password_resets
     #
     class EjectGenerator < Rails::Generators::Base
       argument :scope,           type: :string, banner: "scope"
@@ -25,7 +25,7 @@ module Vouch
         "sessions"               => "SessionsController",
         "membership_sessions"    => "MembershipSessionsController",
         "registrations"          => "RegistrationsController",
-        "passwords"              => "PasswordsController",
+        "password_resets"        => "PasswordResetsController",
         "invitations"            => "InvitationsController",
         "two_factor_challenge"   => "TwoFactorChallengeController",
         "two_factor_credentials" => "TwoFactorCredentialsController",
@@ -69,7 +69,7 @@ module Vouch
 
       def add_auth_scope(body)
         body.sub(
-          /^(class .*\n)/,
+          /^(  include Vouch::Authentication\n)/,
           "\\1  auth_scope #{options[:auth_scope].to_sym.inspect}\n"
         )
       end

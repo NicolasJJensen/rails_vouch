@@ -26,6 +26,37 @@ module Vouch
       class_name.demodulize.underscore
     end
 
+    def primary_keys
+      model = resolved_model
+      keys = if model&.respond_to?(:primary_keys)
+               model.primary_keys
+             elsif model&.respond_to?(:primary_key)
+               model.primary_key
+             end
+      Array(keys.presence || "id").map(&:to_s)
+    end
+
+    def primary_key_types
+      model = resolved_model
+      columns = model.respond_to?(:columns_hash) && model.table_exists? ? model.columns_hash : {}
+      primary_keys.to_h { |key| [key, columns[key]&.sql_type == "bigint" ? :bigint : (columns[key]&.type || :bigint)] }
+    end
+
+    def composite_primary_key?
+      primary_keys.length > 1
+    end
+
+    def foreign_keys(prefix = association_key)
+      composite_primary_key? ? primary_keys.map { |key| "#{prefix}_#{key}" } : ["#{prefix}_id"]
+    end
+
+    def association_options(prefix = association_key)
+      keys = foreign_keys(prefix)
+      foreign = keys.one? ? keys.first.to_sym.inspect : keys.inspect
+      primary = primary_keys.one? ? primary_keys.first.to_sym.inspect : primary_keys.inspect
+      "foreign_key: #{foreign}, primary_key: #{primary}"
+    end
+
     def declaration_name(source)
       return class_name if source.match?(/^\s*class\s+#{Regexp.escape(class_name)}\b/)
 

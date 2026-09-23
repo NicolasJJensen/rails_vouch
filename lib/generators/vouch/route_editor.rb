@@ -59,21 +59,24 @@ module Vouch
         return :unsafe unless wrapper
 
         receiver = Regexp.escape(wrapper.fetch(:variable))
-        pattern = /^[ \t]*#{receiver}\.scope\s+:#{Regexp.escape(scope_name.to_s)}\b[^\n]*\bdo(?:[ \t]*\|[ \t]*(\w+)[ \t]*\|)?[ \t]*(?:#.*)?$/
+        pattern = /^[ \t]*#{receiver}\.scope\b[^\n]*\bdo(?:[ \t]*\|[ \t]*(\w+)[ \t]*\|)?[ \t]*(?:#.*)?$/
         matches = source.to_enum(:scan, pattern).map { Regexp.last_match }
         matches.select! do |match|
           line = source[0...match.begin(0)].count("\n")
-          line > wrapper[:start_line] && line < wrapper[:end_line]
+          declaration = match[0].sub(/\s+do\b.*$/, "")
+          name = scope_names(Ripper.sexp(declaration), wrapper[:variable]).first
+          line > wrapper[:start_line] && line < wrapper[:end_line] && name.to_s == scope_name.to_s
         end
         block = matching_block(source, matches, pattern)
         return :unsafe unless block
 
         variable = block[:variable] || wrapper[:variable]
-        method = feature.split(".").last
+        call = feature.split(".", 2).last
+        method = call[/\A\w+/]
         body = source.lines[block[:start_line]..block[:end_line]].join
         return :duplicate if feature_call?(Ripper.sexp(body), variable, method)
 
-        insert(path, source, block, "#{variable}.#{method}")
+        insert(path, source, block, "#{variable}.#{call}")
       end
 
       def feature_call?(node, variable, method)

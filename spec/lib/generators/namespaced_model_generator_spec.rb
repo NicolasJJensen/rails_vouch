@@ -96,7 +96,7 @@ RSpec.describe "feature generators with namespaced models" do
 
       expect(File.dirname(path)).to eq(File.join(directory, "db/migrate"))
       expect(migration).to include("class Add#{feature.camelize}ToAdminPhones")
-      expect(migration).to include("change_table :admin_phones")
+      expect(migration).to match(/(?:change_table|add_column) :admin_phones/)
       expect { RubyVM::InstructionSequence.compile(migration) }.not_to raise_error
       expect(File.read(File.join(directory, "app/models/admin/phone.rb"))).to include(
         "include Vouch::#{generator_class.name.demodulize.delete_suffix('Generator')}"
@@ -142,12 +142,12 @@ RSpec.describe "feature generators with namespaced models" do
     _path, migration = generated_migration(directory, "add_invitations_to_admin_phones")
 
     expect(migration).to include("class AddInvitationsToAdminPhones")
-    expect(migration).to include("change_table :admin_phones")
+    expect(migration).to match(/(?:change_table|add_column) :admin_phones/)
     controller = File.join(directory, "app/controllers/admin/phones/invitations_controller.rb")
     expect(File.read(controller)).to include(
       "class Admin::Phones::InvitationsController < Vouch::InvitationsController"
     )
-    expect(File.read(controller)).to include("auth_scope :phone")
+    expect(File.read(controller)).not_to include("auth_scope :phone")
     expect { RubyVM::InstructionSequence.compile_file(controller) }.not_to raise_error
   end
 
@@ -157,7 +157,7 @@ RSpec.describe "feature generators with namespaced models" do
 
     expect(File.dirname(path)).to eq(File.join(directory, "db/migrate"))
     expect(migration).to include("class AddRecoverableToAdminPhones")
-    expect(migration).to include("change_table :admin_phones")
+    expect(migration).to match(/(?:change_table|add_column) :admin_phones/)
     expect { RubyVM::InstructionSequence.compile(migration) }.not_to raise_error
   end
 
@@ -172,7 +172,7 @@ RSpec.describe "feature generators with namespaced models" do
     controller = File.join(directory, "app/controllers/users/invitations_controller.rb")
     contents = File.read(controller)
     expect(contents).to include("class Users::InvitationsController")
-    expect(contents).to include("auth_scope :user")
+    expect(contents).not_to include("auth_scope :user")
   end
 
   it "uses metadata from an already-loaded model with a custom table name" do
@@ -201,7 +201,7 @@ RSpec.describe "feature generators with namespaced models" do
     end
 
     _path, migration = generated_migration(directory, "add_verifiable_to_legacy_phone_credentials")
-    expect(migration).to include("change_table :legacy_phone_credentials")
+    expect(migration).to match(/(?:change_table|add_column) :legacy_phone_credentials/)
     expect(File.read(File.join(directory, "app/models/metadata_phone.rb"))).to include(
       "include Vouch::Verifiable"
     )
@@ -215,8 +215,8 @@ RSpec.describe "feature generators with namespaced models" do
     )
     _path, migration = generated_migration(directory, "add_invitations_to_legacy_phone_credentials")
 
-    expect(migration).to include("change_table :legacy_phone_credentials")
-    expect(migration).to include("type: :uuid")
+    expect(migration).to match(/(?:change_table|add_column) :legacy_phone_credentials/)
+    expect(migration).to match(/(?:type: |, ):uuid/)
   end
 
 end

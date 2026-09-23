@@ -10,22 +10,22 @@ module Vouch
       self.feature_template_name = "password_resetable"
       desc "Add password reset token columns to the account table."
 
+      argument :account_scope, type: :string, optional: true, banner: "account_model"
+      class_option :model_only, type: :boolean, default: false,
+                                desc: "Generate the migration and model wiring only"
+
       class_option :auth_scope, type: :string, default: nil,
                                 desc: "Authentication route scope for optional UI"
       class_option :controller_path, type: :string, default: nil,
                                      desc: "Controller namespace path for optional UI"
 
-      def initialize(args = [], options = {}, config = {})
-        super
-        validate_optional_ui!
-      end
-
       def create_optional_ui
-        return unless options[:auth_scope].present?
+        return if options[:model_only]
+        return unless auth_scope_name.present?
 
-        template "passwords_controller.rb.tt", "app/controllers/#{controller_scope_path}/passwords_controller.rb"
-        template "passwords_new.html.erb.tt", "app/views/#{view_scope_path}/passwords/new.html.erb"
-        template "passwords_edit.html.erb.tt", "app/views/#{view_scope_path}/passwords/edit.html.erb"
+        template "password_resets_controller.rb.tt", "app/controllers/#{controller_scope_path}/password_resets_controller.rb" unless File.file?(File.join(destination_root, "app/controllers/#{controller_scope_path}/password_resets_controller.rb"))
+        template "password_resets_new.html.erb.tt", "app/views/#{view_scope_path}/password_resets/new.html.erb" unless File.file?(File.join(destination_root, "app/views/#{view_scope_path}/password_resets/new.html.erb"))
+        template "password_resets_edit.html.erb.tt", "app/views/#{view_scope_path}/password_resets/edit.html.erb" unless File.file?(File.join(destination_root, "app/views/#{view_scope_path}/password_resets/edit.html.erb"))
       end
 
       def configure_model
@@ -55,35 +55,38 @@ module Vouch
       end
 
       def configure_routes
-        return unless options[:auth_scope].present?
+        return if options[:model_only]
+        return unless auth_scope_name.present?
 
         path = File.join(destination_root, "config/routes.rb")
-        result = RouteEditor.insert_feature(path, options[:auth_scope], "auth.passwords")
-        say_status :route, "added auth.passwords inside :#{options[:auth_scope]}", :green if result == :inserted
-        say_status :route, "auth.passwords already exists inside :#{options[:auth_scope]}", :green if result == :duplicate
+        wrapper = "Vouch.routes(self) do |auth|\nend\n"
+        RouteEditor.ensure_wrapper(path, wrapper) if File.file?(path)
+        declaration = "auth.password_resets controller: \"#{controller_scope_path}/password_resets\""
+        result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
+        if result == :unsafe && File.file?(path)
+          scope_block = "auth.scope :#{auth_scope_name}, model: \"#{model_metadata.class_name}\" do\n  #{declaration}\nend\n"
+          result = RouteEditor.insert_scope(path, scope_block)
+        end
+        say_status :route, "added auth.password_resets inside :#{auth_scope_name}", :green if result == :inserted
+        say_status :route, "auth.password_resets already exists inside :#{auth_scope_name}", :green if result == :duplicate
         return unless result == :unsafe
 
-        say "Add auth.passwords inside auth.scope :#{options[:auth_scope]} in config/routes.rb", :yellow
+        say "Add auth.password_resets inside auth.scope :#{auth_scope_name} in config/routes.rb", :yellow
       end
 
       def create_delivery
         return unless ui_enabled?
 
-        template "password_reset_mailer.rb.tt", "app/mailers/#{mailer_path}.rb"
-        template "password_reset_mailer_reset.text.erb.tt", "app/views/#{mailer_path}/reset.text.erb"
+        mailer = File.join(destination_root, "app/mailers/#{mailer_path}.rb")
+        view = File.join(destination_root, "app/views/#{mailer_path}/reset.text.erb")
+        template "password_reset_mailer.rb.tt", mailer unless File.file?(mailer)
+        template "password_reset_mailer_reset.text.erb.tt", view unless File.file?(view)
       end
 
       private
 
-      def validate_optional_ui!
-        return if options[:auth_scope].blank? && options[:controller_path].blank?
-        return if options[:auth_scope].present? && options[:controller_path].present?
-
-        raise Thor::Error, "Pass --auth-scope and --controller-path together to generate password reset UI."
-      end
-
       def controller_scope_path
-        options[:controller_path]
+        options[:controller_path].presence || inferred_controller_path(model_metadata.class_name, auth_scope_name)
       end
 
       def view_scope_path
@@ -91,7 +94,9 @@ module Vouch
       end
 
       def auth_scope_name
-        options[:auth_scope]
+        return options[:auth_scope] if options[:auth_scope].present?
+
+        account_scope.present? ? owner_scope_name : inferred_auth_scope(model_metadata.class_name)
       end
 
       def account_param_key
@@ -99,11 +104,23 @@ module Vouch
       end
 
       def ui_enabled?
-        options[:auth_scope].present? && options[:controller_path].present?
+        !options[:model_only] && auth_scope_name.present?
       end
 
       def mailer_class_name
         "#{model_metadata.class_name}PasswordResetMailer"
+      end
+
+      def model_metadata
+        @model_metadata ||= Vouch::ModelMetadata.new(account_scope.presence || scope)
+      end
+
+      def owner_scope_name
+        if account_scope.present?
+          scope.to_s.demodulize.underscore.singularize
+        else
+          model_metadata.class_name.demodulize.underscore.singularize
+        end
       end
 
       def mailer_path

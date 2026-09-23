@@ -1,5 +1,4 @@
 class OauthIdentity < ApplicationRecord
   include Vouch::OAuthIdentity::Concern
-
-  belongs_to :<%= owner_association %><%= owner_class_option %>
+  belongs_to :<%= owner_association %><%= owner_class_option %>, <%= owner_metadata.association_options %>
 end

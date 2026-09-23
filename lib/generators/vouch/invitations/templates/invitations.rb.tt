@@ -1,12 +1,13 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
-    change_table :<%= table_name %> do |t|
-      t.string   :invitation_token
-      t.datetime :invitation_sent_at
-      t.datetime :invitation_accepted_at
-      t.boolean  :invitation_registration_required, default: false, null: false
-      t.references :inviter, foreign_key: { to_table: :<%= table_name %> }<%= ", type: :#{primary_key_type}" if primary_key_type %>
-    end
-    add_index :<%= table_name %>, :invitation_token, unique: true
+    add_column :<%= table_name %>, :invitation_token, :string unless column_exists?(:<%= table_name %>, :invitation_token)
+    add_column :<%= table_name %>, :invitation_sent_at, :datetime unless column_exists?(:<%= table_name %>, :invitation_sent_at)
+    add_column :<%= table_name %>, :invitation_accepted_at, :datetime unless column_exists?(:<%= table_name %>, :invitation_accepted_at)
+    add_column :<%= table_name %>, :invitation_registration_required, :boolean, default: false, null: false unless column_exists?(:<%= table_name %>, :invitation_registration_required)
+<% model_metadata.primary_keys.zip(model_metadata.foreign_keys("inviter")).each do |key, foreign| -%>
+    add_column :<%= table_name %>, :<%= foreign %>, :<%= primary_key_type || model_metadata.primary_key_types[key] %> unless column_exists?(:<%= table_name %>, :<%= foreign %>)
+<% end -%>
+    add_foreign_key :<%= table_name %>, :<%= table_name %>, column: <%= model_metadata.foreign_keys("inviter").one? ? :inviter_id.inspect : model_metadata.foreign_keys("inviter").inspect %>, primary_key: <%= model_metadata.primary_keys.one? ? model_metadata.primary_keys.first.to_sym.inspect : model_metadata.primary_keys.inspect %>
+    add_index :<%= table_name %>, :invitation_token, unique: true unless index_exists?(:<%= table_name %>, :invitation_token)
   end
 end

@@ -128,19 +128,19 @@ RSpec.describe Vouch::Generators::RouteEditor do
         login.sessions
       end
     RUBY
-    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:inserted)
-    expect(File.read(@path)).to include("login.passwords")
-    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:duplicate)
+    expect(described_class.insert_feature(@path, :account, "auth.password_resets")).to eq(:inserted)
+    expect(File.read(@path)).to include("login.password_resets")
+    expect(described_class.insert_feature(@path, :account, "auth.password_resets")).to eq(:duplicate)
   end
 
   it "does not mistake a commented feature for a configured route" do
     write(in_wrapper(<<~RUBY))
       auth.scope :account, model: "Account" do
-        # auth.passwords
+        # auth.password_resets
         auth.sessions
       end
     RUBY
-    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:inserted)
+    expect(described_class.insert_feature(@path, :account, "auth.password_resets")).to eq(:inserted)
   end
 
   it "leaves conditional route blocks untouched instead of inserting into a nested branch" do
@@ -152,7 +152,26 @@ RSpec.describe Vouch::Generators::RouteEditor do
       end
     RUBY
     write(original)
-    expect(described_class.insert_feature(@path, :account, "auth.passwords")).to eq(:unsafe)
+    expect(described_class.insert_feature(@path, :account, "auth.password_resets")).to eq(:unsafe)
+    expect(File.read(@path)).to eq(original)
+  end
+
+  it "adds a configured feature to an inferred scope without duplicating it" do
+    write(in_wrapper(<<~RUBY))
+      auth.scope model: "User" do
+        auth.sessions
+      end
+    RUBY
+    declaration = 'auth.password_resets controller: "portal/password_resets"'
+    expect(described_class.insert_feature(@path, :user, declaration)).to eq(:inserted)
+    expect(File.read(@path)).to include(declaration)
+    expect(described_class.insert_feature(@path, :user, declaration)).to eq(:duplicate)
+  end
+
+  it "rejects a block without a scope declaration without changing the file" do
+    original = in_wrapper("")
+    write(original)
+    expect(described_class.insert_scope(@path, "auth.sessions")).to eq(:unsafe)
     expect(File.read(@path)).to eq(original)
   end
 

@@ -35,7 +35,7 @@ RSpec.describe "documentation executable contracts" do
     expect(helpers).to respond_to(:new_account_registration_path)
     expect(helpers).to respond_to(:new_account_session_path)
     expect(helpers).not_to respond_to(:user_select_path)
-    expect(helpers).not_to respond_to(:new_user_password_path)
+    expect(helpers).not_to respond_to(:new_user_password_reset_path)
     expect(helpers).not_to respond_to(:new_user_two_factor_credential_path)
   ensure
     if defined?(previous_mappings) && previous_mappings
@@ -51,12 +51,12 @@ RSpec.describe "documentation executable contracts" do
     end
   end
 
-  it "executes the verification and MFA Account example without replacing the persisted preference" do
+  it "documents attribute-bound verification without replacing the persisted MFA preference" do
     source = documentation_ruby_block(
       path: "docs/verification-and-mfa.md",
-      containing: "class Account < ApplicationRecord"
+      containing: "self.verifiable_subject_attribute = :e164"
     )
-    expect(source).to include("authenticates_with :two_factorable")
+    expect(source).to include("self.verifiable_subject_attribute = :e164")
     expect(source).not_to include("def two_factor_enabled?")
     account = create(:account, two_factor_enabled: false)
     credential = account.two_factor_credentials.create!(verified_at: Time.current,

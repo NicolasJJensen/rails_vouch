@@ -13,6 +13,8 @@ module Vouch
       self.feature_template_name = "verifiable"
       desc "Add Verifiable columns to a model's table, and wire the concern into the model."
 
+      class_option :subject, type: :array, default: []
+
       def configure_model
         path = model_path
         unless File.exist?(path)
@@ -23,21 +25,20 @@ module Vouch
 
         contents = File.read(path)
 
-        if contents.include?("Vouch::Verifiable")
-          say_status :identical, "#{path} already includes Vouch::Verifiable", :blue
-          return
+        wiring = +"\n"
+        wiring << "  include Vouch::Verifiable\n" unless contents.include?("include Vouch::Verifiable")
+        if options[:subject].any? && !contents.include?("verifiable_subject_attribute")
+          attributes = options[:subject].map do |name|
+            raise Thor::Error, "Invalid subject attribute" unless name.match?(/\A[a-z_][a-z0-9_]*\z/)
+            name.to_sym
+          end
+          value = attributes.one? ? attributes.first.inspect : attributes.inspect
+          wiring << "  self.verifiable_subject_attribute = #{value}\n"
         end
-
-        inject_into_class(path, model_metadata.declaration_name(contents)) do
-          <<~RUBY
-            include Vouch::Verifiable
-
-            # Natural identifier used to key draft (unpersisted) records —
-            # e.g. :address for Email, :e164 for Phone, :label for Totp.
-            # self.verifiable_subject_attribute = :your_attr
-
-          RUBY
+        unless contents.include?("def deliver_verification_code")
+          wiring << "\n  def deliver_verification_code(_code)\n    raise NotImplementedError, \"Implement verification delivery\"\n  end\n"
         end
+        inject_model_code(path, model_metadata, wiring) unless wiring == "\n"
       end
 
       private

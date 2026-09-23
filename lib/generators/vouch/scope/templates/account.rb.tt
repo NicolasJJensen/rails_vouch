@@ -8,6 +8,6 @@ class <%= @account_class %> < ApplicationRecord
   validates :email_address, presence: true, uniqueness: { case_sensitive: false }
 <% unless @single_model -%>
 
-  has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", foreign_key: :<%= model_association(@account_class) %>_id
+  has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", <%= model_has_many_options(@account_class) %>
 <% end -%>
 end
