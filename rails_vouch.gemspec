@@ -40,7 +40,6 @@ Gem::Specification.new do |spec|
       "docs/impersonation.md",
       "docs/model-mapping.md",
       "docs/warden.md",
-      "docs/upgrading.md",
       "README.md",
       "CHANGELOG.md",
       "LICENSE.txt"

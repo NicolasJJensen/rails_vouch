@@ -1,10 +1,16 @@
 # Credential adapter contract
 
-Vouch provides optional RSpec shared examples for testing host-defined
-two-factor credential adapters. The contract is test support only. Requiring it
-does not load RSpec or add RSpec as a runtime dependency.
+Vouch includes optional RSpec shared examples for a custom two-factor
+credential. Use this guide when your credential has its own challenge and
+delivery implementation but should satisfy the same replay, lockout, expiry,
+and persistence guarantees as Vouch credentials.
 
-Load and install the shared examples from the host application's spec helper:
+The contract is test support only. It does not load RSpec at runtime or add it
+to the gem's dependencies.
+
+## Install the shared examples
+
+Load the contract from your application's spec helper:
 
 ```ruby
 require "vouch/testing/credential_adapter_contract"
@@ -12,49 +18,111 @@ require "vouch/testing/credential_adapter_contract"
 Vouch::Testing::CredentialAdapterContract.install!
 ```
 
-In the credential spec, provide a `credential_adapter` and include the shared
-example:
+Then provide an adapter in the credential spec:
 
 ```ruby
-RSpec.describe AuthenticatorCredential do
-  let(:credential_adapter) { AuthenticatorCredentialTestAdapter.new(self) }
+RSpec.describe Phone do
+  let(:credential_adapter) { PhoneCredentialAdapter.new(self) }
 
   it_behaves_like "a Vouch credential adapter"
 end
 ```
 
-The test adapter is deliberately small and provider-specific. It translates the
-host credential's issuance and proof protocol into these methods:
+This example uses the `Phone` model from the MFA guide and a `:phone` factory that supplies its owner and phone number. The adapter wraps one persisted, verified, enabled credential. Keep provider-specific
+setup and time control inside the adapter so the shared examples can exercise
+different delivery protocols.
 
-- `issue` returns an object with `outcome` and `proof`. `outcome` responds to
-  `ok?` and `token`; `proof` is the value submitted during verification.
-- `verify(issuance, credential: ..., proof: ...)` submits the proof and returns
-  `true` or `false`. The keyword defaults should use the adapter's current
-  credential and `issuance.proof`.
-- `invalid_proof` returns a proof that the provider must reject.
-- `disable!` disables the current credential.
-- `unverify!` makes the current credential unverified.
-- `after_expiry { ... }` runs the block after the provider's configured expiry
-  boundary. The host controls time travel because courier OTP and TOTP have
-  different clocks and validity rules.
-- `stale_credential` returns a separately loaded instance of the same persisted
-  credential.
-- `verify_with_persistence_failure(issuance)` simulates an unexpected database
-  error while accepting a valid proof.
-- `with_cancelled_persistence { ... }` cancels the acceptance transaction, such
-  as by raising `ActiveRecord::Rollback`, while the block verifies the proof.
+## Minimal adapter interface
 
-The shared examples require successful issuance and proof, invalid-proof
-rejection, replay protection, disabled and unverified rejection, expiry,
-stale-instance replay protection, and safe persistence behavior.
+The shared examples call these methods:
 
-A cancelled acceptance returns `false`. Its state changes are rolled back, so
-the same valid proof remains retryable after the cancellation condition is
-removed. Unexpected database errors propagate to the host instead of being
-reported as an invalid proof; the proof also remains retryable after the error
-is resolved.
+```ruby
+Issuance = Struct.new(:outcome, :proof)
+
+class PhoneCredentialAdapter
+  include ActiveSupport::Testing::TimeHelpers
+
+  attr_reader :credential
+
+  def initialize(example)
+    @credential = example.create(:phone, verified_at: Time.current, two_factor_enabled_at: Time.current)
+  end
+
+  def issue
+    proof = nil
+    credential.define_singleton_method(:deliver_two_factor_code) { |code| proof = code }
+    Issuance.new(credential.challenge!, proof)
+  end
+
+  def verify(issuance, credential: self.credential, proof: issuance.proof)
+    credential.verify_challenge(proof, token: issuance.outcome.token)
+  end
+
+  def invalid_proof
+    "invalid-proof"
+  end
+
+  def disable!
+    credential.disable_two_factor!
+  end
+
+  def unverify!
+    credential.update!(verified_at: nil)
+  end
+
+  def after_expiry(&block)
+    travel(Vouch.configuration.two_factorable.challenge_validity + 1.second, &block)
+  end
+
+  def stale_credential
+    credential.class.find(credential.id)
+  end
+
+  def verify_with_persistence_failure(issuance)
+    failing = credential.class.find(credential.id)
+    failing.define_singleton_method(:update!) do |*|
+      raise ActiveRecord::ActiveRecordError, "simulated persistence failure"
+    end
+    verify(issuance, credential: failing)
+  end
+
+  def with_cancelled_persistence
+    callback = :rollback_credential_adapter_persistence
+    credential.class.define_method(callback) { raise ActiveRecord::Rollback }
+    credential.class.set_callback(:update, :before, callback)
+    yield
+  ensure
+    credential.class.skip_callback(:update, :before, callback)
+    credential.class.remove_method(callback)
+  end
+end
+```
+
+The actual `issue` implementation must return an object with `outcome` and
+`proof`. `outcome` must respond to `ok?` and `token`; `proof` is the value
+submitted by `verify`. `verify` returns a `Vouch::Result` with statuses such as
+`ok?`, `invalid?`, `locked?`, and `cancelled?`.
+
+`after_expiry` must run its block after the provider's validity boundary. A
+TOTP adapter may advance the clock to the next time step, while an OTP adapter
+can use the configured challenge validity. `stale_credential` must return a
+separately loaded instance of the same row.
+
+## What the contract checks
+
+The shared examples verify that the adapter:
+
+- issues a usable proof;
+- rejects invalid, expired, and replayed proofs;
+- rejects a proof after disablement or unverification;
+- rejects a proof through an instance loaded before acceptance;
+- preserves the proof when persistence raises an Active Record error; and
+- returns `cancelled` and preserves the proof when acceptance is rolled back.
+
+Unexpected database errors propagate to your application. A cancelled acceptance
+returns `Vouch::Result.cancelled`, and the same proof remains retryable after
+the cancellation condition is removed.
 
 See
 [`spec/lib/vouch/testing/credential_adapter_contract_spec.rb`](../spec/lib/vouch/testing/credential_adapter_contract_spec.rb)
-for concrete adapters covering the bundled courier OTP path and the dummy host
-TOTP path.
+for complete OTP and TOTP adapters.

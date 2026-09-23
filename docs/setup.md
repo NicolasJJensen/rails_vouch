@@ -1,108 +1,156 @@
-# Setup and generators
+# Setup and customization
 
-This guide covers setup choices beyond the baseline installation in the [README](../README.md). See [model mapping](model-mapping.md) for relationship overrides and [upgrading](upgrading.md) for existing schemas.
-
-## Generators and custom names
-
-The installer adds configuration and a routes block. The scope generator creates the selected models, migrations, controllers, views, and routes. Generate account and membership scopes for a multi-tenant application with:
+For email/password sign-in with a `User` model:
 
 ```sh
-bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
+bin/rails generate vouch:install
+bin/rails generate vouch:scope users User --single-model
 bin/rails db:migrate
 ```
 
-For a single model, use `bin/rails generate vouch:scope members Member --single-model`. Generator primary-key options support UUID hosts. Namespaced model arguments such as `Admin::Account` and `Admin::Phone` are supported; generators create namespace paths and explicit table names where Rails needs them. Already loaded models provide table metadata, but generators do not trigger model autoloading before migrations, so inspect migrations for custom tables when a model is not loaded.
+The scope generator creates the model, migration, controllers, forms, and routes. Customize the generated files as you would other Rails application code.
 
-Generated account models include email normalization and presence/case-insensitive uniqueness validation, backed by the generated database index. Keep or adapt these defaults when using another identifier. Repeated route generation preserves an existing scope; ambiguous routes are left untouched with manual instructions.
+## Use another model name
 
-Feature generators use the same model naming rules. For account-owned password reset and MFA, target the account scope and its controller namespace:
+For an application that calls its users `Member`:
 
 ```sh
-bin/rails g vouch:password_resetable Account --auth-scope account --controller-path accounts
-bin/rails g vouch:two_factorable Totp --auth-scope account --controller-path accounts
+bin/rails generate vouch:scope members Member --single-model
 ```
 
-These commands generate subclasses with `auth_scope :account` and views under `app/views/accounts`. Password reset also wires the model, route, mailer, and delivery hook. Review any generator message about a target it could not identify. For MFA, add `auth.two_factor` to the account scope and complete the model and schema steps in the [MFA guide](verification-and-mfa.md). The two-factor command generates sign-in challenge UI only; enrollment remains host-owned because each credential type needs its own permitted fields and enrollment protocol. Omit both UI options to skip controller, view, and mailer generation.
+This gives you `current_member`, `member_signed_in?`, and `authenticate_member!`, with sign-in at `/members/sign_in`. The scope name identifies the login; the model argument identifies the record it authenticates.
 
-See [invitations](invitations.md), [impersonation](impersonation.md), and [controller ejection](controllers.md#copying-an-endpoint-into-your-application) for their generator options. Forms use the account's `model_name.param_key`, so `Admin::Account` normally uses `admin_account`.
+For accounts with organisation memberships, follow [model mapping](model-mapping.md#organisation-memberships).
 
-## Non-email identifiers
+## Add features
 
-The baseline scope uses `email_address`. When replacing it with `login`, remove the generated email presence/uniqueness validation and replace the normalization with the login rules below. If you retain email as an optional field, choose its validation rules explicitly. For a non-email login identifier, keep lookup, account creation, and generated host views in the host. Add the identifier column and make `email_address` optional if login replaces it, adapting the table name for a custom account table:
+Run feature generators against the model that holds the password:
 
-```ruby
-class AddLoginToAccounts < ActiveRecord::Migration[8.0]
-  def change
-    change_column_null :accounts, :email_address, true
-    add_column :accounts, :login, :string, null: false
-    add_index :accounts, :login, unique: true
-  end
-end
-
-class Account < ApplicationRecord
-  normalizes :login, with: ->(value) { value.strip.downcase }
-  validates :login, presence: true, uniqueness: true
-end
+```sh
+bin/rails generate vouch:password_resetable User
+bin/rails generate vouch:password_trackable User
+bin/rails generate vouch:omniauth User --provider github
+bin/rails db:migrate
 ```
 
-Register a resolver after loading its host class. It receives top-level session parameters and the mapped account class:
+Each feature has a guide covering its generated files and customization: [password resets](passwords-and-recovery.md), [OAuth](oauth.md), [MFA](verification-and-mfa.md), and [invitations](invitations.md).
+
+Use `--auth-scope` when the same model serves several login scopes. Use `--controller-path` to place generated controllers in a custom namespace. These are overrides; ordinary setups infer both values.
+
+For just the password-reset model feature and migration:
+
+```sh
+bin/rails generate vouch:password_resetable User --model-only
+```
+
+## Use usernames for sign-in
+
+Email addresses are the default. You can instead find users by another attribute. This example keeps email for password-reset delivery but uses a unique `username` to sign in.
+
+Generate a column, then add a unique index in its migration:
+
+```sh
+bin/rails generate migration AddUsernameToUsers username:string
+```
 
 ```ruby
-class LoginResolver < Vouch::LoginResolver::Base
+add_index :users, :username, unique: true
+```
+
+Backfill usernames before enforcing presence on existing records.
+
+In `app/models/user.rb`, add:
+
+```ruby
+normalizes :username, with: ->(value) { value.strip.downcase }
+validates :username, presence: true, uniqueness: { case_sensitive: false }
+```
+
+A login resolver finds a user from submitted fields. Vouch checks the password after a resolver finds that user.
+
+Create `lib/username_resolver.rb`:
+
+```ruby
+class UsernameResolver < Vouch::LoginResolver::Base
   def valid?(params)
-    params[:login].present?
+    params[:username].present?
   end
 
   def resolve!(params, account_class)
-    login = params[:login].to_s.strip.downcase
-    account = account_class.find_by(login: login)
+    username = params[:username].to_s.strip.downcase
+    account = account_class.find_by(username: username)
     account ? success!(account) : fail!
   end
 end
-
-# Load a host resolver before registering it from an initializer.
-# Keep it in an autoloaded host file such as app/models/login_resolver.rb.
-require Rails.root.join("app/models/login_resolver").to_s
-Vouch.configure { |config| config.register_login_resolver LoginResolver }
 ```
 
-Replace the generated registrations controller's `account_params`; account attributes are nested under the mapping's account parameter key. Keep password fields permitted and replace `:email_address` with `:login`:
+Register it in `config/initializers/vouch.rb`:
 
 ```ruby
-# app/controllers/accounts/registrations_controller.rb
-class Accounts::RegistrationsController < Vouch::RegistrationsController
+require_relative "../../lib/username_resolver"
+
+Vouch.configure do |config|
+  config.register_login_resolver UsernameResolver
+  config.register_login_resolver Vouch::LoginResolver::EmailResolver
+end
+```
+
+Edit the existing resolver registrations rather than appending a second copy. This explicitly loaded `lib` class is loaded at application boot.
+
+Change the sign-in field in `app/views/users/sessions/new.html.erb`:
+
+```erb
+<%= text_field_tag :username, params[:username], autocomplete: "username", required: true %>
+```
+
+Add a username field to the generated registration form and permit it in `app/controllers/users/registrations_controller.rb`:
+
+```ruby
+class Users::RegistrationsController < Vouch::RegistrationsController
   private
 
   def account_params
-    params.require(auth_mapping.account_param_key).permit(:login, :password, :password_confirmation)
+    params.require(:user).permit(:username, :email_address, :password, :password_confirmation)
   end
 end
 ```
 
-The session form submits top-level `login`; the registration form submits nested `login` under the account key:
+If you remove email entirely, remove its generated validation and normalization too. Replace email lookup and delivery in password-reset and invitation flows with the identifier and delivery channel you use.
 
-```erb
-<!-- app/views/accounts/sessions/new.html.erb: replace the email field -->
-<%= label_tag :login %>
-<%= text_field_tag :login, params[:login], autocomplete: "username", required: true %>
+## Combine login resolvers
 
-<!-- app/views/accounts/registrations/new.html.erb: nested account attribute -->
-<%= form.label :login %>
-<%= form.text_field :login, value: @account.login, autocomplete: "username", required: true %>
+The registration order determines lookup order:
+
+| Resolver outcome | What Vouch does |
+| --- | --- |
+| `valid?` returns false | Skips this resolver |
+| `fail!` | Tries the next resolver |
+| `success!(account)` | Stops lookup and checks this account's password |
+| No resolver succeeds | Rejects sign-in |
+
+A wrong password does not cause Vouch to try a different account. In the username/email example, a form with only `username` uses the username resolver; a password-reset form with `email_address` uses the email resolver.
+
+## Custom tables and primary keys
+
+Vouch uses the primary key declared by your model, including custom names and composite keys. See [primary keys](model-mapping.md#primary-keys) for examples and schema configuration.
+
+To generate new UUID-based models:
+
+```sh
+bin/rails generate vouch:scope users User --single-model --primary-key-type uuid
 ```
 
-Apply the same parameter rule to custom registration and OAuth completion views. Invitation `build_invited_identity(identifier)` must normalize the identifier, find or create a persisted account, and set `registration_required: true` only on a new placeholder. Identifier, account, and tenant fields remain host-owned.
+Namespaced models are supported too:
 
-## Optional dependencies and verification
+```sh
+bin/rails generate vouch:scope operators Staff::Operator --single-model
+```
 
-Core dependencies are Warden, BCrypt, active_hooks, and otp_courier. OmniAuth and provider gems are opt-in. ROTP is opt-in for TOTP, and QR rendering is a host responsibility. Enable only installed concerns and add their generated columns and associations.
+## Check your setup
 
-After models are loaded, `Vouch.verify!` or `bin/rails vouch:verify` checks account, identity, tenant, OAuth, and credential associations and feature contracts without changing schema. Token-verifiable records are standalone host credentials; validate their columns separately because the boot verifier cannot discover every such model. The dummy app exposes the same task as `app:vouch:verify`.
+```sh
+bin/rails vouch:verify
+bin/rails routes
+```
 
-## Model responsibilities
-
-Enable only the features whose migrations and associations you have installed. The credentials model owns identifier normalization and password validation. Memberships own their account and optional tenant associations. Feature guides show their additional model requirements; avoid enabling every concern before supplying its schema.
-
-For shared credentials with additional membership scopes, reuse the same account scope and add a linked membership scope. Account scope names are inferred from the credentials model unless `--account-scope` is supplied. Read [model mapping](model-mapping.md) before using shared user/admin credentials.
-
-When an existing table has records, backfill new required fields before adding non-null constraints. The non-email migration above is illustrative for an empty table; production data requires a staged backfill.
+The verifier checks model associations, required columns, and delivery methods for enabled features. Rails lists the routes enabled by your configuration. [Controllers](controllers.md) covers overriding actions and copying their implementations into your application.

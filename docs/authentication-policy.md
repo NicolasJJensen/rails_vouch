@@ -1,15 +1,105 @@
 # Authentication policy
 
-This guide explains how Vouch completes authentication after credentials, OAuth, or host-implemented magic links. Start with the [README](../README.md), then see [controllers](controllers.md), [OAuth](oauth.md), and [verification and MFA](verification-and-mfa.md).
+Use an authentication policy to decide whether someone may sign in and whether they must complete MFA. Vouch applies the policy to password and OAuth sign-in, as well as custom flows that call `complete_sign_in`.
 
-## Restrict eligible memberships
-
-A membership controller can restrict its account's eligible records:
+## Block suspended users
 
 ```ruby
-class Users::SessionsController < Vouch::MembershipSessionsController
-  auth_scope :user
+# app/models/application_authentication_policy.rb
+class ApplicationAuthenticationPolicy < Vouch::AuthenticationPolicy
+  def allowed?(account, method:, provider:, controller:)
+    super && !account.suspended?
+  end
+end
+```
 
+```ruby
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.authentication_policy = "ApplicationAuthenticationPolicy"
+end
+```
+
+The argument is called `account` because it is the credentials record: your `User` in a single-model setup, or `Account` in the multi-tenant example. `suspended?` is a predicate you implement on that model. Calling `super` retains Vouch's default lockout check.
+
+| Argument | Value |
+| --- | --- |
+| `account` | Credentials record attempting authentication. |
+| `method` | Authentication method, such as `:password`, `:oauth`, or `:registration`. |
+| `provider` | OAuth provider name, or `nil`. |
+| `controller` | Controller completing authentication. |
+
+The configured value may also be an object responding to `allowed?` and `two_factor_required?` with these keyword arguments.
+
+## MFA and trusted providers
+
+By default, an account that has enabled MFA must complete its local second factor, including after OAuth. If your company provider already enforces the required second factor, you can exempt that provider from the additional local challenge:
+
+```ruby
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.oauth_mfa_providers = ["company_sso"]
+end
+```
+
+The value must match the provider name returned by OmniAuth. Use this only for providers whose MFA you trust.
+
+For a more specific rule, override `two_factor_required?` on your policy:
+
+```ruby
+# In ApplicationAuthenticationPolicy
+ def two_factor_required?(account, method:, provider:, controller:)
+   super || account.requires_mfa_by_policy?
+ end
+```
+
+Implement `requires_mfa_by_policy?` and the corresponding factor-enrollment process in your application. Requiring MFA without a usable factor leaves the user unable to complete sign-in.
+
+## Pending sign-in timeout
+
+A person may pause between entering a password and submitting their MFA code or selecting an organisation. Limit how long that first authentication proof remains usable:
+
+```ruby
+Vouch.configure do |config|
+  config.pending_authentication_ttl = 10.minutes
+end
+```
+
+When it expires, they must authenticate again. This does not set an inactivity timeout for a completed login.
+
+## Revoke established sessions
+
+Changing a password invalidates established sessions and pending sign-in attempts. Lockout blocks new sign-in by default; to invalidate existing logins on lockout too:
+
+```ruby
+Vouch.configure do |config|
+  config.lockable.invalidate_sessions_on_lockout = true
+end
+```
+
+For other security changes, add an `auth_session_version` column to your credentials model and increment it to invalidate earlier sessions:
+
+```ruby
+# In a migration
+add_column :users, :auth_session_version, :integer, null: false, default: 0
+```
+
+```ruby
+# In your account-security action or service
+user.with_lock do
+  user.increment!(:auth_session_version)
+end
+```
+
+Vouch includes that value in its session fingerprint when the attribute exists. Sessions with the old value are rejected when next restored. Impersonation restoration also checks the original operator's fingerprint.
+
+## Restrict available memberships
+
+For a linked multi-tenant scope, you may want suspended memberships hidden from the organisation selector even though the account can still sign in elsewhere:
+
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::MembershipSessionsController
   private
 
   def candidate_identities_for(account)
@@ -18,44 +108,18 @@ class Users::SessionsController < Vouch::MembershipSessionsController
 end
 ```
 
-This example assumes an application-defined `active` column. Keep the account ownership constraint supplied by `super`. The selection form snapshots eligible IDs and submission reapplies the current policy. A scope name such as `admin` does not grant permissions.
+This example assumes an `active` column on your membership model. `super` keeps the account ownership restriction. Vouch checks eligibility again when the person submits their choice, so a membership disabled while the form was open cannot be selected.
 
-Account authentication completes required MFA before publishing the account session. Linked membership selection then uses that authenticated account, without asking for its password or repeating account MFA.
+## Custom authentication flows
 
-## Completion contract
+If you write an endpoint that calls `complete_sign_in`, handle its result:
 
-The Warden strategy name `:password` is reserved; custom strategies must use another name. Password verification uses `store: false`, and controllers explicitly establish the authenticated identity.
+| Result | Next step |
+| --- | --- |
+| `:signed_in` | Redirect after completed authentication. |
+| `:needs_two_factor` | Show the MFA challenge list. |
+| `:needs_selection` | Show the membership selector. |
+| `:no_identity` | Deny membership access; no eligible identity remains. |
+| `:denied` | Show authentication failure. |
 
-`complete_sign_in` applies one policy to password, OAuth, and magic-link login. It returns `:signed_in`, `:needs_two_factor`, `:needs_selection`, `:no_identity`, or `:denied`. Locked accounts are rejected. Accounts with enabled MFA require a verified, enabled second factor. OAuth does not bypass local policy by default.
-
-```ruby
-Vouch.configure do |config|
-  config.pending_authentication_ttl = 10.minutes
-  config.oauth_mfa_providers = ["company_sso"]
-  config.authentication_policy = "ApplicationAuthenticationPolicy"
-end
-
-class ApplicationAuthenticationPolicy < Vouch::AuthenticationPolicy
-  def allowed?(account, method:, provider:, controller:)
-    super && !account.suspended?
-  end
-end
-```
-
-List a provider in `oauth_mfa_providers` only when it supplies the required assurance. It exempts that provider from local MFA, but not account locks.
-
-## Lockout and revocation
-
-Lockout blocks new authentication and leaves established sessions in place by default. To reject ordinary and pending-account Warden sessions on their next request:
-
-```ruby
-Vouch.configure { |config| config.lockable.invalidate_sessions_on_lockout = true }
-```
-
-Impersonation restoration already rejects locked operators. An established session rejected during a temporary lock may become usable again after the lock expires; hosts requiring permanent revocation should increment persisted `auth_session_version` when locking.
-
-Pending authentication binds account identity, security fingerprint, time, and candidate identities. It expires independently of challenge tokens. Password changes invalidate pending flows, established sessions, and impersonation restoration automatically. Hosts can define `auth_session_version` and increment it after other security changes.
-
-A verified magic-link proof may remain pending through selection or MFA. Revoking its credential does not revoke that flow automatically; increment `auth_session_version` in the same transaction when immediate revocation is required. Otherwise the configured TTL applies.
-
-`candidate_identities_for(account)` remains an upper bound through MFA and selection. Selection reapplies the current controller's candidate policy. Put shared, changing policy in a common auth-controller concern.
+The supplied controllers already handle these outcomes. A Warden strategy you add yourself must use a name other than Vouch's `:password` strategy.

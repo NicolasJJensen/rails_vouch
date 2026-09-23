@@ -1,23 +1,78 @@
-# Existing Warden integration
+# Warden integration
 
-Use this guide when Vouch is added to an existing Warden stack. See [model mapping](model-mapping.md) and the [README](../README.md).
+Vouch installs Warden middleware by default. Use this guide when your application
+already owns Warden middleware or needs to configure its defaults explicitly.
+See [model mapping](model-mapping.md) for scope definitions.
 
-## Middleware and scopes
+## Configure existing middleware
 
-Disable installation and configure the existing manager explicitly:
+Disable Vouch's middleware initializer and configure the manager in your application's
+middleware stack:
 
 ```ruby
-Vouch.configure { |config| config.install_middleware = false }
-# In the host's existing Warden configuration block:
-Vouch.configure_warden(manager)
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.install_middleware = false
+  config.warden_default_strategies = [:password]
+  config.warden_failure_app = Vouch::FailureApp
+end
 ```
 
-A mapping reserves its primary name and derived account/impersonation names to prevent collisions. Combined mappings use the derived account scope for pending selection. Linked membership mappings instead reference their explicitly configured parent account session and use their own primary scope for the selected membership. `:password` is also reserved as a strategy name.
+```ruby
+# config/application.rb
+config.middleware.use Warden::Manager do |manager|
+  Vouch.configure_warden(manager)
+end
+```
 
-Vouch rejects collisions between its mappings and derived scopes. Choose mapping names that do not overlap host scopes. Other gems must not register different serializers or authentication behavior for these reserved scopes; the host coordinates that integration.
+`Vouch.configure_warden` accepts a `Warden::Manager` or its config object. It
+sets the failure app when your application has not already supplied one, applies the
+default strategy only when the manager has no defaults, and adds Vouch's
+strategy defaults to each registered scope. Existing application defaults remain in
+place.
 
-Vouch applies its strategies to registered scopes, preserves supplied host defaults and failure handling, and uses Warden directly. It does not install `rails_warden` monkey patches. Configure the host failure app to route Vouch scope failures appropriately.
+If your application already has a manager block, call `Vouch.configure_warden(manager)`
+inside that block instead of adding a second Warden middleware entry.
 
-## Linked scopes
+## Scope ownership
 
-A linked membership scope references its parent credentials scope with `account_scope:`. Password strategies run on the credentials scope, not the membership scope. Restoring a membership also requires a valid parent session belonging to the same account. Account sign-out invalidates dependent memberships. Membership rotation retains the parent and sibling memberships automatically.
+Every Vouch mapping reserves its primary scope and the derived account and
+impersonation scopes. For example, `:user` reserves `:user`,
+`:user_account`, and `:user_impersonation`. Vouch rejects overlaps between
+these reserved names across mappings. The strategy name `:password` is also
+reserved by Vouch's password strategy.
+
+Vouch registers serializers for these scopes when the route mapping is built.
+The identity and account serializers store a record key plus an authentication
+fingerprint. Restoration reloads the current model class, checks the
+fingerprint, and rejects locked accounts when session invalidation on lockout
+is enabled. A membership also requires its parent account scope to identify
+the same account.
+
+Do not register a second serializer or authentication policy for a Vouch-owned
+scope. If another application component owns a separate Warden scope, choose
+a non-overlapping name and keep its serializer independent.
+
+## Linked membership scopes
+
+A linked membership mapping uses `account_scope:` to identify its parent
+credentials scope. Password strategies run on the parent account scope. The
+membership scope has no password strategy; it selects an identity after the
+parent account has authenticated.
+
+```ruby
+Vouch.routes(self) do |auth|
+  auth.scope :account, model: "Account" do
+    auth.sessions
+    auth.registrations
+  end
+
+  auth.scope :member, account_scope: :account, identity: "Membership" do
+    auth.sessions
+  end
+end
+```
+
+Account sign-out invalidates dependent membership sessions. Membership
+restoration requires both the membership and its parent account to pass their
+serializers.

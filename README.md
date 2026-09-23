@@ -1,34 +1,19 @@
 # Vouch
 
-Vouch provides authentication for Rails applications: password sign-in, registration, password reset, MFA, OAuth, invitations, and impersonation. Use one model for a single-tenant application, or separate accounts and memberships for multi-tenant applications.
+Vouch adds password authentication, registration, password resets, MFA, OAuth, invitations, and impersonation to Rails applications. It generates controllers and views you can customize and works with your application's models.
 
-Your application owns its models, views, email delivery, and authorization rules.
+## Install
 
-## Requirements
-
-- Rails 8.x and a Ruby version supported by your Rails version (at least Ruby 3.2).
-- PostgreSQL is the database used by the test suite.
-
-## Installation
-
-Add Vouch to your Gemfile:
-
-```ruby
-gem "rails_vouch"
-```
-
-Then install it and generate a single-model login:
+Requires Rails 8.x and Ruby 3.2 or newer, subject to your Rails version's requirements.
 
 ```sh
-bundle install
+bundle add rails_vouch
 bin/rails generate vouch:install
 bin/rails generate vouch:scope users User --single-model
 bin/rails db:migrate
 ```
 
-The generators create the `User` model and migration, sign-in and registration controllers and views, and authentication routes. The model includes password authentication, email normalization, and email validation.
-
-The generated routes include:
+The generator creates a `User` model with password authentication, normalized email addresses, and email validation. It also creates sign-in and registration controllers, forms, and routes:
 
 ```ruby
 Vouch.routes(self) do |auth|
@@ -39,27 +24,7 @@ Vouch.routes(self) do |auth|
 end
 ```
 
-| Action | URL | Route helper |
-| --- | --- | --- |
-| Sign-in form | `GET /users/sign_in` | `new_user_session_path` |
-| Sign in | `POST /users/sign_in` | `user_session_path` |
-| Sign-up form | `GET /users/sign_up` | `new_user_registration_path` |
-| Register | `POST /users/sign_up` | `user_registration_path` |
-| Sign out | `DELETE /users/sign_out` | `user_sign_out_path` |
-
-Use these helpers wherever your application offers authentication controls:
-
-```erb
-<%= link_to "Sign in", new_user_session_path %>
-<%= link_to "Sign up", new_user_registration_path %>
-<%= button_to "Sign out", user_sign_out_path, method: :delete %>
-```
-
-Successful sign-in and registration default to your application's `root_path`. [Redirect customization](#redirects) lets you choose other destinations.
-
-## Protecting application pages
-
-Vouch automatically includes `Vouch::ApplicationHelpers` in Rails controllers. This concern defines `current_user`, `user_signed_in?`, and `authenticate_user!` for the generated user scope. The current-user helper and signed-in predicate are also available in views.
+## Protect pages
 
 ```ruby
 class AuthenticatedController < ApplicationController
@@ -73,22 +38,66 @@ class ProjectsController < AuthenticatedController
 end
 ```
 
-Keep authentication requirements out of `ApplicationController`, because Vouch's sign-in and registration endpoints inherit it too. Use a separate base such as `AuthenticatedController`, or add the guard to individual controllers.
+`authenticate_user!` redirects visitors to sign-in and returns them to the requested page afterward. `current_user` returns the signed-in `User`; `user_signed_in?` checks whether one is signed in.
 
-For this single-model setup, `current_user` returns the authenticated `User`. There is no additional account helper.
+Vouch adds these methods through `Vouch::ApplicationHelpers`, which is included automatically in Rails controllers. `current_user` and `user_signed_in?` are also available in views.
 
-## Multi-tenant authentication
+Keep authentication requirements in a base such as `AuthenticatedController`, because Vouch's public sign-in and registration endpoints also inherit `ApplicationController`.
 
-For accounts with memberships in organisations, generate separate models:
+## Sign-in and registration links
+
+| Action | Route | Helper |
+| --- | --- | --- |
+| Sign-in form | `GET /users/sign_in` | `new_user_session_path` |
+| Sign in | `POST /users/sign_in` | `user_session_path` |
+| Registration form | `GET /users/sign_up` | `new_user_registration_path` |
+| Register | `POST /users/sign_up` | `user_registration_path` |
+| Sign out | `DELETE /users/sign_out` | `user_sign_out_path` |
+
+```erb
+<%= link_to "Sign in", new_user_session_path %>
+<%= link_to "Sign up", new_user_registration_path %>
+<%= button_to "Sign out", user_sign_out_path, method: :delete %>
+```
+
+## Choose a destination after sign-in
+
+Sign-in and registration default to your application's `root_path`. Override the destination in the generated controller:
+
+```ruby
+class Users::SessionsController < Vouch::SessionsController
+  private
+
+  def after_sign_in_path
+    projects_path
+  end
+end
+```
+
+A previously requested protected page takes precedence over this fallback. See [controllers](docs/controllers.md#redirects) for registration, sign-out, and shared redirect methods that also cover MFA and OAuth completion.
+
+## Add authentication features
+
+- [Password resets and password history](docs/passwords-and-recovery.md)
+- [Phone verification and MFA](docs/verification-and-mfa.md)
+- [Sign in with an OAuth provider](docs/oauth.md)
+- [Invite people to your application](docs/invitations.md)
+- [Impersonate a user for support](docs/impersonation.md)
+
+[Setup and customization](docs/setup.md) also covers usernames, multiple login resolvers, and custom models.
+
+## Multi-tenant applications
+
+For people who can belong to several organisations, separate their credentials from their memberships:
 
 ```sh
 bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
 bin/rails db:migrate
 ```
 
-This creates `Account` for credentials, `User` for memberships, and `Organisation` for tenants. `Account` has many users; each user belongs to an account and an organisation. Account registration creates an initial membership and organisation; adapt the generated registration fields to your application.
+`Account` holds the email and password. Each `User` belongs to that account and one `Organisation`. The generated registration form creates an account, an organisation, and its initial membership.
 
-The generated routes link the membership scope to the account scope:
+The routes have one scope for account sign-in and another for selecting a membership:
 
 ```ruby
 Vouch.routes(self) do |auth|
@@ -97,89 +106,32 @@ Vouch.routes(self) do |auth|
     auth.registrations
   end
 
-  auth.scope :user, account_scope: :account,
-    identity: "User", tenant: "Organisation" do
+  auth.scope :user, account_scope: :account, identity: "User", tenant: "Organisation" do
     auth.sessions
   end
 end
 ```
 
-Account authentication checks credentials and any required MFA. A user membership session then selects an eligible membership: zero memberships denies access, one is selected automatically, and several produce a selection form. The email identifies the account; it does not independently choose an organisation.
+Continue using `before_action :authenticate_user!` on organisation pages. It checks both the account and its selected membership:
 
-A protected membership page starts this sequence automatically. Signing in directly at `/accounts/sign_in` establishes only the account session and uses its configured redirect.
+1. A visitor signs in to their account, completing MFA if enabled.
+2. One available membership is selected automatically; several produce a selection form.
+3. The visitor returns to the page they requested. An account without an available membership cannot enter organisation pages.
 
-| Requirement | Guard | Current record |
-| --- | --- | --- |
-| Authenticated account | `authenticate_account!` | `current_account` |
-| Selected user membership | `authenticate_user!` | `current_account_user`, also available as `current_user` |
+Use `current_account` for credentials, `current_user` for the selected membership, and `current_organisation` for its organisation. Tenant helper names follow your tenant model's name.
 
-Use `current_user.organisation` to access the selected tenant. `current_account.users` is the account's collection of memberships, not the session's selected membership.
+An account-only page, such as a membership chooser, can use `authenticate_account!`. Signing out of the account ends its membership sessions; signing out of a membership leaves the account signed in.
 
-Signing out of a membership leaves the account authenticated. Signing out of the account also clears its dependent membership sessions.
+See [model mapping](docs/model-mapping.md) for associations, primary keys, and separate administrator logins.
 
-See [model mapping](docs/model-mapping.md) for schemas, associations, and tenant constraints.
+## Further customization
 
-## Authentication scopes
-
-A scope names an authentication context. Tenancy is a separate choice: a scope can authenticate a single model or select a membership belonging to a tenant.
-
-For example, an account may have separate user and administrator memberships:
-
-```ruby
-auth.scope :admin, account_scope: :account,
-  identity: "Admin", tenant: "Organisation" do
-  auth.sessions
-end
-```
-
-This adds `authenticate_admin!`, `current_account_admin`, and the `current_admin` shortcut. A user session does not satisfy the admin guard. The application decides which memberships and actions are authorized; the name `admin` does not grant permissions.
-
-Scope names determine session and helper names. `auth.scope model: "User"` infers `:user`; `Admin::Account` infers `:admin_account`. Give an explicit scope name when the same model serves more than one authentication context. Conflicting generated helper names raise a configuration error.
-
-See [model mapping](docs/model-mapping.md) for shared versus separate administrator credentials.
-
-## Redirects
-
-Define shared defaults in `ApplicationController` using your application's route helpers:
-
-```ruby
-class ApplicationController < ActionController::Base
-  protected
-
-  def after_sign_in_path_for(record, scope:)
-    projects_path
-  end
-
-  def after_sign_up_path_for(record, scope:)
-    onboarding_path
-  end
-
-  def after_sign_out_path_for(scope:)
-    welcome_path
-  end
-end
-```
-
-The record is the account or membership whose authentication just completed. The scope identifies that authentication context. Registration remains registration when completion passes through MFA and membership selection.
-
-You can also override `after_sign_in_path`, `after_sign_up_path`, or `after_sign_out_path` in an individual endpoint controller. That override takes precedence when that controller finishes the flow. For sign-in, a previously requested protected page takes precedence over the fallback destination.
-
-See [controllers and routes](docs/controllers.md) for examples and the complete route reference.
-
-## Feature guides
-
-- [Setup and generators](docs/setup.md)
-- [Controllers and routes](docs/controllers.md)
-- [Model mapping](docs/model-mapping.md)
-- [Password reset and recovery](docs/passwords-and-recovery.md)
-- [Verification and MFA](docs/verification-and-mfa.md)
-- [OAuth](docs/oauth.md)
-- [Invitations](docs/invitations.md)
-- [Impersonation](docs/impersonation.md)
+- [Controllers and complete route reference](docs/controllers.md)
+- [Authentication policies](docs/authentication-policy.md)
 - [Sessions and lifecycle hooks](docs/sessions-and-hooks.md)
-- [Authentication policy](docs/authentication-policy.md)
-
-Advanced integration references: [persistence](docs/persistence.md), [Warden](docs/warden.md), [credential adapter tests](docs/credential-adapter-contract.md), and [schema changes](docs/upgrading.md).
+- [Handling cancelled changes](docs/persistence.md)
+- [Integrating with an existing Warden configuration](docs/warden.md)
+- [Testing custom MFA credentials](docs/credential-adapter-contract.md)
 
 ## Development
 
@@ -189,6 +141,6 @@ RAILS_ENV=test bundle exec rake app:db:prepare
 bundle exec rspec
 ```
 
-The development Gemfile uses sibling `active_hooks` and `otp_courier` checkouts. Set `VOUCH_RELEASE_DEPS=1` when installing and running against published dependencies instead.
+The test suite uses PostgreSQL. The development Gemfile uses sibling `active_hooks` and `otp_courier` checkouts; use `VOUCH_RELEASE_DEPS=1` to install published dependencies instead.
 
-See the [changelog](CHANGELOG.md). Vouch is available under the [MIT License](LICENSE.txt).
+[Changelog](CHANGELOG.md) · [MIT license](LICENSE.txt)

@@ -1,123 +1,136 @@
 # Verification and multi-factor authentication
 
-Verification proves control of a credential, such as a phone number. MFA requires a verified credential as an additional proof during account sign-in. They are separate steps: verifying a phone does not automatically enable account MFA.
+Verification checks that someone controls a phone number or email address. MFA uses a verified credential as a second proof when signing in.
 
-The example below uses a phone credential. Your application supplies the SMS service and enrollment pages.
+## Add phone-based MFA
 
-## Add a credential model and schema
-
-For an existing `Account` credentials model:
+Starting with a Vouch `User` model:
 
 ```sh
-bin/rails generate model Phone account:references e164:string
-bin/rails generate vouch:verifiable Phone
-bin/rails generate vouch:two_factorable Phone --auth-scope account --controller-path accounts
-bin/rails generate migration AddTwoFactorEnabledToAccounts
-```
-
-Put this in the new account migration's `change` method:
-
-```ruby
-add_column :accounts, :two_factor_enabled, :boolean, null: false, default: false
-```
-
-Then migrate:
-
-```sh
+bin/rails generate model Phone user:references e164:string
+bin/rails generate vouch:two_factorable Phone --subject e164
 bin/rails db:migrate
 ```
 
-The feature migrations add verification/MFA nonces, verification version, timestamps, and attempt counters to `phones`. The account flag stores whether MFA is required; credential flags store which factors are enabled.
+The generator reads `Phone`'s owner association and wires MFA into `User`. It adds verification and challenge fields to `Phone`, the account-level MFA flag to `User`, the model concerns and associations, challenge and enrollment controllers and forms, and `auth.two_factor` routes.
 
-## Configure the models and delivery
+`--subject e164` identifies the field whose value is verified. The generator adds this declaration:
 
 ```ruby
 # app/models/phone.rb
-class Phone < ApplicationRecord
-  include Vouch::Verifiable
-  include Vouch::TwoFactorable
-
-  belongs_to :account
-  self.verifiable_subject_attribute = :e164
-
-  def deliver_verification_code(code)
-    SmsService.deliver(e164, "Your verification code is #{code}")
-  end
-
-  def deliver_two_factor_code(code)
-    SmsService.deliver(e164, "Your sign-in code is #{code}")
-  end
-end
+self.verifiable_subject_attribute = :e164
 ```
 
-`SmsService` is an example of your application's delivery adapter. Implement it using your SMS provider. Add phone normalization and validation appropriate to your application.
+Changing that field clears verification and invalidates outstanding codes. A verified old number must not make its replacement trusted.
 
-Add the feature and association to the existing account model:
+For a multi-tenant application, use `account:references` when creating `Phone`; MFA protects the `Account` that owns the credentials. Use `--auth-scope` or `--controller-path` only to override names that differ from your model and route conventions. `--model-only` generates model support without controllers or views.
+
+### Connect your SMS delivery
+
+The generator adds delivery methods that raise until you implement them. Replace their bodies with your SMS integration:
 
 ```ruby
-class Account < ApplicationRecord
-  include Vouch::Authenticatable
-  authenticates_with :two_factorable
-  has_many :phones, dependent: :destroy
-end
+# app/models/phone.rb
+ def deliver_verification_code(code)
+   SmsService.deliver(e164, "Your verification code is #{code}")
+ end
+
+ def deliver_two_factor_code(code)
+   SmsService.deliver(e164, "Your sign-in code is #{code}")
+ end
 ```
 
-Retain the account's existing password and validation configuration. Vouch discovers the phone association through its credential concerns; no table named `two_factor_credentials` is required for this example.
+`SmsService` represents a service you implement using your SMS provider. Add phone normalization and validation to `Phone` as appropriate for the numbers you accept.
 
-## Add sign-in challenge routes
+### Enroll a phone
 
-Add `auth.two_factor` inside the account scope:
+Link to the generated credential-management page:
 
-```ruby
-auth.scope :account, model: "Account" do
-  auth.sessions
-  auth.registrations
-  auth.two_factor
-end
+```erb
+<%= link_to "Manage two-factor authentication", user_two_factor_credentials_path %>
 ```
 
-The generator creates `Accounts::TwoFactorChallengeController` and its challenge views. It does not generate enrollment behavior: the application decides permitted credential types, fields, and enrollment protocol. The route declaration also exposes credential-management endpoints; supply `Accounts::TwoFactorCredentialsController` and its views before using those endpoints.
+The generated flow saves a phone under the signed-in user, sends a verification code, and asks for that code. A successful verification enables the phone as a factor and enables MFA for the user. An incorrect code leaves the confirmation form available for another attempt.
 
-The [controller reference](controllers.md#route-reference) lists challenge and credential-management URLs.
+The generated controller is yours to customize. It must look up credentials through the signed-in user's association, so another user's credential ID cannot be used to enroll or remove a factor.
 
-## Build the enrollment flow
+## Sign in with MFA
 
-Enrollment belongs in authenticated application pages. Build the credential through `current_account.phones`, permit only the intended fields, and look up subsequent requests through that same association.
+For a user with MFA enabled:
 
-For example, after saving a phone:
+1. They submit their email and password to the normal sign-in form.
+2. Vouch asks them to choose one of their usable factors.
+3. Selecting the phone sends a sign-in code. Submitting the correct code finishes sign-in and returns to the requested page or configured redirect.
+
+A correct password alone does not establish the completed login. An incorrect code redisplays the challenge; an expired challenge needs a new code. Repeated failures can lock the factor. Disabled or unverified credentials cannot complete MFA.
+
+In a multi-tenant setup, MFA completes before membership selection. Someone with one eligible membership continues immediately; someone with several chooses which organisation to enter.
+
+[Password reset](passwords-and-recovery.md) does not disable this requirement. [Recovery codes](passwords-and-recovery.md#account-recovery-codes) provide a separate way to recover access after losing a factor.
+
+## Verify more than one attribute
+
+When several fields together identify the recipient, configure them as an array:
 
 ```ruby
+# app/models/email_address.rb
+self.verifiable_subject_attribute = [:local_part, :domain]
+```
+
+Or generate that configuration with:
+
+```sh
+bin/rails generate vouch:two_factorable EmailAddress --subject local_part domain
+```
+
+Both values are bound to the verification. Changing either invalidates existing codes and clears verification, including changing a value away and back. Attribute aliases are supported. The fields remain separate values, so combinations such as `ab` + `c` and `a` + `bc` are not treated as the same subject.
+
+## Verification without MFA
+
+To verify a credential without making it a sign-in factor:
+
+```sh
+bin/rails generate vouch:verifiable Phone --subject e164
+bin/rails db:migrate
+```
+
+Implement its delivery method, then call these methods from your own verification actions:
+
+```ruby
+# After saving a phone through the current user's association
 result = phone.start_verification!
 session[:phone_verification_token] = result.token if result.ok?
 ```
 
-When the person submits the code:
-
 ```ruby
-result = phone.complete_verification!(params[:code],
-  token: session[:phone_verification_token])
-
+result = phone.complete_verification!(params[:code], token: session[:phone_verification_token])
 if result.ok?
-  phone.enable_two_factor!
-  current_account.enable_two_factor!
   session.delete(:phone_verification_token)
+  redirect_to profile_path
+else
+  render :verify, status: :unprocessable_entity
 end
 ```
 
-These snippets illustrate the calls inside your enrollment actions; they are not complete controllers. Handle invalid, expired, locked, and cancelled results in the form, scope the phone lookup to the authenticated account, and rate-limit enrollment requests. Use per-credential session keys if the application supports concurrent enrollments.
+Use separate session entries per credential if your UI permits concurrent verification attempts. Verification alone does not enable MFA.
 
-## Sign-in behavior
+## Control factor availability
 
-When the account requires MFA, a valid password redirects to the challenge list. Choosing a factor issues its challenge; submitting its code completes account authentication only after successful verification. Any requested membership continuation then resumes.
+`phone.enable_two_factor!` enables an already verified factor. `user.enable_two_factor!` enables the account requirement and checks that a usable factor exists.
 
-`challenge!` returns a result containing the challenge token. `verify_challenge(code, token:)` reports success, invalid proof, lockout, or cancellation. Disabled or unverified credentials cannot satisfy MFA.
+Removing or disabling the last usable factor is prevented by default: Vouch raises `Vouch::TwoFactorable::LastFactorRemoval`. To let removal disable the account’s MFA requirement, define this method on the credentials owner:
 
-Account `enable_two_factor!` requires a usable verified, enabled, unlocked credential. Enabling a credential alone does not enable the account preference. Removing or disabling the final usable factor locks the account by default; applications can customize the last-factor policy.
+```ruby
+# app/models/user.rb
+ def two_factor_last_factor_removal_action(_credential)
+   :disable
+ end
+```
 
-## Other credential types and security contracts
+Only choose that behavior when your application permits users to turn MFA off.
 
-TOTP requires an optional `rotp` dependency and application enrollment/QR presentation. TOTP and other factors may override challenge methods while preserving eligibility, lockout, and replay protection. Use the optional [credential adapter test contract](credential-adapter-contract.md) for custom implementations.
+## Other factors
 
-Verification, magic-link sign-in, and MFA have separate nonces. A new challenge retires the previous challenge. Persisted consumption is single-use and locked against concurrent acceptance. Subject changes invalidate old proofs, including changing a recipient away and back.
+TOTP uses the optional `rotp` dependency and requires enrollment and QR-code presentation in your application. Custom factors must preserve verification, lockout, and single-use behavior; the [credential adapter contract](credential-adapter-contract.md) provides shared specs.
 
-If adding `Vouch::MagicLinkable`, generate its separate schema and implement `deliver_sign_in_code`; the phone example above does not enable that feature. Missing delivery implementations raise rather than report successful delivery. See [passwords and recovery](passwords-and-recovery.md) for backup and account recovery codes.
+Verification, magic-link sign-in, and MFA challenges have separate token state. Issuing a replacement challenge invalidates its predecessor. For magic-link sign-in, install `Vouch::MagicLinkable` and its schema separately and implement `deliver_sign_in_code`.

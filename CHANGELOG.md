@@ -1,20 +1,13 @@
 # Changelog
 
-All notable changes are recorded here. These entries describe unreleased work and are intentionally not assigned a release date or version.
+## Unreleased
 
-## [Unreleased]
-
-### Added
-
-- Account-first authentication scopes with separate account and membership sessions.
-- Account login, MFA, membership selection, and independent logout semantics.
-- `Vouch::MembershipSessionsController` for membership authentication and `Vouch::SessionsController` for account authentication.
-- Shared host redirect hooks receiving the authenticated identity and scope.
-- Password-reset generator wiring for the model feature, routes, mailer hook, and explicit reset-token revocation.
-
-### Changed
-
-- Gem endpoint controllers inherit `ApplicationController` and include `Vouch::Authentication`; generated application controllers subclass those endpoints.
-- The public API no longer uses `Vouch::BaseController`, `parent_controller`, `authentication_callbacks`, or the `--concrete` generator option.
-- Split scopes use `account_scope:` with `identity:` and optional `tenant:`; tenant is not inferred from a login scope.
-- Guides now explain complete setup flows, route helpers, redirect precedence, account/membership ownership, and reset-token revocation.
+- Password authentication for single-model applications and linked account/membership scopes.
+- Generated sign-in, registration, password reset, MFA enrollment, OAuth, invitation, and impersonation endpoints.
+- Application controller helpers, named tenant helpers, and controller or shared redirect overrides.
+- Authentication session renewal that preserves application data and unrelated logins.
+- Lifecycle callbacks with separate transaction callbacks using ActiveHooks.
+- Custom scalar and composite primary keys in authentication, tokens, and generated associations.
+- Verification subjects composed of one or several attributes.
+- Password history, lockout, reset-token revocation, recovery codes, and credential backup codes.
+- Task-oriented setup guides, complete route references, and executable integration examples.
