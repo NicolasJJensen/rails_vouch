@@ -42,7 +42,6 @@ end
       config.default_scope = :host_admin_contract
       config.default_strategies(:host_strategy)
     end
-    allow(Vouch.configuration).to receive(:preserved_auth_scopes).and_return([:host_admin_contract])
     Vouch.configure_warden(manager)
 
     session = {}

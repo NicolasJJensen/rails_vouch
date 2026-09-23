@@ -20,22 +20,25 @@ RSpec.describe 'Controller integration policy' do
     expect(controller.send(:current_identity)).to eq(identity)
   end
 
-  it 'session policy preserves declared host state during session rotation' do
-    allow(Vouch.configuration).to receive(:preserved_session_keys).and_return(['cart'])
+  it 'renews authentication without clearing application state' do
     session['cart'] = {'items' => [1]}
     session['discard'] = 'old'
     controller.send(:reset_session_with_preserved_keys)
     expect(session).to include('cart' => {'items' => [1]})
-    expect(session).not_to have_key('discard')
-    expect(proxy).to have_received(:logout).with(:user, :user_account)
+    expect(session['discard']).to eq('old')
+    expect(proxy).to have_received(:logout).with(:user, :user_account, :user_impersonation)
   end
 
-  it 'session policy restores only explicitly preserved other Warden scopes' do
-    identity = create(:user)
-    allow(Vouch.configuration).to receive(:preserved_auth_scopes).and_return([:admin])
-    allow(proxy).to receive(:user).with(:admin).and_return(identity)
-    expect(proxy).to receive(:set_user).with(identity, scope: :admin, store: true)
+  it 'clears stale authentication challenges while leaving unrelated scopes alone' do
+    session['warden.user.2fa_pending'] = { 'stale' => true }
+    session['warden.user.two_factor_token.Phone.1'] = 'old'
+    session['warden.admin.return_to'] = '/admin'
     controller.send(:reset_session_with_preserved_keys)
+    expect(session).not_to have_key('warden.user.2fa_pending')
+    expect(session).not_to have_key('warden.user.two_factor_token.Phone.1')
+    expect(session['warden.admin.return_to']).to eq('/admin')
+    expect(proxy).not_to have_received(:logout).with(:admin)
+    expect(controller).not_to have_received(:reset_session)
   end
 
   it 'stores an MFA continuation only after rotating the session' do
@@ -54,7 +57,7 @@ RSpec.describe 'Controller integration policy' do
       controller.send(:signed_in_via_session_key) => {'type' => 'MagicLink', 'id' => '42'}
     )
     expect(context).to include('factor_required' => true)
-    expect(session).not_to have_key('discard')
+    expect(session['discard']).to eq('old')
   end
 
   it 'stores the pending account in Warden only after rotating for identity selection' do

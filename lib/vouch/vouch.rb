@@ -85,7 +85,7 @@ module Vouch
         owned = [name, :"#{name}_impersonation"]
         owned << mapping.account_scope_name unless mapping.membership_scope?
         warden.logout(*owned)
-        session.keys.grep(/\Awarden\.#{Regexp.escape(name.to_s)}\./).each { |key| session.delete(key) }
+        session.keys.select { |key| Session.state_key?(key, name) }.each { |key| session.delete(key) }
       end
     end
 
@@ -163,6 +163,13 @@ module Vouch
   # Centralized session key generation. Internal — used by strategies and
   # controllers to ensure consistent key naming.
   module Session
+    def self.state_key?(key, scope)
+      name = key.to_s
+      return false if name.match?(/\Awarden\.user\..+\.(?:key|session)\z/)
+
+      name.start_with?("warden.#{scope}.")
+    end
+
     KEY_PURPOSES = {
       two_factor:    "2fa_pending",
       return_to:     "return_to",

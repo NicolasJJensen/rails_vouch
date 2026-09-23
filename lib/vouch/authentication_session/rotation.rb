@@ -4,25 +4,28 @@ module Vouch
   class AuthenticationSession
     module Rotation
       def reset_with_preserved_keys
-        keys = PRESERVED_KEYS + scoped_keys + Vouch.configuration.preserved_session_keys.map(&:to_s)
-        preserved = keys.uniq.each_with_object({}) do |key, values|
-          values[key] = rails_session[key] if rails_session.key?(key)
-        end
         mapping = controller.send(:auth_mapping)
-        related = if mapping.membership_scope?
-          [mapping.parent_scope_name] + Vouch.dependent_mappings(mapping.parent_scope_name).map(&:scope_name)
-        else
-          []
+        affected = [mapping] + Vouch.dependent_mappings(scope)
+        preserved = scoped_keys + [key(:impersonation)]
+
+        affected.each do |current|
+          owned = [current.scope_name]
+          owned << current.account_scope_name unless current.membership_scope?
+          owned << :"#{current.scope_name}_impersonation" unless mapping.membership_scope?
+          warden.logout(*owned)
+          rails_session.keys.each do |name|
+            next unless Vouch::Session.state_key?(name, current.scope_name)
+            next if current.scope_name == scope && preserved.include?(name.to_s)
+
+            rails_session.delete(name)
+          end
         end
-        related += related.map { |name| :"#{name}_impersonation" }
-        revoked = [scope] + Vouch.dependent_mappings(scope).map(&:scope_name)
-        revoked << account_scope unless mapping.membership_scope?
-        scopes = (Vouch.configuration.preserved_auth_scopes.map(&:to_sym) + related).uniq - revoked
-        identities = scopes.to_h { |other_scope| [other_scope, warden.user(other_scope)] }
-        warden.logout(*revoked)
-        controller.reset_session
-        preserved.each { |key, value| rails_session[key] = value }
-        identities.each { |other_scope, identity| warden.set_user(identity, scope: other_scope, store: true) if identity }
+
+        # MFA may start before Warden stores an identity, so request renewal
+        # here too. Renewal replaces the identifier without clearing app data.
+        options = rails_session.options if rails_session.respond_to?(:options)
+        options ||= controller.request.session_options if controller.request
+        options[:renew] = true if options
       end
     end
   end
