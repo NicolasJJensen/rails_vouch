@@ -222,7 +222,7 @@ module Vouch
             candidate.klass.auth_feature_enabled?(:two_factorable)
         end
       end
-      distinct = owners.uniq { |owner| [owner.class, owner.id] }
+      distinct = owners.uniq { |owner| [owner.class, Vouch::RecordKey.dump(owner)] }
       return distinct.first if distinct.length <= 1
 
       raise Vouch::ConfigurationError, <<~MSG.squish
@@ -248,7 +248,7 @@ module Vouch
           usable = credential.two_factor_enabled? &&
             (!credential.respond_to?(:verified?) || credential.verified?) &&
             !credential.two_factor_locked?
-          if credential.class == self.class && credential.id.to_s == id.to_s
+          if credential.class == self.class && Vouch::RecordKey.same?(credential, self)
             target_usable = usable
           elsif usable
             remaining += 1
@@ -300,7 +300,7 @@ module Vouch
     end
 
     def two_factor_payload
-      payload = { "id" => id.to_s, "klass" => self.class.name }
+      payload = { "id" => Vouch::RecordKey.value(self), "klass" => self.class.name }
       if respond_to?(:verifiable_subject)
         payload["subject"] = verifiable_subject
         payload["version"] = verifiable_subject_version

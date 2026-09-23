@@ -2,7 +2,7 @@
 
 # Centralized purpose-string construction for otp_courier tokens.
 #
-# Per-record purposes include the credential's class, id (string-coerced),
+# Per-record purposes include the credential's class and a typed key transport,
 # and a microsecond timestamp suffix. The timestamp defends against
 # `record.dup.save!` inside the same wall-clock second producing two records
 # that share a purpose namespace.
@@ -59,7 +59,7 @@ module Vouch
           created_at column on the host table.
         MSG
 
-        "#{action}.#{record.class.name.underscore}.#{record.id}.#{ts}"
+        "#{action}.#{record.class.name.underscore}.#{Vouch::RecordKey.serialize(record)}.#{ts}"
       end
     end
   end

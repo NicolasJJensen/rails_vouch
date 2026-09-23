@@ -20,6 +20,8 @@ module Vouch
       impersonation_end
     ].freeze
 
+    AUTH_COMMIT_HOOKS = AUTH_LIFECYCLE_HOOKS.map { |name| :"commit_of_#{name}" }.freeze
+
     AUTH_EVENT_HOOKS = %i[
       password_reset_token_generation
       password_change
@@ -30,7 +32,7 @@ module Vouch
 
     ALL_AUTH_HOOKS = (AUTH_LIFECYCLE_HOOKS + AUTH_EVENT_HOOKS).freeze
 
-    private_constant :AUTH_LIFECYCLE_HOOKS, :AUTH_EVENT_HOOKS, :ALL_AUTH_HOOKS
+    private_constant :AUTH_LIFECYCLE_HOOKS, :AUTH_COMMIT_HOOKS, :AUTH_EVENT_HOOKS, :ALL_AUTH_HOOKS
 
     UNSAFE_REDIRECT_PATTERN = /\A(?!\/)|\A(?:\/\/|\\|\/\\)|%2f|%2e|[\u{202a}-\u{202e}\u{2066}-\u{2069}]/i
     private_constant :UNSAFE_REDIRECT_PATTERN
@@ -40,7 +42,7 @@ module Vouch
 
       class_attribute :_auth_scope_name, instance_writer: false
 
-      define_hooks(*ALL_AUTH_HOOKS)
+      define_hooks(*(ALL_AUTH_HOOKS + AUTH_COMMIT_HOOKS))
     end
 
     class_methods do
@@ -49,6 +51,14 @@ module Vouch
       end
 
       AUTH_LIFECYCLE_HOOKS.each do |hook_name|
+        %i[before after around].each do |kind|
+          define_method(:"#{kind}_#{hook_name}") do |*args, **opts, &block|
+            set_hook(hook_name, kind, *args, **opts, &block)
+          end
+        end
+      end
+
+      AUTH_COMMIT_HOOKS.each do |hook_name|
         %i[before after around].each do |kind|
           define_method(:"#{kind}_#{hook_name}") do |*args, **opts, &block|
             set_hook(hook_name, kind, *args, **opts, &block)
@@ -147,8 +157,8 @@ module Vouch
       session.delete(credential_drafts_session_key)
     end
 
-    def reset_session_with_preserved_keys
-      authentication_session.reset_with_preserved_keys
+    def renew_authentication_session
+      authentication_session.renew!
     end
 
     def safe_local_path(value)
@@ -187,20 +197,23 @@ module Vouch
     def context_credential(account, context)
       reference = context['factor']
       return nil unless reference
+      reference_type = reference['type'] || reference[:type]
+      reference_id = reference['id'] || reference[:id]
       two_factor_credentials_for(account).enabled.detect do |candidate|
-        candidate.class.name == reference['type'] && candidate.id.to_s == reference['id']
+        candidate.class.name == reference_type &&
+          Vouch::RecordKey.same?(reference_id, Vouch::RecordKey.serialize(candidate), model: candidate.class)
       end
     end
 
     def credential_reference(credential)
-      {'type' => credential.class.name, 'id' => credential.id.to_s,
+      {'type' => credential.class.name, 'id' => Vouch::RecordKey.serialize(credential),
         'version' => credential.try(:verification_version),
         'verified_at' => credential.verified_at&.utc&.iso8601(6),
         'used_at' => credential.two_factor_last_used_at&.utc&.iso8601(6)}
     end
 
     def signed_in_via_reference(credential)
-      { 'type' => credential.class.name, 'id' => credential.id.to_s }
+      { 'type' => credential.class.name, 'id' => Vouch::RecordKey.serialize(credential) }
     end
 
     def valid_context_factor?(account, context)
@@ -360,14 +373,17 @@ module Vouch
       return set unless signed_in_via
 
       type = signed_in_via["type"] || signed_in_via[:type]
-      id   = (signed_in_via["id"] || signed_in_via[:id]).to_s
-      set.reject { |cred| cred.class.name == type && cred.id.to_s == id }
+      id   = signed_in_via["id"] || signed_in_via[:id]
+      set.reject do |cred|
+        cred.class.name == type &&
+          Vouch::RecordKey.same?(id, Vouch::RecordKey.serialize(cred), model: cred.class)
+      end
     end
 
     def two_factor_token_session_key(credential)
       Vouch::Session.dynamic_key_for(
         auth_scope_name,
-        "two_factor_token.#{credential.class.name}.#{credential.id}"
+        "two_factor_token.#{credential.class.name}.#{Vouch::RecordKey.serialize(credential)}"
       )
     end
 

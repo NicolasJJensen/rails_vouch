@@ -69,7 +69,7 @@ module Vouch
         # through after_update so the archived digest matches the row that was
         # current immediately before this password change.
         @locked_password_digest = self.class
-          .where(self.class.primary_key => id)
+          .where(Vouch::RecordKey.attributes_for(self))
           .lock
           .pick(:password_digest)
       end

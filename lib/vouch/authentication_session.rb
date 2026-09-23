@@ -5,7 +5,6 @@ module Vouch
   # rotation. It deliberately receives the controller only for Rails session,
   # Warden, and mapping access; authentication decisions remain in the controller concern.
   class AuthenticationSession
-    PRESERVED_KEYS = %w[_csrf_token flash locale].freeze
 
     include Rotation
     include Pending

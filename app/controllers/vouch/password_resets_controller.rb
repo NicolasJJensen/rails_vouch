@@ -1,4 +1,4 @@
-class Vouch::PasswordsController < ::ApplicationController
+class Vouch::PasswordResetsController < ::ApplicationController
   include Vouch::Authentication
 
   only_allow_unauthenticated_access

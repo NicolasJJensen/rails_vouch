@@ -247,7 +247,7 @@ module Vouch
 
       database_version = attribute_in_database(:verification_version).to_i
       local_delta = [self[:verification_version].to_i - database_version, 1].max
-      latest_version = self.class.where(self.class.primary_key => id).lock.pick(:verification_version).to_i
+      latest_version = Vouch::RecordKey.find(self.class.lock, Vouch::RecordKey.serialize(self)).verification_version.to_i
       self[:verification_version] = latest_version + local_delta
       self[:verified_at] = nil if subject_changed
       true

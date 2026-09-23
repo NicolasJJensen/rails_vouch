@@ -3,13 +3,15 @@ class Vouch::ImpersonationsController < ::ApplicationController
   before_action :authorize_impersonation!, only: :create
 
   def create
-    target = auth_mapping.identity_class.find(params[:id])
+    target = Vouch::RecordKey.find(impersonatable_identities, params[:id])
     original = warden.user(impersonation_scope) || current_identity
     return_path = session[impersonation_return_to_session_key] || local_referer_path
-    changed = false
-    hook_execution = prepare_lifecycle_hooks(:impersonation_start, current_identity, target)
-    run_lifecycle_operation(hook_execution) do
-      reset_session_with_preserved_keys
+    changed = run_authentication_hooks(:impersonation_start, current_identity, target) do |env|
+      committed = run_commit_hooks(:impersonation_start, *env.args, **env.kwargs) do
+        true
+      end
+      env.abort! unless committed
+      renew_authentication_session
       clear_linked_authentication_scopes if auth_mapping.membership_scope?
       warden.set_user(original, scope: impersonation_scope, store: true)
       session[impersonation_return_to_session_key] = return_path
@@ -18,9 +20,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
         warden.set_user(target_account, scope: auth_mapping.parent_scope_name, store: true)
       end
       warden.set_user(target, scope: auth_scope_name, store: true)
-      changed = true
+      true
     end
-    finish_lifecycle_hooks(hook_execution, completed: changed)
     changed ? redirect_to(root_path) : head(:forbidden)
   rescue ActiveRecord::RecordNotFound
     redirect_to root_path, alert: I18n.t('vouch.impersonations.not_found')
@@ -30,19 +31,20 @@ class Vouch::ImpersonationsController < ::ApplicationController
     original = warden.user(impersonation_scope)
     return head(:unprocessable_entity) unless original
     previous_url = safe_local_path(session[impersonation_return_to_session_key])
-    changed = false
-    hook_execution = prepare_lifecycle_hooks(:impersonation_end, current_identity, original)
-    run_lifecycle_operation(hook_execution) do
-      reset_session_with_preserved_keys
+    changed = run_authentication_hooks(:impersonation_end, current_identity, original) do |env|
+      committed = run_commit_hooks(:impersonation_end, *env.args, **env.kwargs) do
+        true
+      end
+      env.abort! unless committed
+      renew_authentication_session
       clear_linked_authentication_scopes if auth_mapping.membership_scope?
       warden.logout(impersonation_scope)
       if auth_mapping.membership_scope?
         warden.set_user(auth_mapping.account_for(original), scope: auth_mapping.parent_scope_name, store: true)
       end
       warden.set_user(original, scope: auth_scope_name, store: true)
-      changed = true
+      true
     end
-    finish_lifecycle_hooks(hook_execution, completed: changed)
     changed ? redirect_to(previous_url || root_path) : head(:forbidden)
   end
 
@@ -51,6 +53,10 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   private
+
+  def impersonatable_identities
+    auth_mapping.identity_class.all
+  end
 
   def authorize_impersonation!
     head :forbidden

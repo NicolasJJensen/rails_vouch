@@ -196,7 +196,7 @@ RSpec.describe "Account and membership sessions", type: :request do
       create(:user, account: record)
       create(:user, account: record)
     end
-    LinkedAccounts::RegistrationsController.set_hook(:sign_up, :on) do |record|
+    LinkedAccounts::RegistrationsController.set_hook(:commit_of_sign_up, :after) do |record|
       record.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
         verified_at: Time.current, two_factor_enabled_at: Time.current)
       record.enable_two_factor!

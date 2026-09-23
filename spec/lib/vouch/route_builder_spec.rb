@@ -167,14 +167,14 @@ RSpec.describe Vouch::RouteBuilder do
       test_routes.draw do
         Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
           auth.sessions
-          auth.passwords
+          auth.password_resets
         end
       end
 
       member_paths = test_routes.routes.map { |r| r.path.spec.to_s }
 
       expect(member_paths).to include("/members/sign_in(.:format)")
-      expect(member_paths).to include("/members/password/new(.:format)")
+      expect(member_paths).to include("/members/password_reset/new(.:format)")
 
       expect(member_paths).not_to include("/members/sign_up(.:format)")
       expect(member_paths).not_to include("/members/select(.:format)")

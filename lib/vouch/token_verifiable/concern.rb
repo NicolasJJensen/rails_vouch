@@ -56,7 +56,7 @@ module Vouch
         rotate_confirmation_nonce! if confirmation_nonce.blank?
 
         self.class.token_verifier.generate(
-          { id: id, nonce: confirmation_nonce, subject: confirmation_subject },
+          { id: Vouch::RecordKey.value(self), nonce: confirmation_nonce, subject: confirmation_subject },
           expires_in: token_validity,
           purpose:    self.class.token_purpose_key
         )
@@ -85,7 +85,11 @@ module Vouch
           # A concurrent revocation can delete the record between an unlocked
           # lookup and lock acquisition.
           result = transaction(requires_new: true) do
-            record = lock.find_by(primary_key => payload[:id] || payload["id"])
+            record = begin
+              Vouch::RecordKey.find(lock, payload[:id] || payload["id"])
+            rescue ActiveRecord::RecordNotFound, ArgumentError
+              nil
+            end
             next Vouch::Result.invalid unless record
 
             actual = record.confirmation_nonce.to_s

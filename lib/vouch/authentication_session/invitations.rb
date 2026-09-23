@@ -5,7 +5,7 @@ module Vouch
     module Invitations
       def begin_invitation!(identity)
         payload = {
-          'user_id' => identity.id.to_s,
+          'user_id' => Vouch::RecordKey.serialize(identity),
           'token' => identity.invitation_token,
           'scope' => scope.to_s
         }
@@ -23,7 +23,11 @@ module Vouch
 
         payload_scope = payload['scope']&.to_sym
         mapping = Vouch.mapping_for(payload_scope || controller.send(:auth_scope_name))
-        identity = mapping.identity_class.find_by(mapping.identity_class.primary_key => payload['user_id'])
+        identity = begin
+          Vouch::RecordKey.find(mapping.identity_class.all, payload['user_id'])
+        rescue ActiveRecord::RecordNotFound, ArgumentError
+          nil
+        end
         return nil unless identity && identity.invitation_token.present? && !identity.invitation_expired? &&
           ActiveSupport::SecurityUtils.secure_compare(identity.invitation_token, payload['token'])
 

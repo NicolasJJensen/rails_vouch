@@ -146,7 +146,15 @@ module Vouch
       end
 
       assoc = matching.first
-      record = scope_for(assoc).find(id)
+      begin
+        record = if assoc.klass.primary_key.is_a?(Array)
+          Vouch::RecordKey.find(scope_for(assoc), id, model: assoc.klass)
+        else
+          scope_for(assoc).find(id)
+        end
+      rescue ::ActiveRecord::RecordNotFound
+        raise
+      end
       if filtered?(record)
         raise ::ActiveRecord::RecordNotFound,
               "credential #{kind}-#{id} is hidden by the current session filter"
@@ -159,7 +167,15 @@ module Vouch
     # existing single-association integrations keep working untouched.
     def find_by_bare_id!(param)
       @associations.each do |assoc|
-        record = scope_for(assoc).find_by(assoc.klass.primary_key => param)
+        record = if assoc.klass.primary_key.is_a?(Array)
+          begin
+            Vouch::RecordKey.find(scope_for(assoc), param, model: assoc.klass)
+          rescue ::ActiveRecord::RecordNotFound
+            nil
+          end
+        else
+          scope_for(assoc).find_by(assoc.klass.primary_key => param)
+        end
         return record if record && !filtered?(record)
       end
       raise ::ActiveRecord::RecordNotFound,

@@ -33,10 +33,9 @@ class Vouch::OmniAuthsController < ::ApplicationController
     failure
   end
 
-  def finish_oauth(account, refresh_oauth: false, lifecycle_execution: nil, lifecycle_completed: false)
-    session[Vouch::Session.key_for(auth_scope_name, :completion)] = lifecycle_completed ? "sign_up" : "sign_in"
+  def finish_oauth(account, refresh_oauth: false)
+    session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
     outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth, auth_hash: @auth_hash, refresh_oauth: refresh_oauth)
-    finish_lifecycle_hooks(lifecycle_execution, completed: lifecycle_completed) if lifecycle_execution
     case outcome
     when :signed_in then redirect_after_authentication
     when :needs_two_factor then redirect_to two_factor_challenges_path
@@ -49,22 +48,19 @@ class Vouch::OmniAuthsController < ::ApplicationController
     if existing && auth_mapping.account_for_oauth_identity(existing) != current_account
       return redirect_to root_path, alert: I18n.t('vouch.oauth.already_linked')
     end
-    hook_execution = nil
-    linked = current_account.class.transaction(requires_new: true) do
-      completed = false
-      hook_execution = prepare_lifecycle_hooks(:oauth_link, current_identity, auth_hash: @auth_hash)
-      next false unless run_lifecycle_operation(hook_execution) do
+    linked = run_authentication_hooks(:oauth_link, current_identity, auth_hash: @auth_hash) do |env|
+      completed = run_commit_hooks(:oauth_link, *env.args, **env.kwargs) do
         unless existing
           Vouch::Persistence.create!(
             current_account.public_send(auth_mapping.oauth_identity_association.name),
             auth_mapping.oauth_identity_class.oauth_attributes(@auth_hash)
           )
         end
-        completed = true
+        true
       end
-      completed
+      env.abort! unless completed
+      true
     end
-    finish_lifecycle_hooks(hook_execution, completed: linked)
     linked ? redirect_to(root_path, notice: I18n.t('vouch.oauth.linked')) : head(:forbidden)
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
          Vouch::Persistence::Cancelled
@@ -78,21 +74,36 @@ class Vouch::OmniAuthsController < ::ApplicationController
     end
 
     account = auth_mapping.account_class.new_from_omniauth(@auth_hash)
-    hook_execution = nil
-    committed = auth_mapping.account_class.transaction(requires_new: true) do
-      hook_execution = prepare_lifecycle_hooks(:oauth_account_creation, auth_hash: @auth_hash)
-      next false unless run_lifecycle_operation(hook_execution) do |env|
+    identity = nil
+    outcome = nil
+    committed = run_authentication_hooks(:oauth_account_creation, auth_hash: @auth_hash) do |env|
+      completed = run_commit_hooks(:oauth_account_creation, *env.args, **env.kwargs) do |commit_env|
         Vouch::Persistence.save!(account)
         Vouch::Persistence.create!(
           account.public_send(auth_mapping.oauth_identity_association.name),
           auth_mapping.oauth_identity_class.oauth_attributes(@auth_hash)
         )
         identity = build_registration(account)
-        env.add(account, identity)
+        commit_env.add(account, identity)
+        true
       end
-      account&.persisted?
+      env.abort! unless completed
+      session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
+      outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth,
+        auth_hash: @auth_hash)
+      env.add(account, identity)
+      true
     end
-    committed ? finish_oauth(account, lifecycle_execution: hook_execution, lifecycle_completed: committed) : head(:forbidden)
+    if committed
+      case outcome
+      when :signed_in then redirect_after_authentication
+      when :needs_two_factor then redirect_to two_factor_challenges_path
+      when :needs_selection then redirect_to select_path
+      else failure
+      end
+    else
+      head(:forbidden)
+    end
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
          Vouch::Persistence::Cancelled
     failure

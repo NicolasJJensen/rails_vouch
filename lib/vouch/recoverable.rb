@@ -39,10 +39,12 @@ module Vouch
     CROCKFORD_CHARS = "ABCDEFGHJKMNPQRSTVWXYZ23456789".chars.freeze
 
     included do
+      dependent = respond_to?(:composite_primary_key?) && composite_primary_key? ? nil : :destroy
       has_many :vouch_recovery_codes,
                class_name:  "Vouch::RecoveryCode",
                as:          :recoverable,
-               dependent:   :destroy
+               dependent:   dependent
+      before_destroy :destroy_composite_recovery_codes if dependent.nil?
     end
 
     def recovery_locked?
@@ -52,8 +54,14 @@ module Vouch
       )
     end
 
+    def vouch_recovery_codes
+      return super unless composite_recovery_key?
+
+      recovery_codes_relation
+    end
+
     def recovery_codes_remaining
-      vouch_recovery_codes.unused.count
+      recovery_codes_relation.unused.count
     end
 
     def recovery_codes_low?
@@ -73,10 +81,15 @@ module Vouch
         # Serialize against concurrent consume_recovery_code! on this host.
         lock!
 
-        vouch_recovery_codes.delete_all
+        recovery_codes_relation.delete_all
 
         digests.each do |digest|
-          Vouch::Persistence.create!(vouch_recovery_codes, code_digest: digest)
+          attributes = {code_digest: digest}
+          if composite_recovery_key?
+            attributes[:recoverable_type] = recoverable_polymorphic_name
+            attributes[:recoverable_key] = Vouch::RecordKey.dump(self)
+          end
+          Vouch::Persistence.create!(recovery_codes_relation, **attributes)
         end
 
         Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil)
@@ -113,7 +126,7 @@ module Vouch
 
         # SELECT FOR UPDATE — held until COMMIT. Two concurrent submissions
         # of the same code can't both flip used_at.
-        unused = vouch_recovery_codes
+        unused = recovery_codes_relation
                    .where(used_at: nil)
                    .lock("FOR UPDATE")
                    .to_a
@@ -136,6 +149,27 @@ module Vouch
     end
 
     private
+
+    def composite_recovery_key?
+      self.class.respond_to?(:composite_primary_key?) && self.class.composite_primary_key?
+    end
+
+    def recoverable_polymorphic_name
+      self.class.respond_to?(:polymorphic_name) ? self.class.polymorphic_name : self.class.base_class.name
+    end
+
+    def recovery_codes_relation
+      return vouch_recovery_codes unless composite_recovery_key?
+
+      Vouch::RecoveryCode.where(
+        recoverable_type: recoverable_polymorphic_name,
+        recoverable_key: Vouch::RecordKey.dump(self)
+      )
+    end
+
+    def destroy_composite_recovery_codes
+      recovery_codes_relation.destroy_all
+    end
 
     def recoverable_config
       Vouch.configuration.recoverable

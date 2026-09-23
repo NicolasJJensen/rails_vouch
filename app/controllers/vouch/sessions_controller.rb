@@ -35,15 +35,16 @@ class Vouch::SessionsController < ::ApplicationController
   end
 
   def destroy
-    signed_out = false
-    hook_execution = prepare_lifecycle_hooks(:sign_out, current_identity)
-    run_lifecycle_operation(hook_execution) do
+    signed_out = run_authentication_hooks(:sign_out, current_identity) do |env|
+      committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
+        true
+      end
+      env.abort! unless committed
       Vouch.logout_scope(warden, session, auth_scope_name)
-      signed_out = true
+      true
     end
     return head(:forbidden) unless signed_out
 
-    finish_lifecycle_hooks(hook_execution, completed: true)
     redirect_to after_sign_out_path, notice: I18n.t("vouch.sessions.signed_out")
   end
 end

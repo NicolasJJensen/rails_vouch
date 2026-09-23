@@ -57,7 +57,7 @@ module Vouch
     # prevent cross-record and STI confusion.
     def payload_valid?(payload)
       payload.is_a?(Hash) &&
-        payload["id"].to_s == id.to_s &&
+        Vouch::RecordKey.same?(payload["id"], Vouch::RecordKey.value(self), model: self.class) &&
         payload["klass"] == self.class.name
     end
   end

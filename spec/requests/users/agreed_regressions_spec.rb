@@ -2,10 +2,10 @@ require 'rails_helper'
 
 RSpec.describe 'Review: authentication integration boundaries', type: :request do
   def preserve_hooks(controller, hook)
-    original = controller.public_send("_#{hook}_hooks").dup
+    original = controller.__hooks
     yield
   ensure
-    controller.public_send("_#{hook}_hooks=", original)
+    controller.__hooks = original if original
   end
 
   it 'does not report Warden authentication before the second factor completes' do

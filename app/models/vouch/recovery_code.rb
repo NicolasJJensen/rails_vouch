@@ -8,7 +8,8 @@
 #
 # Columns (added by `bin/rails g vouch:recoverable`):
 #   - recoverable_type:string  (polymorphic; null: false)
-#   - recoverable_id           (polymorphic; null: false)
+#   - recoverable_id           (polymorphic; null: false for scalar owners)
+#   - recoverable_key:string   (typed key transport for composite owners)
 #   - code_digest:string       (null: false)
 #   - used_at:datetime
 #   - created_at, updated_at
@@ -21,6 +22,15 @@ module Vouch
     self.table_name = "vouch_recovery_codes"
 
     belongs_to :recoverable, polymorphic: true
+
+    def recoverable
+      return super unless respond_to?(:recoverable_key) && recoverable_key.present?
+
+      klass = self.class.polymorphic_class_for(recoverable_type)
+      Vouch::RecordKey.find(klass, recoverable_key)
+    rescue ActiveRecord::RecordNotFound, ArgumentError
+      nil
+    end
 
     scope :unused, -> { where(used_at: nil) }
     scope :used,   -> { where.not(used_at: nil) }

@@ -1,6 +1,6 @@
 <h1>Choose a membership</h1>
 <%= form_with url: url_for(action: :create), method: :post do |form| %>
   <%= form.label :identity_id, "Membership" %>
-  <%= form.collection_select :identity_id, @identities, :id, :id %>
+  <%= form.collection_select :identity_id, @identities, ->(identity) { Vouch::RecordKey.to_param(identity) }, :id %>
   <%= form.submit "Continue" %>
 <% end %>

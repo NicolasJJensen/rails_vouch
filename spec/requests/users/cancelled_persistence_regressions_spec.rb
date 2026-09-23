@@ -4,6 +4,21 @@ require "rails_helper"
 require "omniauth"
 
 RSpec.describe "authentication writes cancelled by host callbacks", type: :request do
+  it "does not publish sign-out state when its commit hook rolls back" do
+    user = create(:user)
+    sign_in(user)
+    original_hooks = Users::SessionsController.__hooks
+    Users::SessionsController.after_commit_of_sign_out { raise ActiveRecord::Rollback }
+
+    delete "/users/sign_out"
+
+    expect(response).to have_http_status(:forbidden)
+    get "/users/two_factor_credentials"
+    expect(response).to have_http_status(:ok)
+  ensure
+    Users::SessionsController.__hooks = original_hooks if original_hooks
+  end
+
   it "does not publish a registration session when account creation rolls back" do
     callback = proc { raise ActiveRecord::Rollback }
     Account.set_callback(:create, :after, callback)

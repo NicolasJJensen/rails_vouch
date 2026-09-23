@@ -6,7 +6,7 @@ module Vouch
       PendingAuthenticationContext = Struct.new(:account, :context, keyword_init: true)
 
       def begin_second_factor!(context, primary: nil)
-        reset_with_preserved_keys
+        renew!
         session[key(:signed_in_via)] = primary if primary
         context['factor_required'] = true
         session[key(:two_factor)] = context
@@ -17,7 +17,7 @@ module Vouch
       end
 
       def begin_selection!(account, context, primary: nil)
-        reset_with_preserved_keys
+        renew!
         session[key(:signed_in_via)] = primary if primary
         session[key(:selection)] = context
         warden.set_user(account, scope: account_scope, store: true)
@@ -35,9 +35,13 @@ module Vouch
       def load_pending(purpose)
         context = session[key(purpose)]
         mapping = controller.send(:auth_mapping)
-        account = context.is_a?(Hash) && mapping.account_class.find_by(
-          mapping.account_class.primary_key => context['account_id']
-        )
+        account = if context.is_a?(Hash)
+          begin
+            Vouch::RecordKey.find(mapping.account_class.all, context['account_id'])
+          rescue ActiveRecord::RecordNotFound, ArgumentError
+            nil
+          end
+        end
         if account && Vouch::PendingAuthentication.valid?(context, account) &&
             controller.send(:authentication_allowed?, account, context)
           PendingAuthenticationContext.new(account: account, context: context)

@@ -36,22 +36,23 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     account = current_account
     return head(:forbidden) unless Vouch::PendingAuthentication.valid?(context, account)
 
-    identity = pending_candidate_identities(account, context).detect { |candidate| candidate.id.to_s == params[:identity_id].to_s }
+    identity = pending_candidate_identities(account, context).detect { |candidate| Vouch::RecordKey.to_param(candidate) == params[:identity_id].to_s }
     return head(:forbidden) unless identity
 
     establish_membership(identity, context)
   end
 
   def destroy
-    hook_execution = prepare_lifecycle_hooks(:sign_out, current_identity)
-    completed = false
-    run_lifecycle_operation(hook_execution) do
+    completed = run_authentication_hooks(:sign_out, current_identity) do |env|
+      committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
+        true
+      end
+      env.abort! unless committed
       Vouch.logout_scope(warden, session, auth_scope_name)
-      completed = true
+      true
     end
     return head(:forbidden) unless completed
 
-    finish_lifecycle_hooks(hook_execution, completed: true)
     redirect_to after_sign_out_path
   end
 
@@ -76,7 +77,7 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     return redirect_to(new_session_path) unless pending
 
     identity = pending_candidate_identities(pending.account, pending.context).detect do |candidate|
-      candidate.id.to_s == params[:identity_id].to_s
+      Vouch::RecordKey.to_param(candidate) == params[:identity_id].to_s
     end
     if identity && bind_identity(pending.account, identity, pending.context) == :signed_in
       redirect_after_authentication
@@ -87,28 +88,26 @@ class Vouch::MembershipSessionsController < ::ApplicationController
 
   def establish_membership(identity, context)
     account = current_account
-    hook_execution = nil
     invitation = nil
-    completed = account.with_lock(requires_new: true) do
-      next false unless Vouch::PendingAuthentication.valid?(context, account)
-      next false unless authentication_allowed?(account, context)
-      next false unless pending_candidate_identities(account, context).any? { |candidate| candidate.id == identity.id }
+    completed = run_authentication_hooks(:sign_in, account, identity) do |env|
+      committed = run_commit_hooks(:sign_in, *env.args, **env.kwargs) do
+        account.lock!
+        next false unless Vouch::PendingAuthentication.valid?(context, account)
+        next false unless authentication_allowed?(account, context)
+        next false unless pending_candidate_identities(account, context).any? { |candidate| candidate.id == identity.id }
 
-      hook_execution = prepare_lifecycle_hooks(:sign_in, account, identity)
-      succeeded = false
-      run_lifecycle_operation(hook_execution) do
         invitation = accept_pending_invitation(account, publish: false)
-        succeeded = true
+        true
       end
-      succeeded
+      env.abort! unless committed
+      renew_authentication_session
+      session.delete(selection_session_key)
+      publish_invitation_acceptance(account, invitation) if invitation
+      warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
+      true
     end
     return head(:forbidden) unless completed
 
-    reset_session_with_preserved_keys
-    session.delete(selection_session_key)
-    publish_invitation_acceptance(account, invitation) if invitation
-    warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
-    finish_lifecycle_hooks(hook_execution, completed: true)
     redirect_after_authentication
   rescue Vouch::Persistence::Cancelled
     head :forbidden

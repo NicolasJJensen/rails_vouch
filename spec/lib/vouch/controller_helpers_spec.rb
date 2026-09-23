@@ -391,7 +391,7 @@ RSpec.describe Vouch::ControllerHelpers do
       allow(controller).to receive(:candidate_identities_for).with(account).and_return(narrowed)
       warden_proxy = instance_double(Warden::Proxy, set_user: nil)
       allow(controller).to receive(:warden).and_return(warden_proxy)
-      allow(controller).to receive(:reset_session_with_preserved_keys)
+      allow(controller).to receive(:renew_authentication_session)
       allow(controller).to receive(:run_hooks).and_yield(double(add: nil))
 
       result = controller.send(:complete_sign_in, account)
@@ -406,7 +406,7 @@ RSpec.describe Vouch::ControllerHelpers do
       allow(controller).to receive(:valid_context_factor?).with(account, anything).and_return(true, false)
       warden_proxy = instance_double(Warden::Proxy, set_user: nil)
       allow(controller).to receive(:warden).and_return(warden_proxy)
-      allow(controller).to receive(:reset_session_with_preserved_keys)
+      allow(controller).to receive(:renew_authentication_session)
 
       result = controller.send(:complete_sign_in, account)
 

@@ -38,34 +38,27 @@ class Vouch::InvitationsController < ::ApplicationController
     if token.present?
       invitation = revocable_invitations.find_by(invitation_token: token)
       if invitation
-        execution = prepare_hooks(:invitation_revocation, invitation, auth_mapping.account_for(invitation))
-        committed = false
-        Vouch::Persistence.transaction(invitation) do
-          account = auth_mapping.account_for(invitation)
-          account.lock!
-          invitation.lock! unless invitation == account
-          execution.run_before!
-          raise ActiveRecord::Rollback if execution.halted?
-          next unless revocable_invitations.where(
-            auth_mapping.identity_class.primary_key => invitation.id,
-            invitation_token: token
-          ).exists?
+        committed = run_authentication_hooks(:invitation_revocation, invitation, auth_mapping.account_for(invitation)) do |env|
+          succeeded = run_commit_hooks(:invitation_revocation, *env.args, **env.kwargs) do
+            account = auth_mapping.account_for(invitation)
+            account.lock!
+            invitation.lock! unless invitation == account
+            next false unless revocable_invitations.where(
+              auth_mapping.identity_class.primary_key => invitation.id,
+              invitation_token: token
+            ).exists?
 
-          completed = false
-          execution.run do
             if auth_mapping.split_model?
               invitation.destroy!
             else
               Vouch::Persistence.update!(invitation,
                 invitation_token: nil, invitation_sent_at: nil)
             end
-            completed = true
+            true
           end
-          execution.run_on!
-          raise ActiveRecord::Rollback unless completed
-          committed = true
+          env.abort! unless succeeded
+          true
         end
-        finish_lifecycle_hooks(execution, completed: committed)
       end
     end
     redirect_to root_path, notice: I18n.t('vouch.invitations.revoked')

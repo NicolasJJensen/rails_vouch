@@ -129,7 +129,9 @@ module Vouch
         errors << "scope :#{mapping.scope_name}: #{account.name} requires has_many :vouch_recovery_codes for :recoverable"
         return
       end
-      verify_required_columns(reflection.klass, %w[recoverable_type recoverable_id code_digest used_at], :recoverable, mapping, errors)
+      required = %w[recoverable_type code_digest used_at]
+      required << (account.composite_primary_key? ? "recoverable_key" : "recoverable_id") if account.respond_to?(:composite_primary_key?)
+      verify_required_columns(reflection.klass, required, :recoverable, mapping, errors)
     end
 
     def verify_required_columns(record, columns, feature, mapping, errors)

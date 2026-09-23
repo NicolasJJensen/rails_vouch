@@ -12,10 +12,10 @@ RSpec.describe "Users lifecycle hook phases", type: :request do
   end
 
   def preserve_hooks(controller, hook)
-    original = controller.public_send("_#{hook}_hooks").dup
+    original = controller.__hooks
     yield
   ensure
-    controller.public_send("_#{hook}_hooks=", original)
+    controller.__hooks = original if original
   end
 
   it "runs sign-up after hooks after persistence and identity publication" do

@@ -95,13 +95,13 @@ RSpec.describe 'Authentication boundaries', type: :request do
   it 'R9 consumes the exact password reset token emitted by the controller' do
     account = create(:account)
     token = nil
-    allow_any_instance_of(Users::PasswordsController).to receive(:run_hooks).and_wrap_original do |method, *args, **opts, &block|
+    allow_any_instance_of(Users::PasswordResetsController).to receive(:run_hooks).and_wrap_original do |method, *args, **opts, &block|
       token = args[2] if args[0] == :password_reset_token_generation
       method.call(*args, **opts, &block)
     end
-    post '/users/password', params: {email_address: account.email_address}
+    post '/users/password_reset', params: {email_address: account.email_address}
     expect(token).to be_present
-    patch '/users/password', params: {token: token, account: {password: 'replacement123', password_confirmation: 'replacement123'}}
+    patch '/users/password_reset', params: {token: token, account: {password: 'replacement123', password_confirmation: 'replacement123'}}
     expect(account.reload.authenticate('replacement123')).to be_truthy
   end
 
@@ -252,10 +252,10 @@ end
 
 RSpec.describe 'Hook and session contracts', type: :request do
   def preserve_hooks(controller, hook)
-    original = controller.public_send("_#{hook}_hooks").dup
+    original = controller.__hooks
     yield
   ensure
-    controller.public_send("_#{hook}_hooks=", original)
+    controller.__hooks = original if original
   end
 
   it 'does not claim logout succeeded when its lifecycle hook aborts' do
@@ -311,10 +311,10 @@ end
 
 RSpec.describe 'Second-factor completion hooks', type: :request do
   def preserve_hooks(controller, hook)
-    original = controller.public_send("_#{hook}_hooks").dup
+    original = controller.__hooks
     yield
   ensure
-    controller.public_send("_#{hook}_hooks=", original)
+    controller.__hooks = original if original
   end
 
   it 'R25 carries the verified credential through identity selection to the two-factor hook' do

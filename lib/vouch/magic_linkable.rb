@@ -112,7 +112,7 @@ module Vouch
     # Verifiable. Bind sign-in challenges to the same subject/version in that
     # case so changing the address or phone invalidates outstanding links.
     def sign_in_payload
-      payload = { "id" => id.to_s, "klass" => self.class.name }
+      payload = { "id" => Vouch::RecordKey.value(self), "klass" => self.class.name }
       if respond_to?(:verifiable_subject)
         payload["subject"] = verifiable_subject
         payload["version"] = verifiable_subject_version

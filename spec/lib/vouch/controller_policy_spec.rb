@@ -23,7 +23,7 @@ RSpec.describe 'Controller integration policy' do
   it 'renews authentication without clearing application state' do
     session['cart'] = {'items' => [1]}
     session['discard'] = 'old'
-    controller.send(:reset_session_with_preserved_keys)
+    controller.send(:renew_authentication_session)
     expect(session).to include('cart' => {'items' => [1]})
     expect(session['discard']).to eq('old')
     expect(proxy).to have_received(:logout).with(:user, :user_account, :user_impersonation)
@@ -33,7 +33,7 @@ RSpec.describe 'Controller integration policy' do
     session['warden.user.2fa_pending'] = { 'stale' => true }
     session['warden.user.two_factor_token.Phone.1'] = 'old'
     session['warden.admin.return_to'] = '/admin'
-    controller.send(:reset_session_with_preserved_keys)
+    controller.send(:renew_authentication_session)
     expect(session).not_to have_key('warden.user.2fa_pending')
     expect(session).not_to have_key('warden.user.two_factor_token.Phone.1')
     expect(session['warden.admin.return_to']).to eq('/admin')

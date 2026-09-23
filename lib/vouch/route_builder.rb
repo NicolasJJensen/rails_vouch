@@ -7,7 +7,7 @@
 #     auth.scope account: "Account", identity: "User" do
 #       auth.sessions
 #       auth.registrations
-#       auth.passwords
+#       auth.password_resets
 #     end
 #   end
 #
@@ -118,13 +118,13 @@ module Vouch
       end
     end
 
-    def passwords(controller: nil)
+    def password_resets(controller: nil)
       require_credentials_scope!
       m = @current_mapping
-      ctrl = controller || "#{m.path}/passwords"
+      ctrl = controller || "#{m.path}/password_resets"
 
       router.scope m.path, as: m.helper_prefix do
-        router.resource :password, only: [:new, :create, :edit, :update],
+        router.resource :password_reset, only: [:new, :create, :edit, :update],
                         controller: ctrl
       end
     end
@@ -140,7 +140,7 @@ module Vouch
                          controller: challenge_ctrl do
           router.post :send_code, on: :member
         end
-        router.resources :two_factor_credentials, only: [:index, :new, :create, :destroy],
+        router.resources :two_factor_credentials, only: [:index, :new, :create, :update, :destroy],
                          controller: creds_ctrl
       end
     end
@@ -206,13 +206,17 @@ module Vouch
 
       Warden::Manager.serialize_into_session(scope) do |identity|
         account = mapping.account_for(identity)
-        [identity.id, fingerprinter.call(account)]
+        [Vouch::RecordKey.value(identity), fingerprinter.call(account)]
       end
 
       Warden::Manager.serialize_from_session(scope) do |payload|
         id, fingerprint = Array(payload)
         identity_class = mapping.identity_class
-        identity = identity_class.find_by(identity_class.primary_key => id)
+        identity = begin
+          Vouch::RecordKey.find(identity_class, id)
+        rescue ActiveRecord::RecordNotFound, ArgumentError
+          nil
+        end
         next nil unless identity
 
         account = mapping.account_for(identity)
@@ -226,7 +230,8 @@ module Vouch
         )
         if mapping.membership_scope?
           parent = env["warden"]&.user(mapping.parent_scope_name)
-          next nil unless parent && parent.class == account.class && parent.id == account.id
+          next nil unless parent && parent.class == account.class &&
+            Vouch::RecordKey.same?(parent, account, model: account.class)
         end
 
         identity
@@ -240,13 +245,17 @@ module Vouch
       fingerprinter = method(:session_fingerprint)
 
       Warden::Manager.serialize_into_session(account_scope) do |account|
-        [account.id, fingerprinter.call(account)]
+        [Vouch::RecordKey.value(account), fingerprinter.call(account)]
       end
 
       Warden::Manager.serialize_from_session(account_scope) do |payload|
         id, fingerprint = Array(payload)
         account_class = mapping.account_class
-        account = account_class.find_by(account_class.primary_key => id)
+        account = begin
+          Vouch::RecordKey.find(account_class, id)
+        rescue ActiveRecord::RecordNotFound, ArgumentError
+          nil
+        end
         next nil unless account
         next nil if Vouch.configuration.lockable.invalidate_sessions_on_lockout &&
           account.respond_to?(:locked?) && account.locked?
@@ -267,13 +276,17 @@ module Vouch
       fingerprinter = method(:session_fingerprint)
 
       Warden::Manager.serialize_into_session(impersonation_scope) do |identity|
-        [identity.id, fingerprinter.call(mapping.account_for(identity))]
+        [Vouch::RecordKey.value(identity), fingerprinter.call(mapping.account_for(identity))]
       end
 
       Warden::Manager.serialize_from_session(impersonation_scope) do |payload|
         id, fingerprint = Array(payload)
         identity_class = mapping.identity_class
-        identity = identity_class.find_by(identity_class.primary_key => id)
+        identity = begin
+          Vouch::RecordKey.find(identity_class, id)
+        rescue ActiveRecord::RecordNotFound, ArgumentError
+          nil
+        end
         next nil unless identity
 
         account = mapping.account_for(identity)

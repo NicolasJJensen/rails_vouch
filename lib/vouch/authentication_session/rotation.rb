@@ -3,7 +3,7 @@
 module Vouch
   class AuthenticationSession
     module Rotation
-      def reset_with_preserved_keys
+      def renew!
         mapping = controller.send(:auth_mapping)
         affected = [mapping] + Vouch.dependent_mappings(scope)
         preserved = scoped_keys + [key(:impersonation)]

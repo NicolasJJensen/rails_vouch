@@ -199,31 +199,27 @@ RSpec.describe "Users::Invitations", type: :request do
 
     it "allows a host around hook to remove a disposable placeholder atomically" do
       invitation = invite
-      allow_any_instance_of(Users::InvitationsController).to receive(:prepare_hooks) do |_controller, _kind, _invitation, account|
-        execution = double(run_before!: nil, halted?: false, run_on!: nil, run_after!: nil, core_ran?: true)
-        allow(execution).to receive(:run) do |&block|
-          block.call
-          account.destroy!
-        end
-        execution
+      original_hooks = Users::InvitationsController.__hooks
+      Users::InvitationsController.around_commit_of_invitation_revocation do |operation, _invitation, account|
+        operation.call
+        account.destroy!
       end
 
       delete "/users/invitation", params: { invitation_token: invitation.invitation_token }
       expect(response).to redirect_to("/")
       expect(Account.exists?(invitation.account_id)).to be false
+    ensure
+      Users::InvitationsController.__hooks = original_hooks if original_hooks
     end
 
     it "rolls back invitation revocation when host cleanup is cancelled" do
       invitation = invite
       callback = -> { throw :abort }
       Account.set_callback(:destroy, :before, callback)
-      allow_any_instance_of(Users::InvitationsController).to receive(:prepare_hooks) do |_controller, _kind, _invitation, account|
-        execution = double(run_before!: nil, halted?: false, run_on!: nil, run_after!: nil, core_ran?: true)
-        allow(execution).to receive(:run) do |&block|
-          block.call
-          account.destroy!
-        end
-        execution
+      original_hooks = Users::InvitationsController.__hooks
+      Users::InvitationsController.around_commit_of_invitation_revocation do |operation, _invitation, account|
+        operation.call
+        account.destroy!
       end
 
       delete "/users/invitation", params: { invitation_token: invitation.invitation_token }
@@ -232,6 +228,7 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(Account.exists?(invitation.account_id)).to be true
     ensure
       Account.skip_callback(:destroy, :before, callback) if callback
+      Users::InvitationsController.__hooks = original_hooks if original_hooks
     end
 
     it "retains a placeholder with an identity in another registered mapping" do

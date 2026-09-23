@@ -9,71 +9,70 @@ RSpec.describe Vouch::LifecycleHooks do
     Class.new do
       include ActiveHooks::Callbacks
       include Vouch::LifecycleHooks
-      define_hooks :save
+      define_hooks :save, :commit_of_save
 
       def run_save
-        execution = prepare_lifecycle_hooks(:save)
-        completed = run_lifecycle_operation(execution) { true }
-        finish_lifecycle_hooks(execution, completed: completed)
+        run_commit_hooks(:save) { yield if block_given?; true }
+      end
+
+      def run_authenticated_save
+        run_authentication_hooks(:save) { yield if block_given?; true }
       end
     end
   end
 
-  it "defers after callbacks to Active Record's outer commit boundary" do
+  it "runs commit callbacks inside the transaction" do
     calls = []
-    controller_class.set_hook(:save, :after, -> { calls << :after })
-    expect(ActiveRecord).to receive(:after_all_transactions_commit).and_yield
+    controller_class.set_hook(:commit_of_save, :before, -> { calls << [:before, ActiveRecord::Base.connection.open_transactions] })
+    controller_class.set_hook(:commit_of_save, :after, -> { calls << [:after, ActiveRecord::Base.connection.open_transactions] })
 
     controller_class.new.run_save
 
-    expect(calls).to eq([:after])
+    expect(calls).to all(satisfy { |(_, transactions)| transactions.positive? })
   end
 
-  it "runs after callbacks only when an enclosing transaction commits" do
-    calls = []
-    controller_class.set_hook(:save, :after, -> { calls << :after })
-
-    ActiveRecord::Base.transaction do
-      controller_class.new.run_save
-      expect(calls).to be_empty
-    end
-
-    expect(calls).to eq([:after])
-  end
-
-  it "discards after callbacks when an enclosing transaction rolls back" do
-    calls = []
-    controller_class.set_hook(:save, :after, -> { calls << :after })
-
-    ActiveRecord::Base.transaction do
-      controller_class.new.run_save
-      raise ActiveRecord::Rollback
-    end
-
-    expect(calls).to be_empty
-  end
-
-  it "does not roll back committed work when an after callback fails" do
-    controller_class.set_hook(:save, :after, -> { raise "after failure" })
+  it "rolls back when a commit before callback halts" do
+    controller_class.set_hook(:commit_of_save, :before, -> { throw(:abort) })
     account = Account.new(email_address: "after-hook-#{SecureRandom.hex(6)}@example.com",
       password: "password123", password_confirmation: "password123")
 
-    expect do
-      Account.transaction do
-        account.save!
-        controller_class.new.run_save
-      end
-    end.to raise_error(RuntimeError, "after failure")
+    result = controller_class.new.run_save { account.save! }
 
-    expect(Account.exists?(account.id)).to be(true)
+    expect(result).to be(false)
+    expect(account).not_to be_persisted
   ensure
     account&.destroy
   end
 
-  it "does not schedule after callbacks when the lifecycle operation halts" do
-    controller_class.set_hook(:save, :before, -> { throw(:abort) })
-    expect(ActiveRecord).not_to receive(:after_all_transactions_commit)
+  it "rolls back when an around callback does not yield" do
+    controller_class.set_hook(:commit_of_save, :around, ->(_operation) { :cached })
+    account = Account.new(email_address: "around-hook-#{SecureRandom.hex(6)}@example.com",
+      password: "password123", password_confirmation: "password123")
 
-    controller_class.new.run_save
+    result = controller_class.new.run_save { account.save! }
+
+    expect(result).to be(false)
+    expect(account).not_to be_persisted
+  ensure
+    account&.destroy
+  end
+
+  it "rejects an enclosing joinable transaction before lifecycle callbacks run" do
+    calls = []
+    controller_class.set_hook(:save, :before, -> { calls << :before })
+
+    expect do
+      ActiveRecord::Base.transaction do
+        controller_class.new.run_authenticated_save
+      end
+    end.to raise_error(Vouch::ConfigurationError, /existing joinable transaction/)
+
+    expect(calls).to be_empty
+  end
+
+  it "reports an outer around callback that does not yield as cancelled" do
+    controller_class.set_hook(:save, :around, ->(_operation) { :cached })
+
+    expect(controller_class.new.run_authenticated_save).to be(false)
   end
 end

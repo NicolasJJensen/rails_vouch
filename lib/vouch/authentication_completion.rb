@@ -38,29 +38,26 @@ module Vouch
 
     def pending_candidate_identities(account, context)
       ids = context['identity_ids'].to_set
-      candidate_identities_for(account).select { |identity| ids.include?(identity.id.to_s) }
+      candidate_identities_for(account).select { |identity| ids.include?(Vouch::RecordKey.serialize(identity)) }
     end
 
     def bind_identity(account, identity, context, oauth_auth_hash: nil)
       factor = nil
       invitation = nil
-      hook_execution = nil
-      completed = account.with_lock(requires_new: true) do
-        # The account or factor may change while the user completes MFA or selects an identity.
-        next false unless Vouch::PendingAuthentication.valid?(context, account)
-        next false unless authentication_allowed?(account, context)
-        next false unless pending_candidate_identities(account, context).any? { |candidate| candidate.id == identity.id }
-        next false unless valid_context_factor?(account, context)
-
-        factor = context_credential(account, context)
-        factor.lock! if factor
-        oauth = context['oauth'] && parse_oauth(context['oauth'])
-        hook_execution = prepare_lifecycle_hooks(context['hook'].to_sym, account, identity,
-          **(oauth ? {auth_hash: oauth} : {}))
-        operation_completed = false
-        run_lifecycle_operation(hook_execution) do |env|
+      hook = context['hook'].to_sym
+      oauth = context['oauth'] && parse_oauth(context['oauth'])
+      completed = run_authentication_hooks(hook, account, identity, **(oauth ? {auth_hash: oauth} : {})) do |env|
+        committed = run_commit_hooks(hook, account, identity,
+          **(oauth ? {auth_hash: oauth} : {})) do |commit_env|
+          account.lock!
+          # The account or factor may change while the user completes MFA or selects an identity.
+          next false unless Vouch::PendingAuthentication.valid?(context, account)
+          next false unless authentication_allowed?(account, context)
+          next false unless pending_candidate_identities(account, context).any? { |candidate| Vouch::RecordKey.same?(candidate, identity) }
           next false unless valid_context_factor?(account, context)
 
+          factor = context_credential(account, context)
+          factor.lock! if factor
           if context['refresh_oauth']
             begin
               account.update_from_oauth!(oauth_auth_hash || oauth)
@@ -68,21 +65,23 @@ module Vouch
               raise ActiveRecord::Rollback
             end
           end
-          env.add(factor) if factor
-          yield env if block_given?
+          commit_env.add(factor) if factor
+          yield commit_env if block_given?
           invitation = accept_pending_invitation(account, publish: false)
           account.successful_login!
-          operation_completed = true
+          true
         end
-        operation_completed
+        env.abort! unless committed
+        env.add(factor) if factor
+
+        # A failed authentication operation must not publish a Warden identity.
+        renew_authentication_session
+        publish_invitation_acceptance(account, invitation) if invitation
+        warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
+        true
       end
       return :denied unless completed
 
-      # A failed authentication operation must not publish a Warden identity.
-      reset_session_with_preserved_keys
-      publish_invitation_acceptance(account, invitation) if invitation
-      warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
-      finish_lifecycle_hooks(hook_execution, completed: completed)
       run_hooks(:two_factor_verification, account, identity, factor) if factor
       :signed_in
     rescue Vouch::Persistence::Cancelled
