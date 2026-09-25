@@ -26,7 +26,7 @@ RSpec.describe 'Scope generator integration contracts' do
     generate('members', 'Owner:account', 'Member:identity')
     routes = File.read("#{@directory}/config/routes.rb")
     expect(routes).to include('auth.scope :owner, model: "Owner"')
-    expect(routes).to include('account_scope: :owner, identity: "Member"')
+    expect(routes).to include('auth.membership :member, model: "Member"')
     expect(File.read("#{@directory}/app/models/member.rb")).to include('belongs_to :owner')
   end
 
@@ -55,7 +55,7 @@ RSpec.describe 'Scope generator integration contracts' do
     generate('members', 'Owner:account', 'Member:identity')
     source = File.read("#{@directory}/config/routes.rb")
     expect(source).to match(/auth\.sessions\(path_names:.*\)\n\s+end\n\s+auth\.scope :owner/)
-    expect(source).to include('auth.scope :member, account_scope: :owner')
+    expect(source).to include('auth.membership :member, model: "Member"')
     expect { RubyVM::InstructionSequence.compile(source) }.not_to raise_error
   end
 
@@ -72,7 +72,7 @@ RSpec.describe 'Scope generator integration contracts' do
     generate('members', 'Owner:account', 'Member:identity')
     source = File.read("#{@directory}/config/routes.rb")
     route_start = source.lines.index { |line| line.include?('Vouch.routes(self)') }
-    member_line = source.lines.index { |line| line.include?('auth.scope :member') }
+    member_line = source.lines.index { |line| line.include?('auth.membership :member') }
     depth = 0
     member_depth = nil
     Ripper.lex(source).each do |(position, type, token, _state)|
@@ -83,13 +83,13 @@ RSpec.describe 'Scope generator integration contracts' do
         depth += 1
       elsif token == 'end'
         depth -= 1
-      elsif token == 'scope' && member_line && position.first == member_line + 1
+      elsif token == 'membership' && member_line && position.first == member_line + 1
         member_depth = depth
       end
     end
 
     expect(route_start).to be < member_line
-    expect(member_depth).to eq(1)
+    expect(member_depth).to eq(2)
   end
 
   it 'rejects unknown roles even in single-model mode' do

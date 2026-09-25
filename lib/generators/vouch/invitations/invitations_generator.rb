@@ -6,7 +6,7 @@ require_relative "../route_editor"
 module Vouch
   module Generators
     # Adds invitation columns to the identity table and writes a host-app
-    # controller that supplies the required `build_invited_identity` hook.
+    # controller that supplies the required `build_invited_account` hook.
     #
     #   bin/rails g vouch:invitations users Account
     #   bin/rails g vouch:invitations members --single-model
@@ -18,7 +18,7 @@ module Vouch
 
       # `scope` is inherited from FeatureBase
       argument :account_class, type: :string, optional: true,
-                                banner: "AccountClass (required for split-model)"
+                                banner: "AccountClass (optional override for split-model)"
 
       class_option :single_model, type: :boolean, default: false,
                                    desc: "Use the scoped model as both account and identity"
@@ -27,16 +27,18 @@ module Vouch
       class_option :controller_path, type: :string, default: nil,
                                      desc: "Controller namespace path used by the authentication routes"
 
+      class_option :account, type: :string, default: nil,
+                             desc: "Credentials account model for a split-model setup"
+
       class_option :model_only, type: :boolean, default: false
 
       def validate_account_class!
         return if options[:single_model]
-        return if account_class.present?
+        return if invitation_account_class.present?
 
         raise Thor::Error,
-              "Pass the account class as the second argument " \
-              "(e.g. `bin/rails g vouch:invitations users Account`), " \
-              "or use --single-model if the scope has no separate account class."
+              "Could not infer the credentials account from config/routes.rb. " \
+              "Pass --account Account (or the legacy second AccountClass argument)."
       end
 
       def create_registration_migration
@@ -109,7 +111,11 @@ module Vouch
       end
 
       def invitation_account_class
-        options[:single_model] ? identity_class_name : account_class
+        return identity_class_name if options[:single_model]
+        return options[:account] if options[:account].present?
+        return account_class if account_class.present?
+
+        inferred_account_class
       end
 
       def controller_scope_path
@@ -124,6 +130,21 @@ module Vouch
 
       def auth_scope_name
         options[:auth_scope].presence || model_metadata.class_name.demodulize.underscore.singularize
+      end
+
+      def inferred_account_class
+        routes = File.join(destination_root, "config/routes.rb")
+        return unless File.file?(routes)
+
+        source = File.read(routes)
+        declaration = source.lines.find { |line| line.match?(/\.scope\s+:#{Regexp.escape(auth_scope_name.to_s)}\b/) }
+        return unless declaration
+        return Regexp.last_match(1) if declaration.match(/\baccount:\s*["']([^"']+)["']/)
+
+        parent = declaration[/\baccount_scope:\s*:(\w+)/, 1]
+        return unless parent
+        parent_line = source.lines.find { |line| line.match?(/\.scope\s+:#{Regexp.escape(parent)}\b/) }
+        parent_line&.match(/\bmodel:\s*["']([^"']+)["']/)&.captures&.first
       end
     end
   end

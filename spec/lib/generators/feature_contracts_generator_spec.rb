@@ -36,4 +36,27 @@ RSpec.describe "feature generator contracts" do
       end
     end
   end
+
+  it "does not mistake columns on another pending table for the target feature schema" do
+    Dir.mktmpdir("vouch-feature-target-table") do |directory|
+      FileUtils.mkdir_p(File.join(directory, "db/migrate"))
+      File.write(File.join(directory, "db/migrate/20260925000000_unrelated.rb"), <<~RUBY)
+        class Unrelated < ActiveRecord::Migration[8.0]
+          def change
+            create_table :other_accounts do |t|
+              t.bigint :consecutive_locks
+              t.integer :failed_attempts
+              t.datetime :locked_at
+            end
+          end
+        end
+      RUBY
+
+      generator = Vouch::Generators::LockableGenerator.new(["accounts"])
+      generator.destination_root = directory
+      Dir.chdir(directory) { generator.invoke_all }
+
+      expect(Dir[File.join(directory, "db/migrate/*add_lockable_to_accounts.rb")]).not_to be_empty
+    end
+  end
 end

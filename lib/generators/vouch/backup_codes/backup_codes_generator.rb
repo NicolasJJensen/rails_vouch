@@ -34,6 +34,7 @@ module Vouch
       end
 
       def create_backup_codes_migration
+        return existing_backup_table! if schema_table_exists?(join_table_name) || pending_table_migration?(join_table_name)
         migration_template "backup_codes.rb.tt",
                            "db/migrate/create_#{join_table_name}.rb"
       end
@@ -73,6 +74,33 @@ module Vouch
       end
 
       private
+
+      def existing_backup_table!
+        validate_existing_table!(join_table_name, %w[code_digest])
+        say_status :identical, "#{join_table_name} already exists", :blue
+      end
+
+      def schema_table_exists?(table)
+        return false unless generating_current_host?
+        ActiveRecord::Base.connection.data_source_exists?(table)
+      rescue ActiveRecord::ConnectionNotEstablished
+        false
+      end
+
+      def pending_table_migration?(table)
+        Dir[File.join(destination_root, "db/migrate/*.rb")].any? { |path| File.read(path).match?(/create_table\s*(?:\(\s*)?:#{Regexp.escape(table)}\b/) }
+      end
+
+      def generating_current_host?
+        Rails.respond_to?(:root) && Rails.root.present? &&
+          File.expand_path(destination_root) == File.expand_path(Rails.root)
+      end
+
+      def validate_existing_table!(table, columns)
+        return unless schema_table_exists?(table)
+        missing = columns - ActiveRecord::Base.connection.columns(table).map(&:name)
+        raise Thor::Error, "Existing #{table} is incompatible; missing #{missing.join(', ')}" if missing.any?
+      end
 
       def primary_key_type
         options[:primary_key_type].presence

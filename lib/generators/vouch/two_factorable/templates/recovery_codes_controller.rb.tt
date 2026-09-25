@@ -1,0 +1,2 @@
+class <%= controller_scope_path.camelize %>::RecoveryCodesController < Vouch::RecoveryCodesController
+end

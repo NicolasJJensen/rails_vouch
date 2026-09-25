@@ -6,3 +6,12 @@
     <li><%%= link_to credential.two_factor_label, <%= route_helper_prefix %>_two_factor_challenge_path(credential_param) %></li>
   <%% end %>
 </ul>
+
+<%% if @enrollment_required %>
+  <p>This organisation requires an authentication method you have not enrolled yet.</p>
+  <p><%%= link_to "Add an authentication method", <%= route_helper_prefix %>_two_factor_credentials_path %></p>
+<%% end %>
+
+<%% if @recovery_available %>
+  <p><%%= link_to "Use a recovery code", <%= route_helper_prefix %>_recovery_two_factor_challenge_path %></p>
+<%% end %>

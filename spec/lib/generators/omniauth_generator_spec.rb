@@ -82,4 +82,77 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
 
     expect(account.scan("has_many :oauth_identities").length).to eq(1)
   end
+
+  it "skips a compatible OAuth identities table in the current host" do
+    generator = described_class.new([])
+    generator.destination_root = directory
+    allow(generator).to receive(:generating_current_host?).and_return(true)
+    connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
+    allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+
+    expect { generator.create_feature_migration }.not_to change { Dir[File.join(directory, "db/migrate/*.rb")] }
+  end
+
+  it "rejects an incompatible OAuth identities table in the current host" do
+    generator = described_class.new([])
+    generator.destination_root = directory
+    allow(generator).to receive(:generating_current_host?).and_return(true)
+    connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
+    allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider].map { |name| Struct.new(:name).new(name) })
+
+    expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing uid, auth_data/)
+  end
+
+  it "accepts a custom polymorphic OAuth identity table without a concrete owner key" do
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/oauth_identity.rb"), "class OauthIdentity < ApplicationRecord\n  belongs_to :oauthable, polymorphic: true\nend\n")
+    generator = described_class.new([])
+    generator.destination_root = directory
+    allow(generator).to receive(:generating_current_host?).and_return(true)
+    connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
+    allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type oauthable_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+
+    expect { generator.create_feature_migration }.not_to raise_error
+  end
+
+  it "rejects a declared polymorphic OAuth association when its matching key pair is incomplete" do
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/oauth_identity.rb"), "class OauthIdentity < ApplicationRecord\n  belongs_to :oauthable, polymorphic: true\nend\n")
+    generator = described_class.new([])
+    generator.destination_root = directory
+    allow(generator).to receive(:generating_current_host?).and_return(true)
+    connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
+    allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+
+    expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing oauthable_id/)
+  end
+
+  it "does not treat an unrelated polymorphic-looking key pair as the OAuth owner" do
+    generator = described_class.new([])
+    generator.destination_root = directory
+    allow(generator).to receive(:generating_current_host?).and_return(true)
+    connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
+    allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[other_type other_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+
+    expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing user_id/)
+  end
+
+  it "does not inspect the database for a temporary generator destination" do
+    generator = described_class.new([])
+    generator.destination_root = directory
+    expect(ActiveRecord::Base).not_to receive(:connection)
+
+    Dir.chdir(directory) { generator.create_feature_migration }
+    expect(Dir[File.join(directory, "db/migrate/*oauth_identities.rb")]).not_to be_empty
+  end
 end

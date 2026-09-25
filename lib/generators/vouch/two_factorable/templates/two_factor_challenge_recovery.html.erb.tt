@@ -1,0 +1,16 @@
+<h1>Use a recovery code</h1>
+
+<%%= form_with url: <%= route_helper_prefix %>_consume_recovery_two_factor_challenge_path do |form| %>
+  <%% @recovery_owners.each do |owner| %>
+    <%% if owner == @account %>
+      <%%= form.radio_button :recovery_owner_type, "account" %>
+      <%%= form.label :recovery_owner_type_account, "Account recovery codes" %>
+    <%% else %>
+      <%%= form.radio_button :recovery_owner_type, "credential:#{owner.model_name.singular}:#{Vouch::RecordKey.to_param(owner)}" %>
+      <%%= owner.two_factor_label %>
+    <%% end %>
+  <%% end %>
+  <%%= form.label :recovery_code, "Recovery code" %>
+  <%%= form.password_field :recovery_code, autocomplete: "one-time-code" %>
+  <%%= form.submit "Sign in" %>
+<%% end %>

@@ -60,6 +60,28 @@ RSpec.describe "Vouch generators" do
     expect(File).to exist(File.join(@generator_directory, "db/migrate"))
   end
 
+  it "infers the scope and single-model setup from one model name" do
+    @generator_directory = run_generator(Vouch::Generators::ScopeGenerator, ["User"])
+
+    routes = File.read(File.join(@generator_directory, "config/routes.rb")) rescue ""
+    model = File.read(File.join(@generator_directory, "app/models/user.rb"))
+    migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*create_users.rb")].first)
+
+    expect(model).to include("has_secure_password")
+    expect(migration).to include("auth_session_version")
+    expect(routes).to include('auth.scope :user, model: "User"') if routes.present?
+  end
+
+  it "infers a split-model setup from account and tenant options" do
+    @generator_directory = run_generator(
+      Vouch::Generators::ScopeGenerator, ["User"], {account: "Account", tenant: "Organisation"}
+    )
+
+    expect(File).to exist(File.join(@generator_directory, "app/models/account.rb"))
+    expect(File).to exist(File.join(@generator_directory, "app/models/user.rb"))
+    expect(File).to exist(File.join(@generator_directory, "app/models/organisation.rb"))
+  end
+
   it "derives a single-model scope from a ClassName:role argument" do
     @generator_directory = run_generator(
       Vouch::Generators::ScopeGenerator,
@@ -290,7 +312,7 @@ RSpec.describe "Vouch generators" do
 
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
     expect(routes).to include('auth.scope :account, model: "Account"')
-    expect(routes).to include("auth.scope :user, account_scope: :account, identity: \"User\"")
+    expect(routes).to include('auth.membership :user, model: "User"')
     expect(routes.scan("auth.sessions").length).to eq(2)
     expect(routes).not_to include("auth.user_selection")
     expect(routes).not_to include("auth.passwords")
@@ -368,7 +390,7 @@ RSpec.describe "Vouch generators" do
     )
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
     expect(routes.scan("auth.scope :account").length).to eq(1)
-    expect(routes.scan("auth.scope :user").length).to eq(1)
+    expect(routes.scan("auth.membership :user").length).to eq(1)
   end
 
   it "generates only sessions and registrations for a single-model scope" do
@@ -420,7 +442,8 @@ RSpec.describe "Vouch generators" do
     controller = File.read(File.join(@generator_directory, "app/controllers/accounts/registrations_controller.rb"))
     view = File.read(File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb"))
 
-    expect(controller).to include("def registration_tenant_attributes(_account)")
+    expect(controller).to include("def build_tenant(_account)")
+    expect(controller).to include("def build_identity(account, tenant: nil)")
     expect(controller).to include("params.require(:organisation).permit(:name)")
     expect(view).to include('text_field_tag "organisation[name]"')
   end

@@ -3,6 +3,7 @@ class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::
     create_table :<%= model_table(@account_class) %><%= ", id: :#{primary_key_type}" if primary_key_type %> do |t|
       t.string :email_address, null: false
       t.string :password_digest, null: false
+      t.bigint :auth_session_version, null: false, default: 0
       t.timestamps
     end
     add_index :<%= model_table(@account_class) %>, "lower(email_address)", unique: true, name: "<%= index_name(model_table(@account_class), "lower_email_address") %>"

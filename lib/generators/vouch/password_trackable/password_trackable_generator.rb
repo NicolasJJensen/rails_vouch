@@ -36,6 +36,7 @@ module Vouch
       end
 
       def create_feature_migration
+        return existing_archive_table! if schema_table_exists?("password_archives") || pending_table_migration?("password_archives")
         migration_template "password_archives.rb.tt",
                            "db/migrate/create_password_archives.rb"
       end
@@ -62,6 +63,34 @@ module Vouch
       end
 
       private
+
+      def existing_archive_table!
+        validate_existing_table!("password_archives", %w[password_digest created_at])
+        say_status :identical, "password_archives already exists", :blue
+      end
+
+      def schema_table_exists?(table)
+        return false unless generating_current_host?
+        ActiveRecord::Base.connection.data_source_exists?(table)
+      rescue ActiveRecord::ConnectionNotEstablished
+        false
+      end
+
+      def pending_table_migration?(table)
+        Dir[File.join(destination_root, "db/migrate/*.rb")].any? { |path| File.read(path).match?(/create_table\s*(?:\(\s*)?:#{Regexp.escape(table)}\b/) }
+      end
+
+      def generating_current_host?
+        Rails.respond_to?(:root) && Rails.root.present? &&
+          File.expand_path(destination_root) == File.expand_path(Rails.root)
+      end
+
+      def validate_existing_table!(table, columns)
+        return unless schema_table_exists?(table)
+        present = ActiveRecord::Base.connection.columns(table).map(&:name)
+        missing = columns - present
+        raise Thor::Error, "Existing #{table} is incompatible; missing #{missing.join(', ')}" if missing.any?
+      end
 
       def migration_class_name
         "CreatePasswordArchives"

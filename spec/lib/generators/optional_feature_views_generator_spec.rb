@@ -129,6 +129,29 @@ RSpec.describe "optional feature view generators" do
     expect(Dir[File.join(directory, "db/migrate/*two_factor_enabled*users*.rb")]).not_to be_empty
   end
 
+  it "infers a multiline class_name owner and keeps an explicit owner override" do
+    directory = Dir.mktmpdir("vouch-two-factor-multiline-owner")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/phone.rb"), <<~RUBY)
+      class Phone < ApplicationRecord
+        belongs_to :holder,
+          class_name: "Account"
+      end
+    RUBY
+    File.write(File.join(directory, "app/models/account.rb"), "class Account < ApplicationRecord\nend\n")
+
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], subject: ["e164"])
+    generator.destination_root = directory
+    Dir.chdir(directory) { generator.invoke_all }
+
+    expect(File.read(File.join(directory, "app/models/account.rb"))).to include("has_many :phones")
+
+    explicit = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], owner: "Account")
+    explicit.destination_root = directory
+    expect { Dir.chdir(directory) { explicit.invoke_all } }.not_to raise_error
+  end
+
   it "adds an invitation view beside the existing invitation controller" do
     directory = generate(Vouch::Generators::InvitationsGenerator, ["User", "Account"],
       auth_scope: "user", controller_path: "users")

@@ -23,6 +23,14 @@ module Vouch
       end
 
       def create_feature_migration
+        if existing_oauth_schema_complete?
+          say_status :identical, "oauth_identities schema already exists", :blue
+          return
+        end
+        if table_declared_in_migration?("oauth_identities")
+          say_status :identical, "OAuth identities migration already exists", :blue
+          return
+        end
         migration_template "oauth_identities.rb.tt",
                            "db/migrate/create_oauth_identities.rb"
       end
@@ -145,6 +153,42 @@ module Vouch
 
       def migration_class_name
         "CreateOauthIdentities"
+      end
+
+      def table_declared_in_migration?(table)
+        Dir[File.join(destination_root, "db/migrate/*.rb")].any? do |path|
+          File.read(path).match?(/create_table\s*(?:\(\s*)?:#{Regexp.escape(table)}\b/)
+        end
+      end
+
+      def existing_oauth_schema_complete?
+        return false unless generating_current_host? && ActiveRecord::Base.connection.data_source_exists?("oauth_identities")
+
+        columns = ActiveRecord::Base.connection.columns("oauth_identities").map(&:name)
+        required = %w[provider uid auth_data]
+        polymorphic_association = polymorphic_oauth_association
+        required.concat(
+          if polymorphic_association
+            ["#{polymorphic_association}_type", "#{polymorphic_association}_id"]
+          else
+            owner_metadata.foreign_keys
+          end
+        )
+        missing = required - columns
+        raise Thor::Error, "Existing oauth_identities is incompatible; missing #{missing.join(', ')}" if missing.any?
+
+        true
+      rescue ActiveRecord::ConnectionNotEstablished
+        false
+      end
+
+      def polymorphic_oauth_association
+        path = File.join(destination_root, "app/models/oauth_identity.rb")
+        return unless File.file?(path)
+
+        File.read(path).scan(/^\s*belongs_to\s*(?:\(\s*)?:([a-z_]+)(.*?)(?=^\s*(?:belongs_to|has_one|has_many|def|class|end)\b|\z)/m).find do |_name, declaration|
+          declaration.match?(/\bpolymorphic:\s*true/)
+        end&.first
       end
 
       def auth_scope_name

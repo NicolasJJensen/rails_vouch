@@ -59,7 +59,7 @@ module Vouch
         return :unsafe unless wrapper
 
         receiver = Regexp.escape(wrapper.fetch(:variable))
-        pattern = /^[ \t]*#{receiver}\.scope\b[^\n]*\bdo(?:[ \t]*\|[ \t]*(\w+)[ \t]*\|)?[ \t]*(?:#.*)?$/
+        pattern = /^[ \t]*#{receiver}\.(?:scope|membership)\b[^\n]*\bdo(?:[ \t]*\|[ \t]*(\w+)[ \t]*\|)?[ \t]*(?:#.*)?$/
         matches = source.to_enum(:scan, pattern).map { Regexp.last_match }
         matches.select! do |match|
           line = source[0...match.begin(0)].count("\n")
@@ -67,14 +67,23 @@ module Vouch
           name = scope_names(Ripper.sexp(declaration), wrapper[:variable]).first
           line > wrapper[:start_line] && line < wrapper[:end_line] && name.to_s == scope_name.to_s
         end
-        block = matching_block(source, matches, pattern)
-        return :unsafe unless block
+        # A nested `auth.membership` scope is a normal literal scope inside
+        # its parent. Resolve each candidate independently rather than
+        # requiring the whole route file to contain only one scope opener.
+        blocks = matches.filter_map { |match| matching_block(source, [match], pattern) }
+        return :unsafe unless blocks.one?
+        block = blocks.first
 
         variable = block[:variable] || wrapper[:variable]
         call = feature.split(".", 2).last
         method = call[/\A\w+/]
         body = source.lines[block[:start_line]..block[:end_line]].join
-        return :duplicate if feature_call?(Ripper.sexp(body), variable, method)
+        if method == "membership"
+          requested = scope_names(Ripper.sexp(feature), variable).first
+          return :duplicate if scope_names(Ripper.sexp(body), variable).include?(requested)
+        else
+          return :duplicate if feature_call?(Ripper.sexp(body), variable, method)
+        end
 
         insert(path, source, block, "#{variable}.#{call}")
       end
@@ -160,7 +169,7 @@ module Vouch
         return false unless node.is_a?(Array) && %i[command_call call].include?(node[0])
 
         receiver = node[1]
-        %i[var_ref vcall].include?(receiver[0]) && receiver.dig(1, 1) == variable && node.dig(3, 1) == "scope"
+        %i[var_ref vcall].include?(receiver[0]) && receiver.dig(1, 1) == variable && node.dig(3, 1).in?(%w[scope membership])
       end
 
       def scope_name(args)

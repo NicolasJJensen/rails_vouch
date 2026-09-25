@@ -6,16 +6,16 @@ class <%= @controller_class %> < Vouch::<%= @controller_base %>
 
   private
 
-  def registration_tenant_attributes(_account)
-    params.require(:<%= @tenant_param_key %>).permit(:name)
+  def build_tenant(_account)
+    <%= model_metadata(@tenant_class).class_name %>.new(params.require(:<%= @tenant_param_key %>).permit(:name))
   end
 <% end -%>
 <% if @account_registration -%>
 
   private
 
-  def build_registration(account)
-    <%= @identity_class %>.create!(<%= model_association(@account_class) %>: account<%= ", #{model_association(@tenant_class)}: #{model_metadata(@tenant_class).class_name}.create!(registration_tenant_attributes(account))" if @tenant_class %>)
+  def build_identity(account, tenant: nil)
+    <%= @identity_class %>.new(<%= model_association(@account_class) %>: account<%= ", #{model_association(@tenant_class)}: tenant" if @tenant_class %>)
   end
 <% end -%>
 end

@@ -17,6 +17,8 @@ module Vouch
       class_option :model_only, type: :boolean, default: false
       class_option :subject, type: :array, default: [],
                              desc: "Credential subject attribute(s)"
+      class_option :owner, type: :string, default: nil,
+                           desc: "Credential owner model when the model has multiple belongs_to associations"
 
       def initialize(args = [], options = {}, config = {})
         super
@@ -30,9 +32,12 @@ module Vouch
         template_unless_exists "two_factor_challenge_controller.rb.tt", "app/controllers/#{controller_scope_path}/two_factor_challenge_controller.rb"
         template_unless_exists "two_factor_challenge_index.html.erb.tt", "app/views/#{view_scope_path}/two_factor_challenge/index.html.erb"
         template_unless_exists "two_factor_challenge_show.html.erb.tt", "app/views/#{view_scope_path}/two_factor_challenge/show.html.erb"
+        template_unless_exists "two_factor_challenge_recovery.html.erb.tt", "app/views/#{view_scope_path}/two_factor_challenge/recovery.html.erb"
         template_unless_exists "two_factor_credentials_controller.rb.tt", "app/controllers/#{controller_scope_path}/two_factor_credentials_controller.rb"
         template_unless_exists "two_factor_credentials_new.html.erb.tt", "app/views/#{view_scope_path}/two_factor_credentials/new.html.erb"
         template_unless_exists "two_factor_credentials_index.html.erb.tt", "app/views/#{view_scope_path}/two_factor_credentials/index.html.erb"
+        template_unless_exists "recovery_codes_controller.rb.tt", "app/controllers/#{controller_scope_path}/recovery_codes_controller.rb"
+        template_unless_exists "recovery_codes_show.html.erb.tt", "app/views/#{view_scope_path}/recovery_codes/show.html.erb"
       end
 
       def configure_model
@@ -77,7 +82,7 @@ module Vouch
         path = File.join(destination_root, "config/routes.rb")
         return unless File.file?(path)
         RouteEditor.ensure_wrapper(path, "Vouch.routes(self) do |auth|\nend\n")
-        declaration = "auth.two_factor challenge_controller: \"#{controller_scope_path}/two_factor_challenge\", credentials_controller: \"#{controller_scope_path}/two_factor_credentials\""
+        declaration = "auth.two_factor challenge_controller: \"#{controller_scope_path}/two_factor_challenge\", credentials_controller: \"#{controller_scope_path}/two_factor_credentials\", recovery_controller: \"#{controller_scope_path}/recovery_codes\""
         result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
         if result == :unsafe
           result = RouteEditor.insert_scope(path, "auth.scope :#{auth_scope_name}, model: \"#{owner_model}\" do\n  #{declaration}\nend\n")
@@ -129,14 +134,28 @@ module Vouch
 
       def owner_model
         return @owner_model if defined?(@owner_model)
+        return @owner_model = options[:owner] if options[:owner].present?
         path = File.join(destination_root, model_metadata.model_path)
         source = File.file?(path) ? File.read(path) : ""
-        associations = source.scan(/^\s*belongs_to\s+:([a-z_]+)(?:,\s*class_name:\s*["']([^"']+)["'])?/)
+        # Accept conventional, parenthesized, and multiline Rails association
+        # declarations.  We intentionally fail closed when several owners are
+        # possible: guessing the wrong authentication owner wires routes and
+        # foreign keys to the wrong model.
+        associations = belongs_to_associations(source)
         @owner_model = if associations.empty?
                          model_metadata.class_name
                        elsif associations.length == 1
                          associations.first[1].presence || associations.first[0].classify
+                       else
+                         raise Thor::Error, "#{model_metadata.class_name} has several belongs_to associations; pass --owner OwnerModel"
                        end
+      end
+
+      def belongs_to_associations(source)
+        source.scan(/^\s*belongs_to\s*(?:\(\s*)?:([a-z_]+)(.*?)(?=^\s*(?:belongs_to|has_one|has_many|def|class|end)\b|\z)/m).map do |name, declaration|
+          class_name = declaration[/\bclass_name:\s*["']([^"']+)["']/, 1]
+          [name, class_name]
+        end
       end
 
       def credential_association_name

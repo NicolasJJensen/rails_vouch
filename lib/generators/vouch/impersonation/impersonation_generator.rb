@@ -27,20 +27,12 @@ module Vouch
       def add_route
         routes_path = File.join(destination_root, "config/routes.rb")
         return manual_route_instruction unless File.file?(routes_path)
+        result = RouteEditor.insert_feature(routes_path, auth_scope_name,
+                                            "auth.impersonation controller: #{controller_path.inspect}")
+        return say_status(:route, "added  auth.impersonation inside :#{auth_scope_name}") if result == :inserted
+        return say_status(:route, "exists  auth.impersonation") if result == :duplicate
 
-        lines = File.readlines(routes_path)
-        starts = lines.each_index.select { |index| scope_declaration?(lines[index]) }
-        return manual_route_instruction unless starts.one?
-
-        scope_block = scope_block(lines, starts.first)
-        return manual_route_instruction unless scope_block
-        finish, receiver = scope_block
-        return say_status(:route, "exists  auth.impersonation") if impersonation_route?(lines, starts.first, finish)
-
-        indent = lines[starts.first][/\A\s*/] + "  "
-        lines.insert(finish, "#{indent}#{receiver}.impersonation controller: #{controller_path.inspect}\n")
-        File.write(routes_path, lines.join)
-        say_status :route, "added  auth.impersonation inside :#{auth_scope_name}"
+        manual_route_instruction
       end
 
       private

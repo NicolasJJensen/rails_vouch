@@ -1,0 +1,11 @@
+<h1>Recovery codes</h1>
+
+<%% if @recovery_codes.present? %>
+  <p>Save these codes now. They will not be shown again.</p>
+  <ul><%% @recovery_codes.each do |code| %><li><code><%%= code %></code></li><%% end %></ul>
+<%% else %>
+  <p><%%= @remaining_recovery_codes %> recovery codes remain for this <%%= @recovery_owner.model_name.human.downcase %>.</p>
+<%% end %>
+
+<p>Generate a new set only when you can save it securely. Generating a new set permanently invalidates any unused codes for this record.</p>
+<%%= button_to "Generate recovery codes", <%= route_helper_prefix %>_recovery_codes_path(recovery_owner_type: params[:recovery_owner_type], recovery_owner_id: params[:recovery_owner_id]), method: :post %>

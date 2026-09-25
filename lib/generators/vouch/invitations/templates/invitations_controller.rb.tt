@@ -19,7 +19,7 @@ class <%= scope_module %>::InvitationsController < Vouch::InvitationsController
     MSG
   end
 
-  def build_invited_identity(identifier)
+  def build_invited_account(identifier)
     normalized_identifier = identifier.to_s.strip.downcase
     <%= invitation_account_class %>.find_by("LOWER(email_address) = ?", normalized_identifier) || <%= invitation_account_class %>.create!(
       email_address: normalized_identifier,

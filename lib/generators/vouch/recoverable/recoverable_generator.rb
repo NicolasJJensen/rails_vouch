@@ -25,11 +25,16 @@ module Vouch
       end
 
       def create_host_columns_migration
+        return pending_host_schema! if host_schema_declared?
+        return existing_host_schema! if host_schema_complete?
+        validate_partial_host_schema!
         migration_template "recoverable.rb.tt",
                            "db/migrate/add_recoverable_to_#{table_name}.rb"
       end
 
       def create_recovery_codes_migration
+        return existing_codes_schema! if codes_schema_complete?
+        return pending_codes_schema! if codes_schema_declared?
         migration_template "recovery_codes.rb.tt",
                            "db/migrate/create_vouch_recovery_codes.rb"
       end
@@ -74,6 +79,97 @@ module Vouch
 
       def codes_migration_class_name
         "CreateVouchRecoveryCodes"
+      end
+
+      def host_schema_declared?
+        columns = pending_table_columns(table_name)
+        required = %w[recovery_attempts recovery_locked_at]
+        return false if (required & columns).empty?
+
+        missing = required - columns
+        raise Thor::Error, "Pending migrations for #{table_name} are incompatible with recoverable; missing #{missing.join(', ')}" if missing.any?
+
+        true
+      end
+
+      def pending_host_schema!
+        say_status :identical, "recoverable schema already exists", :blue
+      end
+
+      def codes_schema_declared?
+        columns = pending_table_columns("vouch_recovery_codes")
+        return false if columns.empty?
+
+        required = recovery_code_columns
+        missing = required - columns
+        raise Thor::Error, "Pending vouch_recovery_codes migration is incompatible; missing #{missing.join(', ')}" if missing.any?
+
+        true
+      end
+
+      def pending_codes_schema!
+        say_status :identical, "vouch_recovery_codes schema already exists", :blue
+      end
+
+      def pending_table_columns(table)
+        escaped = Regexp.escape(table)
+        Dir[File.join(destination_root, "db/migrate/*.rb")].flat_map do |path|
+          source = File.read(path)
+          blocks = source.scan(/(?:create_table|change_table)\s*\(?\s*:#{escaped}\b.*?\bdo\b.*?^\s*end/m)
+          blocks.flat_map { |block| block.scan(/t\.\w+\s+:([a-z_]+)/).flatten } +
+            source.scan(/add_column\s+:#{escaped},\s+:([a-z_]+)/).flatten
+        end.uniq
+      end
+
+      def generating_current_host?
+        Rails.respond_to?(:root) && Rails.root.present? &&
+          File.expand_path(destination_root) == File.expand_path(Rails.root)
+      end
+
+      def host_schema_complete?
+        return false unless generating_current_host? && ActiveRecord::Base.connection.data_source_exists?(table_name)
+
+        %w[recovery_attempts recovery_locked_at].all? { |column| ActiveRecord::Base.connection.column_exists?(table_name, column) }
+      rescue ActiveRecord::ConnectionNotEstablished
+        false
+      end
+
+      def validate_partial_host_schema!
+        return unless generating_current_host? && ActiveRecord::Base.connection.data_source_exists?(table_name)
+
+        required = %w[recovery_attempts recovery_locked_at]
+        present = ActiveRecord::Base.connection.columns(table_name).map(&:name)
+        missing = required - present
+        return if missing.length == required || missing.empty?
+
+        raise Thor::Error, "Existing #{table_name} is incompatible with recoverable; missing #{missing.join(', ')}"
+      rescue ActiveRecord::ConnectionNotEstablished
+        nil
+      end
+
+      def existing_host_schema!
+        say_status :identical, "recoverable schema already exists", :blue
+      end
+
+      def codes_schema_complete?
+        return false unless generating_current_host? && ActiveRecord::Base.connection.data_source_exists?("vouch_recovery_codes")
+
+        required = recovery_code_columns
+        actual = ActiveRecord::Base.connection.columns("vouch_recovery_codes").map(&:name)
+        missing = required - actual
+        raise Thor::Error, "Existing vouch_recovery_codes is incompatible; missing #{missing.join(', ')}" if missing.any?
+
+        true
+      rescue ActiveRecord::ConnectionNotEstablished
+        false
+      end
+
+      def existing_codes_schema!
+        say_status :identical, "vouch_recovery_codes already exists", :blue
+      end
+
+      def recovery_code_columns
+        %w[recoverable_type recoverable_id code_digest used_at] + (composite_recoverable? ? ["recoverable_key"] : [])
       end
     end
   end
