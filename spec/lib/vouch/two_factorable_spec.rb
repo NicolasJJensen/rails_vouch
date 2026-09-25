@@ -62,6 +62,46 @@ RSpec.describe Vouch::TwoFactorable do
     end
   end
 
+  describe ".two_factor_auth_name" do
+    it "defaults to the model's singular name" do
+      stub_const("DefaultNamedCredential", Class.new(ActiveRecord::Base) do
+        self.table_name = "two_factor_credentials"
+        include Vouch::TwoFactorable
+      end)
+
+      expect(DefaultNamedCredential.two_factor_auth_name).to eq(:default_named_credential)
+      expect(DefaultNamedCredential.allocate.authentication_method).to eq(:default_named_credential)
+    end
+
+    it "declares an inherited name without changing the parent when a child overrides it" do
+      stub_const("NamedCredential", Class.new(ActiveRecord::Base) do
+        self.table_name = "two_factor_credentials"
+        include Vouch::TwoFactorable
+      end)
+      stub_const("ChildNamedCredential", Class.new(NamedCredential))
+
+      NamedCredential.two_factor_auth_name :sms
+
+      expect(NamedCredential.two_factor_auth_name).to eq(:sms)
+      expect(ChildNamedCredential.two_factor_auth_name).to eq(:sms)
+
+      ChildNamedCredential.two_factor_auth_name :totp
+
+      expect(NamedCredential.two_factor_auth_name).to eq(:sms)
+      expect(ChildNamedCredential.two_factor_auth_name).to eq(:totp)
+    end
+
+    it "allows a credential to override authentication_method per record" do
+      stub_const("MultiMethodCredential", Class.new(TwoFactorCredential) do
+        def authentication_method
+          :hardware_key
+        end
+      end)
+
+      expect(MultiMethodCredential.allocate.authentication_method).to eq(:hardware_key)
+    end
+  end
+
   describe "#two_factor_enabled?" do
     it "returns false when two_factor_enabled_at is nil" do
       expect(credential.two_factor_enabled?).to be false

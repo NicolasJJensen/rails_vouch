@@ -34,6 +34,7 @@ module Vouch
     include Vouch::ChallengeNonce
 
     TWO_FACTORABLE_CONFIG_KEYS = %i[challenge_validity max_attempts lockout_duration length].freeze
+    TWO_FACTOR_AUTH_NAME_UNSET = Object.new.freeze
 
     included do
       scope :enabled, -> { where.not(two_factor_enabled_at: nil) }
@@ -46,6 +47,17 @@ module Vouch
       class_attribute :two_factor_authentication_method, instance_writer: false
 
       install_two_factor_challenge_wrapper! if ancestors.include?(Vouch::BackupCodable)
+    end
+
+    class_methods do
+      # Declare the stable name this credential contributes to authentication
+      # evidence. The declaration is inherited by subclasses unless they
+      # provide their own name.
+      def two_factor_auth_name(name = TWO_FACTOR_AUTH_NAME_UNSET)
+        return two_factor_authentication_method || model_name.singular.to_sym if name.equal?(TWO_FACTOR_AUTH_NAME_UNSET)
+
+        self.two_factor_authentication_method = name
+      end
     end
 
     class LastFactorRemoval < StandardError; end
@@ -71,7 +83,7 @@ module Vouch
     # session evidence (for example :totp, :sms, or :email). It is distinct
     # from the credential's Ruby class, which policies use for type matching.
     def authentication_method
-      self.class.two_factor_authentication_method || self.class.model_name.singular.to_sym
+      self.class.two_factor_auth_name
     end
 
     def two_factor_enabled?

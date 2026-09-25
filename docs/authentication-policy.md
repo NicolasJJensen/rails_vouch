@@ -208,7 +208,7 @@ A credential's method name defaults to its model name. Set a stable name on the 
 
 ```ruby
 # In Phone
-self.two_factor_authentication_method = :sms
+two_factor_auth_name :sms
 ```
 
 For a model that implements multiple methods, return the method of that record. For example, if your model stores the type in `authenticator_kind`:
