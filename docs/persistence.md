@@ -1,6 +1,6 @@
 # Advanced integration: results and cancelled writes
 
-This guide is for custom authentication services and credential adapters. The supplied controllers already handle unsuccessful authentication writes.
+This guide explains the model-level results and exceptions used when writing custom authentication services or credential adapters.
 
 A Rails callback can prevent a reset token, password, or verification state from being saved. Your code must not treat that operation as successful or deliver a token whose state was rolled back.
 
@@ -16,8 +16,12 @@ user.deliver_password_reset_token(result.value) if result.ok?
 If a callback cancels token persistence, generation raises `Vouch::Persistence::Cancelled` instead of returning a usable token. Handle it at your endpoint boundary:
 
 ```ruby
+begin
+  result = user.generate_password_reset_token!
+  user.deliver_password_reset_token(result.value) if result.ok?
 rescue Vouch::Persistence::Cancelled
   render :new, status: :unprocessable_entity
+end
 ```
 
 Delivery errors also propagate. Handle those separately if your application needs a delivery retry.
@@ -51,7 +55,7 @@ end
 
 This example assumes your `last_login_at` column and `AuditLog` model. `transaction(record)` opens a new transaction; a cancelled operation raises `Vouch::Persistence::Cancelled` and reloads a persisted record. That exception inherits from `ActiveRecord::RecordNotSaved`.
 
-`save!(record)`, `update!(record, attributes)`, and `create!(model_or_relation, attributes)` check that the write succeeded. Validation and uniqueness failures remain ordinary Active Record errors.
+`save!(record)`, `update!(record, attributes)`, `create!(model_or_relation, attributes)`, and `destroy!(record)` check that the write succeeded. Validation and uniqueness failures remain ordinary Active Record errors.
 
 ## External effects and callbacks
 

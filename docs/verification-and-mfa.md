@@ -246,7 +246,7 @@ Verification, passwordless sign-in and MFA use separate token state. Issuing ano
 
 ## Signed verification links
 
-Use a signed link when the recipient should confirm an email address by opening a link and submitting a confirmation, rather than entering a numeric code:
+Use a signed link when the recipient should confirm an email address by opening a link and submitting a confirmation, rather than entering a numeric code. For an existing `EmailConfirmation` model with an `email_address` field and timestamps:
 
 ```sh
 bin/rails generate vouch:token_verifiable EmailConfirmation

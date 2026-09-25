@@ -32,6 +32,8 @@ add_index :oauth_identities, :user_id
 add_foreign_key :oauth_identities, :users
 ```
 
+The generator keeps an existing OAuth table and recognizes an existing migration that creates it. Existing model and controller customizations are preserved.
+
 For a **multi-tenant application**, generate against the account instead:
 
 ```sh

@@ -195,7 +195,33 @@ An account may permit several factor types while an organisation requires a part
 
 `requires_authenticator?` is an example of an organisation setting you supply. `identity` is the selected membership; `account` owns its credentials. Return `nil` when the organisation adds no MFA requirement.
 
-Vouch evaluates these rules after choosing the membership. A recent qualifying factor can satisfy the requirement without another challenge. Otherwise the person must complete an allowed factor before entering that organisation. The account can remain signed in while organisation access is pending.
+The requirements can restrict the credential class, its authentication method, or both:
+
+| Option | Meaning |
+| --- | --- |
+| `credential_types` | Allowed model classes, such as `[Totp]` or `[Phone, Totp]` |
+| `credential_methods` | Allowed method names, useful when one model implements multiple authenticator types |
+| `max_age` | Maximum age of the successful proof before another challenge is required |
+| `allow_recovery_codes` | Whether a recovery code may replace that challenge; defaults to false |
+
+A credential's method name defaults to its model name. Set a stable name on the model:
+
+```ruby
+# In Phone
+self.two_factor_authentication_method = :sms
+```
+
+For a model that implements multiple methods, return the method of that record. For example, if your model stores the type in `authenticator_kind`:
+
+```ruby
+def authentication_method
+  authenticator_kind.to_sym
+end
+```
+
+A policy can then require `credential_methods: [:totp]` even when SMS and TOTP records share a model class.
+
+Vouch evaluates these rules after choosing the membership. A recent qualifying factor can satisfy the requirement without another challenge. Otherwise the person must complete an allowed factor before entering that organisation. The account can remain signed in while organisation access is pending. If no enrolled factor matches, the generated page links to account-level factor management so the person can enroll an allowed factor before returning.
 
 A recovery code is recorded as recovery-code authentication, even when attached to a `Totp`. Set `allow_recovery_codes: true` only when those codes satisfy the organisation's requirement. Account-level provider exemptions do not automatically make a provider an approved organisation authenticator.
 
