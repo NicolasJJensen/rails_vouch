@@ -95,6 +95,28 @@ RSpec.describe "composite-key authentication runtime", type: :model do
       "warden" => instance_double(Warden::Proxy, user: other_account, raw_session: {})
     )
     expect(mismatched.cpk_warden_membership_deserialize(payload)).to be_nil
+
+    operator = identity_class.create!(tenant_id: "south", local_id: 12,
+      account_tenant_id: other_account.tenant_id, account_local_id: other_account.local_id)
+    allow(mapping).to receive_messages(split_model?: true, evidence_scope_name: :cpk_warden_account)
+    allow(Vouch).to receive(:mapping_for).with(:cpk_warden_membership).and_return(mapping)
+    allow(Vouch).to receive(:mapping_for).with("cpk_warden_membership").and_return(mapping)
+    allow(Vouch).to receive(:each_mapping) do |&block|
+      block ? [mapping].each(&block) : [mapping].each
+    end
+    session = {}
+    users = {cpk_warden_membership: operator, cpk_warden_account: other_account}
+    proxy = instance_double(Warden::Proxy, raw_session: session)
+    allow(proxy).to receive(:user) { |scope| users[scope] }
+    allow(proxy).to receive(:set_user) { |record, scope:, **| users[scope] = record }
+    allow(proxy).to receive(:logout) { |*scopes| scopes.each { |scope| users.delete(scope) } }
+    Vouch::ImpersonationStack.start!(warden: proxy, session: session, source_mapping: mapping,
+      target_mapping: mapping, target: identity)
+    session.replace(JSON.parse(JSON.generate(session)))
+    expect(Vouch::ImpersonationStack.authorized_identity(session, scope: :cpk_warden_membership)).to eq(identity)
+    expect(Vouch::ImpersonationStack.original(warden: proxy, session: session, scope: :cpk_warden_membership)).to eq(operator)
+    identity.update!(account_tenant_id: other_account.tenant_id, account_local_id: other_account.local_id)
+    expect(Vouch::ImpersonationStack.authorized_identity(session, scope: :cpk_warden_membership)).to be_nil
   end
 
   it "uses the complete composite key for signed tokens and credential lookup", use_transactional_fixtures: false do

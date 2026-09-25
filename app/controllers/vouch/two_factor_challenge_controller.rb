@@ -1,5 +1,6 @@
 class Vouch::TwoFactorChallengeController < ::ApplicationController
   include Vouch::Authentication
+  prepend_before_action :require_unimpersonated_authentication!
 
   allow_unauthenticated_access
   before_action :find_pending_account

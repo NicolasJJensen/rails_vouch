@@ -24,6 +24,11 @@ module Vouch
 
     private
 
+    def require_unimpersonated_authentication!
+      Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
+      head :forbidden if Vouch::ImpersonationStack.active?(session)
+    end
+
     def authenticate_auth_scope!
       return if current_identity
 

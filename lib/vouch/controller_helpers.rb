@@ -40,7 +40,7 @@ module Vouch
     included do
       include ActiveHooks::Callbacks
 
-      class_attribute :_auth_scope_name, :_impersonator_scope_name, instance_writer: false
+      class_attribute :_auth_scope_name, :_impersonator_scope_names, instance_writer: false
 
       define_hooks(*(ALL_AUTH_HOOKS + AUTH_COMMIT_HOOKS))
     end
@@ -50,8 +50,12 @@ module Vouch
         self._auth_scope_name = scope_name.to_sym
       end
 
+      def impersonator_scopes(*scope_names)
+        self._impersonator_scope_names = scope_names.map(&:to_sym).freeze
+      end
+
       def impersonator_scope(scope_name)
-        self._impersonator_scope_name = scope_name.to_sym
+        impersonator_scopes(scope_name)
       end
 
       AUTH_LIFECYCLE_HOOKS.each do |hook_name|
@@ -124,17 +128,32 @@ module Vouch
       :"#{auth_scope_name}_impersonation"
     end
 
+    def allowed_impersonator_scopes
+      _impersonator_scope_names || [auth_scope_name]
+    end
+
     def impersonator_scope_name
-      _impersonator_scope_name || auth_scope_name
+      return @resolved_impersonator_scope if @resolved_impersonator_scope
+      if Vouch::ImpersonationStack.active?(session)
+        return Vouch::ImpersonationStack.source_scope(session)
+      end
+      allowed_impersonator_scopes.one? ? allowed_impersonator_scopes.first : nil
     end
 
     def impersonator_mapping
       Vouch.mapping_for(impersonator_scope_name)
     end
 
-    def current_impersonator
-      Vouch.authenticated_identity(warden, impersonator_scope_name)
+    def impersonator
+      return unless impersonator_scope_name
+      if Vouch::ImpersonationStack.active?(session)
+        Vouch::ImpersonationStack.original(warden: warden, session: session, scope: impersonator_scope_name)
+      else
+        Vouch.authenticated_identity(warden, impersonator_scope_name, controller: self)
+      end
     end
+
+    alias_method :current_impersonator, :impersonator
 
     def return_to_session_key
       Vouch::Session.key_for(auth_scope_name, :return_to)
@@ -399,6 +418,11 @@ module Vouch
     end
 
     def current_account
+      if Vouch::ImpersonationStack.active?(session) && auth_mapping.split_model? && !auth_mapping.membership_scope?
+        account = Vouch::ImpersonationStack.original_account(session)
+        return account if account.is_a?(auth_mapping.account_class)
+        return nil
+      end
       if auth_mapping.membership_scope?
         warden.user(auth_mapping.parent_scope_name)
       else

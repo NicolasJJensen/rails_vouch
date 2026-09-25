@@ -8,6 +8,7 @@ module Vouch
                          credential: nil, refresh_oauth: false, signed_in_via: nil,
                          evidence_method: nil, recovery_owner: nil,
                          **hook_opts, &block)
+      return :denied if Vouch::ImpersonationStack.active?(session)
       if method == :registration
         session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
       end
@@ -47,6 +48,7 @@ module Vouch
     end
 
     def bind_identity(account, identity, context, oauth_auth_hash: nil)
+      return :denied if Vouch::ImpersonationStack.active?(session)
       factor = nil
       invitation = nil
       hook = context['hook'].to_sym

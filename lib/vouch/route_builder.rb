@@ -259,6 +259,11 @@ module Vouch
         next nil unless ActiveSupport::SecurityUtils.secure_compare(
           fingerprint.to_s, current.to_s
         )
+        impersonation_session = env["warden"]&.raw_session
+        if impersonation_session && Vouch::ImpersonationStack.active?(impersonation_session) &&
+            (mapping.split_model? || Vouch::ImpersonationStack.target_scope(impersonation_session) == scope)
+          next Vouch::ImpersonationStack.authorized_identity(impersonation_session, scope: scope)
+        end
         if mapping.membership_scope?
           parent = env["warden"]&.user(mapping.parent_scope_name)
           next nil unless parent && parent.class == account.class &&

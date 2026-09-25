@@ -76,7 +76,7 @@ RSpec.describe Vouch::ApplicationHelpers, type: :controller do
 
   it "does not present the target as the original actor for another source scope" do
     allow(proxy).to receive(:user).with(:user).and_return(identity)
-    session[Vouch::ImpersonationStack::SESSION_KEY] = [{"source_scope" => "admin", "target_scope" => "user"}]
+    session[Vouch::ImpersonationStack::SESSION_KEY] = [{"operator" => {"scope" => "admin"}, "target" => {"scope" => "user"}}]
     expect(controller.true_user).to be_nil
     expect(controller.impersonating_user?).to be(true)
   end

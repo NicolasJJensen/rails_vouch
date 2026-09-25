@@ -104,7 +104,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
     expect(status).to include("account" => invited_account.id, "member" => invitee.id, "current_member" => invitee.id)
   end
 
-  it "switches and restores both parent and membership scopes during impersonation" do
+  it "retains the operator account while switching and restoring the membership" do
     target_account = create(:account, email_address: "target@example.com", password: "password123", password_confirmation: "password123")
     target = create(:user, account: target_account, organisation: organisation)
 
@@ -114,10 +114,11 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
 
     post "/linked_members/impersonations/#{target.id}"
     expect(response).to redirect_to("/")
-    expect(status).to include("account" => target_account.id, "member" => target.id, "current_member" => target.id)
+    expect(status).to include("account" => operator_account.id, "member" => target.id, "current_member" => target.id)
 
     member_login
-    expect(status).to include("account" => target_account.id, "member" => target.id)
+    expect(response).to have_http_status(:forbidden)
+    expect(status).to include("account" => operator_account.id, "member" => target.id)
     delete "/linked_members/impersonations"
     expect(response).to redirect_to("/")
     expect(status).to include("account" => operator_account.id, "member" => operator.id, "current_member" => operator.id)

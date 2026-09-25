@@ -1,5 +1,6 @@
 class Vouch::OmniAuthsController < ::ApplicationController
   include Vouch::Authentication
+  prepend_before_action :require_unimpersonated_authentication!, only: :callback
   allow_unauthenticated_access
 
   def callback

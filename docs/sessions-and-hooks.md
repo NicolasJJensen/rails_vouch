@@ -60,7 +60,7 @@ The normal order is:
 | `oauth_account_creation` | `auth_hash:` initially; account and identity are added after creation | Provision an OAuth signup. |
 | `invitation_acceptance` | Invitation identity, credentials account | Create records for the accepted membership. |
 | `invitation_revocation` | Invitation identity, credentials account | Audit an invitation withdrawal. |
-| `impersonation_start` | Current identity, target | Record who began impersonation. |
+| `impersonation_start` | Original operator, target | Record who began impersonation. |
 | `impersonation_end` | Current identity, original operator | Record restoration. |
 
 Each row has the transactional and `commit_of_*` callback chains shown above. In a
@@ -125,8 +125,13 @@ membership cannot become current.
 
 Signing out of an account clears its dependent membership sessions. Signing
 out of a membership clears that membership and its impersonation state. During
-impersonation, ending the membership session also clears the parent account
-session when required to avoid leaving an untracked target session.
+impersonation, signing out clears the participating sessions and the restoration
+stack. To return to the operator's session instead, use the
+[stop impersonation action](impersonation.md#start-and-stop).
+
+Membership impersonation preserves the operator's account authentication while
+making only the authorized target membership current. The target's account is
+not signed in. Ordinary membership selection is blocked until impersonation ends.
 
 
 ## Authentication evidence

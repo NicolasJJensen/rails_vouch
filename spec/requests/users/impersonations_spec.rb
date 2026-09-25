@@ -74,4 +74,15 @@ RSpec.describe "Users::Impersonations", type: :request do
       expect(response).to have_http_status(:ok)
     end
   end
+  it "keeps recovery-code management on the operator in a combined account and identity scope" do
+    original_codes = admin_account.generate_recovery_codes!.value
+    target_codes = target_account.generate_recovery_codes!.value
+    sign_in_via_login
+    post "/users/impersonations/#{target_user.id}"
+    post "/users/recovery_codes", params: {recovery_owner_type: "account"}
+    expect(response).to have_http_status(:created)
+    expect(admin_account.consume_recovery_code!(original_codes.first)).not_to be_ok
+    expect(target_account.consume_recovery_code!(target_codes.first)).to be_ok
+  end
+
 end

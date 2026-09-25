@@ -99,7 +99,7 @@ end
 - [Verification, MFA and recovery codes](docs/verification-and-mfa.md)
 - [OAuth sign-in](docs/oauth.md)
 - [Invitations](docs/invitations.md)
-- [Impersonation](docs/impersonation.md)
+- [Impersonation for support access](docs/impersonation.md)
 
 Each guide shows its generator, schema changes, generated pages and customization methods.
 

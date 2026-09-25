@@ -1,6 +1,8 @@
 # Impersonation
 
-Impersonation lets an authorized operator use the application as another user, then return to their own login. `true_user` identifies the original operator while `current_user` becomes the person being impersonated. Outside impersonation both return the signed-in user.
+Impersonation gives an authorized operator a temporary view of one target identity. It is for support and administrative work where the host application decides both who may act and which records they may enter.
+
+In a single-model `:user` setup, `current_user` is the target and `true_user` is the original operator. In a linked account and membership setup, `current_user` is the target membership while `current_account` remains the operator's account. `current_user.account` is the target membership's associated data; it is not a login for that account.
 
 ## Add impersonation
 
@@ -10,7 +12,7 @@ For an existing `:user` scope:
 bin/rails generate vouch:impersonation users
 ```
 
-The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. Implement its authorization rule before exposing the action:
+The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. The generated controller denies every request until the host supplies an authorization rule and a constrained target relation:
 
 ```ruby
 # app/controllers/users/impersonations_controller.rb
@@ -18,16 +20,50 @@ class Users::ImpersonationsController < Vouch::ImpersonationsController
   private
 
   def authorize_impersonation!
-    head :forbidden unless true_user.global_admin?
+    head :forbidden unless impersonator.support_access?
   end
 
   def impersonatable_identities
-    User.where(global_admin: false)
+    User.where(organisation_id: impersonator.organisation_ids, global_admin: false)
   end
 end
 ```
 
-Here `global_admin?` is a role check you define, for example through a boolean `global_admin` column. `impersonatable_identities` returns the records the operator may target. Vouch looks up the submitted ID inside that relation, so the example excludes other administrators.
+`support_access?`, `organisation_ids`, and `global_admin` are host application rules in this example. Vouch finds the submitted target only within `impersonatable_identities`, so the relation is the boundary that prevents an operator from choosing another organisation or another administrator.
+
+An explicitly authorized impersonation does not require the target to complete MFA. If support access needs fresh MFA, add that check to `authorize_impersonation!` using the host application's own policy or predicate on `impersonator`.
+
+## Choose the operator scope
+
+By default, an impersonation controller accepts the scope it serves. Use `impersonator_scopes` when more than one authenticated scope may begin support access:
+
+```ruby
+class Users::ImpersonationsController < Vouch::ImpersonationsController
+  impersonator_scopes :support_operator, :employee
+
+  private
+
+  def authorize_impersonation!
+    head :forbidden unless impersonator.can_support_users?
+  end
+
+  def impersonatable_identities
+    User.where(organisation_id: impersonator.supported_organisation_ids)
+  end
+end
+```
+
+`impersonator` is the original actor. `impersonator_scope_name` is the resolved source scope. If exactly one allowed scope is authenticated, Vouch selects it automatically. If several are authenticated, the request must supply `impersonator_scope`:
+
+```erb
+<%= button_to "View as this user",
+  user_impersonate_path(user, impersonator_scope: :support_operator),
+  method: :post %>
+```
+
+A supplied scope must be allowed by `impersonator_scopes` and authenticated. Otherwise Vouch denies the request. `impersonator_scope :support_operator` remains available as the singular form.
+
+When impersonation is already active, a nested start keeps the original operator and source scope. A nested request cannot select a different original actor.
 
 ## Start and stop
 
@@ -36,16 +72,14 @@ Here `global_admin?` is a role check you define, for example through a boolean `
 <%= button_to "Stop impersonating", user_stop_impersonation_path, method: :delete %>
 ```
 
-Vouch supplies `impersonating_user?` in controllers and views:
+Vouch supplies `impersonating_user?` in controllers and views.
 
 ```erb
 <% if impersonating_user? %>
-  <p>You are viewing the application as <%= current_user.email_address %>.</p>
+  <p>You are viewing <%= current_user.email_address %>.</p>
   <%= button_to "Return to my account", user_stop_impersonation_path, method: :delete %>
 <% end %>
 ```
-
-Starting impersonation saves the previous authentication context and local return page on a stack. Stopping restores the previous context. If its account credentials were revoked, Vouch does not restore that login.
 
 | Request | Helper | Action |
 | --- | --- | --- |
@@ -53,7 +87,11 @@ Starting impersonation saves the previous authentication context and local retur
 | `DELETE /users/impersonations` | `user_stop_impersonation_path` | `Users::ImpersonationsController#destroy` |
 | `DELETE /users/impersonations/all` | `user_stop_all_impersonations_path` | `Users::ImpersonationsController#destroy_all` |
 
-Nested impersonation uses a stack:
+The stack lives in the Rails session. It stores the original operator reference once and records each target by its mapping scope, record key, owner, tenant, and session fingerprint. Those exact references work with ordinary, namespaced, and composite-key models without treating a class name as the identity boundary.
+
+Vouch retains the operator's credential and account sessions. For a membership target it makes only that target membership current; it does not authenticate the target account. Other memberships are unavailable during impersonation, and membership selection routes return `403` until the operator stops. Account endpoints continue to operate on the operator's account.
+
+Nested impersonation uses the same original operator:
 
 ```text
 Operator → Manager → User
@@ -61,54 +99,17 @@ Stop once: return to Manager
 Stop all: return to Operator
 ```
 
-`true_user` continues to identify Operator throughout. `user_stop_all_impersonations_path` ends the entire stack.
-
-## Multi-tenant applications
-
-The same feature works when `:user` is a membership scope linked to `:account`. Starting impersonation switches both the selected membership and its parent account; stopping restores both.
-
-Limit targets to the selected organisation when operators should not cross tenant boundaries:
-
-```ruby
-# In Users::ImpersonationsController
- def impersonatable_identities
-   current_organisation.users.where(global_admin: false)
- end
-```
-
-A global operator may return a broader relation when your authorization rules permit it. Signing out during membership impersonation clears the target account as well as restoration state.
-
-## Separate administrator logins
-
-For an administrator authenticated through a separate `:admin` scope, configure that source on the target's controller:
-
-```ruby
-class Users::ImpersonationsController < Vouch::ImpersonationsController
-  impersonator_scope :admin
-
-  private
-
-  def authorize_impersonation!
-    head :forbidden unless true_admin.support_access?
-  end
-
-  def impersonatable_identities
-    User.where(suspended: false)
-  end
-end
-```
-
-`support_access?` and `suspended` are application rules in this example. `true_admin` remains the original operator, while `current_user` is the target. Stopping restores the originating scope and its authentication context.
+Stopping once restores the previous target. Stopping all restores the original operator. If a stored target reference no longer resolves with its fingerprint, Vouch denies target access until the operator stops; it does not assume an ordinary target login.
 
 ## Composite primary keys
 
-Ordinary integer, string and UUID primary keys use the record directly in route helpers. When your model has a composite primary key, use Vouch's encoding:
+Ordinary integer, string, and UUID primary keys work directly in route helpers. When your model has a composite primary key, encode every key component:
 
 ```erb
 <%= button_to "View as this user", user_impersonate_path(Vouch::RecordKey.to_param(user)), method: :post %>
 ```
 
-The encoded parameter carries every key component; Vouch decodes it within the authorized target relation. See [primary keys](model-mapping.md#primary-keys).
+Vouch decodes the parameter inside `impersonatable_identities`. See [primary keys](model-mapping.md#primary-keys).
 
 ## Edit the switching actions
 

@@ -40,6 +40,12 @@ RSpec.describe "Account and membership sessions", type: :request do
         "/oauth-home"
       end
     end)
+    stub_const("LinkedAccounts::ImpersonationsController", Class.new(Vouch::ImpersonationsController) do
+      auth_scope :account
+      impersonator_scope :admin
+      private
+      def authorize_impersonation! = true
+    end)
     stub_const("LinkedMembers::SessionsController", Class.new(Vouch::MembershipSessionsController) do
       auth_scope :member
     end)
@@ -56,7 +62,7 @@ RSpec.describe "Account and membership sessions", type: :request do
     end)
     stub_const("LinkedAdmins::ImpersonationsController", Class.new(Vouch::ImpersonationsController) do
       auth_scope :admin
-      impersonator_scope :member
+      impersonator_scopes :member, :admin
 
       private
 
@@ -71,6 +77,10 @@ RSpec.describe "Account and membership sessions", type: :request do
           admin: current_admin&.id,
           true_admin: true_admin&.id
         }
+      end
+      def account_page
+        authenticate_account!
+        render json: {account: current_account.id} unless performed?
       end
       def protected_page
         authenticate_member!
@@ -94,7 +104,9 @@ RSpec.describe "Account and membership sessions", type: :request do
           auth.impersonation controller: "linked_admins/impersonations"
         end
       end
+      post "/account_impersonations/:id", to: "linked_accounts/impersonations#create"
       get "/linked_status", to: "linked_status#show"
+      get "/account_page", to: "linked_status#account_page"
       get "/protected_page", to: "linked_status#protected_page"
       root "rails/health#show"
     end
@@ -227,7 +239,7 @@ RSpec.describe "Account and membership sessions", type: :request do
     patch "/linked_accounts/two_factor_challenges/#{credential.id}", params: {code: ROTP::TOTP.new(credential.otp_secret).now}
     expect(response).to redirect_to("/")
 
-    TwoFactorCredential.two_factor_authentication_method = :totp
+    TwoFactorCredential.two_factor_auth_name :totp
     get "/linked_members/sign_in"
     expect(response).to redirect_to("/linked_accounts/two_factor_challenges")
     expect(status).to include("account" => account.id, "member" => nil)
@@ -302,13 +314,13 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("admin" => membership.id)
 
     post "/linked_members/impersonations/#{first_target.id}"
-    expect(status).to include("account" => first_target.account_id, "member" => first_target.id, "admin" => nil)
+    expect(status).to include("account" => account.id, "member" => first_target.id, "admin" => nil)
 
     post "/linked_admins/impersonations/#{second_target.id}"
-    expect(status).to include("account" => second_target.account_id, "admin" => second_target.id, "member" => nil)
+    expect(status).to include("account" => account.id, "admin" => second_target.id, "member" => nil)
 
     delete "/linked_admins/impersonations"
-    expect(status).to include("account" => first_target.account_id, "member" => first_target.id, "admin" => nil)
+    expect(status).to include("account" => account.id, "member" => first_target.id, "admin" => nil)
 
     delete "/linked_members/impersonations/all"
     expect(status).to include("account" => account.id, "admin" => membership.id, "true_admin" => membership.id)
@@ -345,6 +357,166 @@ RSpec.describe "Account and membership sessions", type: :request do
     delete "/linked_accounts/sign_out"
     get "/linked_accounts/auth/example/callback", env: {"omniauth.auth" => auth_hash}
     expect(response).to redirect_to("/oauth-home")
+  end
+
+  def start_member_impersonation(target)
+    account_login
+    get "/linked_admins/sign_in"
+    post "/linked_members/impersonations/#{target.id}"
+    expect(response).to redirect_to("/")
+  end
+
+  it "keeps account guards on the operator and rejects GET and POST membership switching" do
+    target = create(:user)
+    other_membership = create(:user, account: target.account)
+    start_member_impersonation(target)
+
+    get "/account_page"
+    expect(response.parsed_body).to eq("account" => account.id)
+    get "/protected_page"
+    expect(response).to have_http_status(:ok)
+    get "/linked_members/sign_in"
+    expect(response).to have_http_status(:forbidden)
+    post "/linked_members/sign_in", params: {identity_id: other_membership.id}
+    expect(response).to have_http_status(:forbidden)
+    get "/linked_admins/sign_in"
+    expect(response).to have_http_status(:forbidden)
+    expect(status).to include("account" => account.id, "member" => target.id, "admin" => nil)
+  end
+
+  it "rejects account login and registration while impersonating without modifying the operator session" do
+    target = create(:user)
+    start_member_impersonation(target)
+    post "/linked_accounts/sign_in", params: {email_address: target.account.email_address, password: "password123"}
+    expect(response).to have_http_status(:forbidden)
+    expect do
+      post "/linked_accounts/sign_up", params: {account: {email_address: "blocked@example.com", password: "password123"}}
+    end.not_to change(Account, :count)
+    expect(response).to have_http_status(:forbidden)
+    expect(status).to include("account" => account.id, "member" => target.id)
+  end
+
+  it "authorizes exact impersonation without demanding the target's MFA" do
+    target = create(:user)
+    policy = Class.new(Vouch::AuthenticationPolicy) do
+      def membership_mfa_requirements(_account, identity:, **)
+        {credential_methods: [:totp], max_age: 60} if identity.email_address == "mfa-target@example.com"
+      end
+    end.new
+    target.account.update!(email_address: "mfa-target@example.com")
+    allow(Vouch.configuration).to receive(:authentication_policy).and_return(policy)
+    start_member_impersonation(target)
+    get "/protected_page"
+    expect(response).to have_http_status(:ok)
+    expect(status).to include("account" => account.id, "member" => target.id)
+  end
+
+  it "invalidates the target if its tenant changes and still allows returning to the operator" do
+    target = create(:user)
+    start_member_impersonation(target)
+    target.update!(organisation: create(:organisation))
+    expect(status).to include("account" => account.id, "member" => nil)
+    delete "/linked_members/impersonations"
+    expect(status).to include("account" => account.id, "admin" => membership.id)
+  end
+
+  it "invalidates the target when its credentials owner changes" do
+    target = create(:user)
+    start_member_impersonation(target)
+    target.update!(account: create(:account))
+    expect(status).to include("account" => account.id, "member" => nil)
+  end
+
+  it "selects an explicit authenticated operator when multiple allowed scopes are active" do
+    LinkedMembers::ImpersonationsController.impersonator_scopes :admin, :member
+    target = create(:user)
+    account_login
+    get "/linked_admins/sign_in"
+    get "/linked_members/sign_in"
+    post "/linked_members/impersonations/#{target.id}"
+    expect(response).to have_http_status(:unprocessable_content)
+    post "/linked_members/impersonations/#{target.id}", params: {impersonator_scope: "account"}
+    expect(response).to have_http_status(:forbidden)
+    post "/linked_members/impersonations/#{target.id}", params: {impersonator_scope: "admin"}
+    expect(response).to redirect_to("/")
+    expect(status).to include("account" => account.id, "member" => target.id, "true_admin" => membership.id)
+  end
+
+  it "does not accept an unauthenticated allowed scope or an operator id from the request" do
+    LinkedMembers::ImpersonationsController.impersonator_scopes :admin, :member
+    account_login
+    get "/linked_members/sign_in"
+    post "/linked_members/impersonations/#{create(:user).id}", params: {impersonator_scope: "admin", impersonator_id: membership.id}
+    expect(response).to have_http_status(:forbidden)
+  end
+
+  it "authorizes nested targets as the original operator and cannot change that operator" do
+    LinkedMembers::ImpersonationsController.impersonator_scopes :admin, :member
+    target, nested = create_list(:user, 2)
+    seen = []
+    allow_any_instance_of(LinkedMembers::ImpersonationsController).to receive(:authorize_impersonation!) do |controller|
+      seen << controller.send(:impersonator).id
+    end
+    start_member_impersonation(target)
+    post "/linked_members/impersonations/#{nested.id}", params: {impersonator_scope: "member"}
+    expect(response).to have_http_status(:forbidden)
+    post "/linked_members/impersonations/#{nested.id}"
+    expect(response).to redirect_to("/")
+    expect(seen).to eq([membership.id, membership.id])
+    delete "/linked_members/impersonations"
+    expect(status).to include("member" => target.id, "account" => account.id)
+  end
+
+  it "rechecks the authorized target relation for every nested start" do
+    first, forbidden = create_list(:user, 2)
+    allow_any_instance_of(LinkedMembers::ImpersonationsController).to receive(:impersonatable_identities).and_return(User.where(id: first.id))
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{forbidden.id}"
+    expect(response).to redirect_to("/")
+    expect(status).to include("member" => first.id, "account" => account.id)
+    delete "/linked_members/impersonations"
+    expect(status).to include("admin" => membership.id)
+  end
+
+  it "denies target access immediately after the original account is invalidated" do
+    target = create(:user)
+    start_member_impersonation(target)
+    account.update!(password: "revoked-password123", password_confirmation: "revoked-password123")
+    expect(status).to include("account" => nil, "member" => nil, "true_admin" => nil)
+    get "/protected_page"
+    expect(response).to redirect_to("/linked_members/sign_in")
+  end
+
+  it "does not restore a reassigned previous target after nested impersonation" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    first.update!(organisation: create(:organisation))
+    delete "/linked_members/impersonations"
+    expect(status).to include("account" => account.id, "member" => nil, "admin" => membership.id)
+  end
+
+  it "uses the same controller for member operators when they are the only authenticated allowed scope" do
+    LinkedMembers::ImpersonationsController.impersonator_scopes :admin, :member
+    target = create(:user)
+    account_login
+    get "/linked_members/sign_in"
+    post "/linked_members/impersonations/#{target.id}"
+    expect(response).to redirect_to("/")
+    expect(status).to include("account" => account.id, "member" => target.id)
+    delete "/linked_members/impersonations"
+    expect(status).to include("member" => membership.id)
+  end
+
+  it "preserves the operator's credentials when nesting from account impersonation into a membership" do
+    target = create(:user)
+    account_login
+    get "/linked_admins/sign_in"
+    post "/account_impersonations/#{target.account_id}"
+    expect(response).to redirect_to("/")
+    post "/linked_members/impersonations/#{target.id}"
+    expect(response).to redirect_to("/")
+    expect(status).to include("account" => account.id, "member" => target.id)
   end
 
 end

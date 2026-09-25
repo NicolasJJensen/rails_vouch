@@ -8,7 +8,7 @@ class Vouch::ImpersonationsController < ::ApplicationController
   def create
     target = Vouch::RecordKey.find(impersonatable_identities, params[:id])
     original = current_impersonator
-    return_path = Vouch::ImpersonationStack.return_to(session) || local_referer_path
+    return_path = local_referer_path
     changed = run_authentication_hooks(:impersonation_start, original, target) do |env|
       committed = run_commit_hooks(:impersonation_start, *env.args, **env.kwargs) do
         true
@@ -80,15 +80,41 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   def authenticate_impersonator!
-    return if current_impersonator
+    Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
+    if Vouch::ImpersonationStack.active?(session)
+      source = Vouch::ImpersonationStack.source_scope(session)
+      requested = params[:impersonator_scope].presence
+      return head(:forbidden) unless allowed_impersonator_scopes.include?(source)
+      return head(:forbidden) if requested && requested != source.to_s
+      return head(:forbidden) unless impersonator
+      return
+    end
+
+    requested = params[:impersonator_scope].presence
+    if requested
+      return head(:forbidden) unless allowed_impersonator_scopes.map(&:to_s).include?(requested)
+      @resolved_impersonator_scope = requested.to_sym
+      return head(:forbidden) unless impersonator
+      return
+    end
+
+    authenticated = allowed_impersonator_scopes.select do |scope|
+      Vouch.authenticated_identity(warden, scope, controller: self)
+    end
+    return render(plain: "Choose an impersonator_scope", status: :unprocessable_entity) if authenticated.many?
+    if authenticated.one?
+      @resolved_impersonator_scope = authenticated.first
+      return
+    end
+    return head(:unauthorized) unless allowed_impersonator_scopes.one?
 
     mapping = impersonator_mapping
-    session[Vouch::Session.key_for(mapping.scope_name, :return_to)] = request.fullpath if request.get?
     redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path")
   end
 
   def authenticate_impersonation_termination!
-    return if Vouch::ImpersonationStack.active?(session, scope: auth_scope_name)
+    Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
+    return if Vouch::ImpersonationStack.target_scope(session) == auth_scope_name
 
     redirect_to new_session_path
   end

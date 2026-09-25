@@ -4,6 +4,7 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   include Vouch::Authentication
 
   allow_unauthenticated_access
+  before_action :require_unimpersonated_selection!, only: %i[new create]
   before_action :require_account_session!
 
   def new
@@ -61,6 +62,11 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   end
 
   private
+
+  def require_unimpersonated_selection!
+    Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
+    head :forbidden if Vouch::ImpersonationStack.active?(session)
+  end
 
   def require_account_session!
     unless auth_mapping.membership_scope?

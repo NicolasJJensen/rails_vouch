@@ -1,5 +1,6 @@
 class Vouch::RegistrationsController < ::ApplicationController
   include Vouch::Authentication
+  prepend_before_action :require_unimpersonated_authentication!
   only_allow_unauthenticated_access
 
   def new

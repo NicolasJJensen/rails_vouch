@@ -64,6 +64,16 @@ module Vouch
 
     def authenticated_identity(warden, scope, controller: nil)
       mapping = mapping_for(scope)
+      session = warden.raw_session if warden.respond_to?(:raw_session)
+      Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session) if session
+      if session && Vouch::ImpersonationStack.active?(session) &&
+          (mapping.split_model? || Vouch::ImpersonationStack.target_scope(session) == scope.to_sym)
+        target = Vouch::ImpersonationStack.authorized_identity(session, scope: scope)
+        identity = warden.user(scope)
+        return target if target && identity && identity.class == target.class &&
+          Vouch::RecordKey.same?(identity, target, model: target.class)
+        return nil
+      end
       identity = warden.user(scope)
       return identity unless identity && mapping.membership_scope?
 
