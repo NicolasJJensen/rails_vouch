@@ -3,6 +3,28 @@
 require "rails_helper"
 
 RSpec.describe Vouch::Authenticatable do
+  describe "#invalidate_authentication_sessions!" do
+    it "invalidates saved fingerprints and increments from the current database value" do
+      stub_const("VersionedAccount", Class.new(Account) do
+        alias_attribute :auth_session_version, :consecutive_locks
+      end)
+      account = VersionedAccount.find(create(:account).id)
+      stale = VersionedAccount.find(account.id)
+      fingerprint = Vouch::PendingAuthentication.fingerprint(account)
+
+      account.invalidate_authentication_sessions!
+      stale.invalidate_authentication_sessions!
+
+      expect(account.reload.auth_session_version).to eq(2)
+      expect(Vouch::PendingAuthentication.fingerprint(account)).not_to eq(fingerprint)
+    end
+
+    it "explains the required schema on models without the version column" do
+      expect { create(:account).invalidate_authentication_sessions! }
+        .to raise_error(Vouch::ConfigurationError, /auth_session_version/)
+    end
+  end
+
   describe ".authenticates_with" do
     it "records enabled features" do
       expect(Account.auth_features).to include(:lockable, :password_resetable, :password_trackable, :two_factorable, :omniauthable)

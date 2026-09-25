@@ -45,6 +45,16 @@ module Vouch
       false
     end
 
+    def invalidate_authentication_sessions!
+      unless has_attribute?(:auth_session_version)
+        raise Vouch::ConfigurationError, "Add an auth_session_version integer column with default: 0, null: false to #{self.class.table_name}"
+      end
+
+      with_lock do
+        Vouch::Persistence.update!(self, auth_session_version: auth_session_version.to_i + 1)
+      end
+    end
+
     class_methods do
       # Declare which auth features this model uses, with optional per-model overrides.
       #
