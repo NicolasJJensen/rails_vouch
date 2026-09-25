@@ -4,43 +4,136 @@ For email/password sign-in with a `User` model:
 
 ```sh
 bin/rails generate vouch:install
-bin/rails generate vouch:scope users User --single-model
+bin/rails generate vouch:scope User
 bin/rails db:migrate
 ```
 
-The scope generator creates the model, migration, controllers, forms, and routes. Customize the generated files as you would other Rails application code.
+The generator creates:
+
+- `app/models/user.rb`, with password authentication and normalized, unique email addresses.
+- `app/controllers/users/sessions_controller.rb` and `registrations_controller.rb`.
+- Sign-in and registration forms under `app/views/users`.
+- A `User` route scope in `config/routes.rb`.
+- A migration whose schema is:
+
+```ruby
+create_table :users do |t|
+  t.string :email_address, null: false
+  t.string :password_digest, null: false
+  t.bigint :auth_session_version, default: 0, null: false
+  t.timestamps
+end
+add_index :users, "lower(email_address)", unique: true, name: "index_users_on_lower_email_address"
+```
+
+Edit the generated controllers and forms in your application. See [controller customization](controllers.md) for redirects, hooks and copying complete actions with the eject generator.
 
 ## Use another model name
 
 For an application that calls its users `Member`:
 
 ```sh
-bin/rails generate vouch:scope members Member --single-model
+bin/rails generate vouch:scope Member
 ```
 
-This gives you `current_member`, `member_signed_in?`, and `authenticate_member!`, with sign-in at `/members/sign_in`. The scope name identifies the login; the model argument identifies the record it authenticates.
+This gives you `current_member`, `member_signed_in?`, and `authenticate_member!`, with sign-in at `/members/sign_in`. The model name supplies the default authentication scope and controller namespace. The migration has the same columns as `users` above, on `members`.
 
-For accounts with organisation memberships, follow [model mapping](model-mapping.md#organisation-memberships).
+## Multi-tenant setup
 
-## Add features
-
-Run feature generators against the model that holds the password:
+Use an account for the person's email/password and a membership for each organisation they can access:
 
 ```sh
-bin/rails generate vouch:password_resetable User
-bin/rails generate vouch:password_trackable User
-bin/rails generate vouch:omniauth User --provider github
+bin/rails generate vouch:scope User --account Account --tenant Organisation
 bin/rails db:migrate
 ```
 
-Each feature has a guide covering its generated files and customization: [password resets](passwords-and-recovery.md), [OAuth](oauth.md), [MFA](verification-and-mfa.md), and [invitations](invitations.md).
+The generator creates these relationships:
 
-Use `--auth-scope` when the same model serves several login scopes. Use `--controller-path` to place generated controllers in a custom namespace. These are overrides; ordinary setups infer both values.
+```ruby
+class Account < ApplicationRecord
+  include Vouch::Authenticatable
+  has_secure_password
+  has_many :users
+end
 
-For just the password-reset model feature and migration:
+class User < ApplicationRecord
+  belongs_to :account
+  belongs_to :organisation
+end
+
+class Organisation < ApplicationRecord
+  has_many :users
+end
+```
+
+The `accounts` migration uses the email, password, session-version and timestamp columns from the single-tenant example. The other migrations create:
+
+```ruby
+create_table :organisations do |t|
+  t.string :name, null: false
+  t.timestamps
+end
+create_table :users do |t|
+  t.bigint :account_id, null: false
+  t.bigint :organisation_id, null: false
+  t.timestamps
+end
+add_index :users, :account_id
+add_index :users, :organisation_id
+add_foreign_key :users, :accounts
+add_foreign_key :users, :organisations
+```
+
+Account authentication and membership selection have separate sessions. A nested route declaration connects them:
+
+```ruby
+Vouch.routes(self) do |auth|
+  auth.scope model: "Account" do
+    auth.sessions
+    auth.registrations
+
+    auth.membership model: "User", tenant: "Organisation" do
+      auth.sessions
+    end
+  end
+end
+```
+
+You can also declare the scopes separately; [authentication scopes](model-mapping.md#shared-account-scopes) shows that form.
+
+The generated registration page collects an email, password and organisation name. Account, organisation and membership creation happen in one transaction. [Registration customization](controllers.md#registration) shows how to add other records.
+
+Use `authenticate_user!` on organisation pages: it requires the account and selected membership. Vouch selects the only available membership automatically or displays a chooser when several are available. Use `authenticate_account!` for account settings that do not require an organisation.
+
+The helpers are `current_account`, `current_user` and `current_organisation`. Signing out of the account ends its membership sessions; signing out of a membership leaves the account signed in.
+
+## Add features
+
+Choose a feature guide for the generator command, generated migration and pages:
+
+- [Password resets and history](passwords-and-recovery.md)
+- [Verification, MFA and recovery codes](verification-and-mfa.md)
+- [OAuth](oauth.md)
+- [Invitations](invitations.md)
+
+The feature generators infer the authentication scope from the configured model. When a model has multiple authentication scopes, select one explicitly:
+
+```sh
+bin/rails generate vouch:password_resetable User --auth-scope customer --controller-path portal
+```
+
+That command uses the password-reset schema shown in the linked guide, with controllers under `app/controllers/portal`. To generate the model feature and schema without its pages:
 
 ```sh
 bin/rails generate vouch:password_resetable User --model-only
+```
+
+Its migration adds:
+
+```ruby
+add_column :users, :password_reset_token_digest, :string
+add_column :users, :password_reset_sent_at, :datetime
+add_index :users, :password_reset_token_digest, unique: true
 ```
 
 ## Use usernames for sign-in
@@ -53,11 +146,14 @@ Generate a column, then add a unique index in its migration:
 bin/rails generate migration AddUsernameToUsers username:string
 ```
 
-```ruby
-add_index :users, :username, unique: true
-```
+The generated migration adds the column; add the unique index to it:
 
-Backfill usernames before enforcing presence on existing records.
+```ruby
+def change
+  add_column :users, :username, :string
+  add_index :users, :username, unique: true
+end
+```
 
 In `app/models/user.rb`, add:
 
@@ -137,14 +233,18 @@ Vouch uses the primary key declared by your model, including custom names and co
 To generate new UUID-based models:
 
 ```sh
-bin/rails generate vouch:scope users User --single-model --primary-key-type uuid
+bin/rails generate vouch:scope User --primary-key-type uuid
 ```
+
+The UUID option changes the table declaration to `create_table :users, id: :uuid`; the remaining columns are unchanged.
 
 Namespaced models are supported too:
 
 ```sh
-bin/rails generate vouch:scope operators Staff::Operator --single-model
+bin/rails generate vouch:scope Staff::Operator --auth-scope operator
 ```
+
+For that example, the generated model is `Staff::Operator`; the explicit scope gives `current_operator` and `/operators/sign_in`. Its table uses the same credential columns as the first migration.
 
 ## Check your setup
 

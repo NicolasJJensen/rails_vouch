@@ -53,26 +53,6 @@ Do not register a second serializer or authentication policy for a Vouch-owned
 scope. If another application component owns a separate Warden scope, choose
 a non-overlapping name and keep its serializer independent.
 
-## Linked membership scopes
+## Account and membership sessions
 
-A linked membership mapping uses `account_scope:` to identify its parent
-credentials scope. Password strategies run on the parent account scope. The
-membership scope has no password strategy; it selects an identity after the
-parent account has authenticated.
-
-```ruby
-Vouch.routes(self) do |auth|
-  auth.scope :account, model: "Account" do
-    auth.sessions
-    auth.registrations
-  end
-
-  auth.scope :member, account_scope: :account, identity: "Membership" do
-    auth.sessions
-  end
-end
-```
-
-Account sign-out invalidates dependent membership sessions. Membership
-restoration requires both the membership and its parent account to pass their
-serializers.
+An account login and its membership selections are separate Warden scopes. Vouch restores a membership only when its owning account is authenticated and its authentication requirements remain satisfied. The [scope reference](model-mapping.md#shared-account-scopes) describes how to declare these relationships.

@@ -1,4 +1,4 @@
-# Handling cancelled authentication changes
+# Advanced integration: results and cancelled writes
 
 This guide is for custom authentication services and credential adapters. The supplied controllers already handle unsuccessful authentication writes.
 
@@ -39,7 +39,7 @@ Methods with lockout protection can return `Result.locked`. A cancelled proof-co
 
 ## Group custom database changes
 
-Use the persistence wrapper when several changes must succeed together and a cancelled write needs a distinct error:
+`Vouch::Persistence` is a utility module, not an Active Record model. It wraps writes and raises `Vouch::Persistence::Cancelled` when a callback silently rolls back a bang write. Custom credential adapters can use it when several writes must succeed together:
 
 ```ruby
 Vouch::Persistence.transaction(user) do
@@ -55,6 +55,6 @@ This example assumes your `last_login_at` column and `AuditLog` model. `transact
 
 ## External effects and callbacks
 
-A database rollback cannot undo an email or SMS that was already sent. For authentication controller customizations, put database work in the `commit_of_*` callbacks and post-completion work in the outer `after_*` callback. The [lifecycle timing table](sessions-and-hooks.md#lifecycle-hooks) explains when each runs, including registrations that still require MFA.
+A database rollback cannot undo an email or SMS that was already sent. For authentication controller customizations, put database work in ordinary lifecycle callbacks and post-completion work in `after_commit_of_*`. The [lifecycle timing table](sessions-and-hooks.md#lifecycle-hooks) explains when each runs, including registrations that still require MFA.
 
 Custom credential implementations can run the [adapter shared examples](credential-adapter-contract.md) to check cancellation, expiry, lockout, and single-use behavior.

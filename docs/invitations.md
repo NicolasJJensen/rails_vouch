@@ -1,17 +1,30 @@
 # Invitations
 
-An invitation lets someone join your application through a link. New users choose their password during registration; existing users sign in with their existing credentials.
+An invitation lets someone join your application through a link. In a multi-tenant application, they can join an organisation with an existing account or register a new account.
 
 ## Add invitations
 
 For an existing Vouch `User` model:
 
 ```sh
-bin/rails generate vouch:invitations User --single-model
+bin/rails generate vouch:invitations User
 bin/rails db:migrate
 ```
 
-The generator adds invitation fields and associations to `User`, a controller and form, a mailer and template, and invitation routes. It also adds the flag that distinguishes a new invited user awaiting registration from an existing user.
+The generator adds invitation fields and associations to `User`, a controller and form, a mailer and template, and invitation routes. The invitation is stored on the `User` record, not a separate invitations table. The migration adds:
+
+```ruby
+add_column :users, :invitation_token, :string
+add_column :users, :invitation_sent_at, :datetime
+add_column :users, :invitation_accepted_at, :datetime
+add_column :users, :inviter_id, :bigint
+add_index :users, :invitation_token, unique: true
+add_index :users, :inviter_id
+add_foreign_key :users, :users, column: :inviter_id
+add_column :users, :registration_required, :boolean, default: false, null: false
+```
+
+`registration_required` distinguishes a newly invited person who still needs to choose a password from someone who already completed registration.
 
 ### Decide who can invite
 
@@ -24,13 +37,13 @@ Replace the generated authorization method:
  end
 ```
 
-`admin?` is a role check you implement on your model. Without your authorization method, invitations cannot be created.
+`authorize_invitation!` runs as a `before_action` on `create`. The example uses your own `admin?` role predicate. The default method denies creation until you replace it. Acceptance validates the invitation and account; revocation uses the relation described below.
 
-The generated `build_invited_identity` method finds a user by email or creates one awaiting registration:
+For single-tenant authentication, the generated `build_invited_account` method finds a `User` by email or creates one awaiting registration:
 
 ```ruby
 # In Users::InvitationsController
- def build_invited_identity(identifier)
+ def build_invited_account(identifier)
    email = identifier.to_s.strip.downcase
    User.find_by("LOWER(email_address) = ?", email) || User.create!(
      email_address: email,
@@ -74,6 +87,8 @@ The link uses your Action Mailer URL configuration.
 
 ### Offer the invitation form
 
+The generator supplies `app/controllers/users/invitations_controller.rb` and `app/views/users/invitations/new.html.erb`. Link to that generated form:
+
 ```erb
 <%= link_to "Invite someone", new_user_invitation_path %>
 ```
@@ -81,7 +96,7 @@ The link uses your Action Mailer URL configuration.
 After the recipient opens the link:
 
 - A new user completes registration and chooses a password. Vouch updates the invited record instead of creating a second user.
-- An existing user signs in, including MFA if required. Opening the link alone does not authenticate them or change their password.
+- An existing user accepts using their account. If that account is already signed in, Vouch reuses its session; otherwise they sign in and complete required MFA. Their password is unchanged.
 - An expired or revoked link returns to sign-in with an error.
 
 ## Invite someone to an organisation
@@ -89,8 +104,16 @@ After the recipient opens the link:
 For the [multi-tenant setup](model-mapping.md) with `Account`, `User`, and `Organisation`:
 
 ```sh
-bin/rails generate vouch:invitations User Account
+bin/rails generate vouch:invitations User --account Account
 bin/rails db:migrate
+```
+
+The generator normally infers the account from the configured `User` mapping. `--account Account` explicitly selects it when needed.
+
+The invitation fields and inviter relationship shown above are added to `users`. The registration flag instead belongs to `accounts`:
+
+```ruby
+add_column :accounts, :registration_required, :boolean, default: false, null: false
 ```
 
 The invitation is attached to the `User` membership. The generated lookup finds or creates its credentials `Account`, and Vouch creates the membership in the inviter's organisation. The `:user` scope contains `auth.invitations`; account registration remains on the parent scope:
@@ -108,7 +131,9 @@ Vouch.routes(self) do |auth|
 end
 ```
 
-A new invited account completes registration against the existing invited membership. Vouch does not call `build_registration` to create another organisation. An existing account signs in before accepting its new membership. In both cases, the invitation remains for the organisation that issued it.
+A new account chooses its password while retaining the invited membership and its organisation. An existing account accepts that membership using its existing login. Neither path creates another organisation.
+
+Invitation acceptance and registration have [transactional hooks](#registration-customization) for accompanying records. Pending memberships are not ordinary sign-in choices: Vouch requires their valid invitation before granting access.
 
 Tenant assignment is automatic through the configured associations. Override `assign_tenant_to_invitee(identity, inviter)` only when your invitation policy needs different assignment rules.
 
@@ -143,6 +168,32 @@ Revocation removes the invited membership in a multi-tenant setup. For a single-
 
 ## Registration customization
 
-The generated invitation lookup saves a new credentials record before sending its link. If your model validates profile fields during creation, provide those fields there or make the validations conditional on completed registration. Keep password requirements appropriate to the temporary credential and the final password form.
+`registration_required: true` means the credentials account has not finished registration. Accepting an invitation and choosing a password clears that flag. Other invitations for the same account then use its existing login, rather than asking for another password.
 
-`registration_required` marks an account awaiting registration; `invitation_registration_required` records that requirement on the invitation. The generator supplies both with non-null false defaults. Do not mark an existing registered account as awaiting registration merely because it receives another invitation.
+Use registration hooks for account-wide records and invitation-acceptance hooks for membership records:
+
+```ruby
+# In the generated registrations controller
+ after_sign_up do |account, identity|
+   Preferences.create!(account: account)
+ end
+```
+
+```ruby
+# In a concern included by the authentication controllers completing acceptance
+ on_invitation_acceptance do |identity, account|
+   MembershipPreferences.create!(user: identity)
+ end
+```
+
+`Preferences` and `MembershipPreferences` are example models you supply. These callbacks run inside their operation's database transaction. Use [post-commit hooks](sessions-and-hooks.md#lifecycle-hooks) for external effects.
+
+The generated lookup saves a pending account before sending its invitation. If your account requires profile fields at creation, supply them in `build_invited_account` or condition those validations on completed registration.
+
+## Edit the invitation actions
+
+```sh
+bin/rails generate vouch:eject users invitations
+```
+
+The endpoint actions become editable in your controller. Your existing lookup and authorization overrides remain in place. See [ejection](controllers.md#eject-a-controller).

@@ -13,47 +13,13 @@ end
 
 This configuration gives you `current_user`, `user_signed_in?`, and `authenticate_user!`.
 
-## Organisation memberships
+## Shared account scopes
 
-Separate credentials from membership when one person can belong to several organisations:
-
-```text
-Account ── has many ── User ── belongs to ── Organisation
-```
-
-```sh
-bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
-bin/rails db:migrate
-```
-
-`Account` holds the person's email and password. `User` represents one organisation membership. The generated relationships are:
-
-```ruby
-class Account < ApplicationRecord
-  include Vouch::Authenticatable
-  has_secure_password
-  has_many :users
-end
-```
-
-```ruby
-class User < ApplicationRecord
-  belongs_to :account
-  belongs_to :organisation
-end
-```
-
-```ruby
-class Organisation < ApplicationRecord
-  has_many :users
-end
-```
-
-The account and membership have separate sessions, so their routes are declared separately:
+The [multi-tenant setup](setup.md#multi-tenant-setup) generates an `Account` with `User` memberships in organisations. Use separate declarations when more than one membership scope needs the same account login:
 
 ```ruby
 Vouch.routes(self) do |auth|
-  auth.scope :account, model: "Account" do
+  auth.scope model: "Account" do
     auth.sessions
     auth.registrations
   end
@@ -64,19 +30,9 @@ Vouch.routes(self) do |auth|
 end
 ```
 
-Declare the account first so the membership can reference it. Omit `tenant:` if you separate credentials and identities without an organisation relationship.
+`account_scope: :account` connects membership selection to the existing account login. Omitting `tenant:` also supports separate account and identity models without organisation ownership.
 
-Use `authenticate_user!` to require both account authentication and a membership. After account sign-in:
-
-| Available memberships | Result |
-| --- | --- |
-| One | Selected automatically |
-| Several | The person chooses one |
-| None | Organisation access is denied |
-
-`current_account` returns the credentials record, `current_user` the selected membership, and `current_organisation` its organisation. `current_account.users` lists memberships; it does not identify the selected one.
-
-A direct visit to `/accounts/sign_in` signs into the account. A protected organisation page starts membership selection as well. Signing out of the account ends its memberships; ending a membership leaves the account signed in.
+`authenticate_user!` checks both sessions. `current_account.users` lists all memberships; `current_user` is the selected one. `current_organisation` is that membership's organisation.
 
 ## Exclude inactive memberships
 
@@ -130,7 +86,19 @@ end
 
 A membership is then identified by both values. Associations and database foreign keys referencing it must include both columns. Vouch carries the complete key through sign-in, MFA, invitations, and session restoration.
 
-Use the generated route/form helpers rather than concatenating composite IDs yourself. Custom authentication forms can use `Vouch::RecordKey.to_param(record)` for a record's submitted identifier.
+Ordinary scalar IDs, including UUIDs and renamed keys, work with normal Rails route helpers:
+
+```erb
+<%= button_to "View as this user", user_impersonate_path(user), method: :post %>
+```
+
+For composite keys, use Vouch's route encoding in custom links and forms:
+
+```erb
+<%= button_to "View as this user", user_impersonate_path(Vouch::RecordKey.to_param(user)), method: :post %>
+```
+
+`Vouch::RecordKey.to_param` encodes every component, preserving its type. The receiving Vouch controller decodes that value and looks up the complete key. Generated forms already handle this.
 
 ## Custom association names
 

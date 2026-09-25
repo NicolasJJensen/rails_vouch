@@ -1,23 +1,37 @@
 # Vouch
 
-Vouch adds password authentication, registration, password resets, MFA, OAuth, invitations, and impersonation to Rails applications. It generates controllers and views you can customize and works with your application's models.
+Vouch adds authentication to Rails: password sign-in, registration, password resets, MFA, recovery codes, OAuth, invitations and impersonation. It generates controllers and views in your application so you can customize each flow.
 
 ## Install
 
-Requires Rails 8.x and Ruby 3.2 or newer, subject to your Rails version's requirements.
+Requires Rails 8.x and Ruby 3.2 or newer, subject to your Rails version’s requirements.
 
 ```sh
 bundle add rails_vouch
 bin/rails generate vouch:install
-bin/rails generate vouch:scope users User --single-model
+bin/rails generate vouch:scope User
 bin/rails db:migrate
 ```
 
-The generator creates a `User` model with password authentication, normalized email addresses, and email validation. It also creates sign-in and registration controllers, forms, and routes:
+The scope generator creates `User`, sign-in and registration controllers, forms, and routes. The generated model normalizes and validates `email_address` and uses `has_secure_password`.
+
+For a new `User`, the migration creates:
+
+```ruby
+create_table :users do |t|
+  t.string :email_address, null: false
+  t.string :password_digest, null: false
+  t.bigint :auth_session_version, null: false, default: 0
+  t.timestamps
+end
+add_index :users, "lower(email_address)", unique: true, name: "index_users_on_lower_email_address"
+```
+
+The generated routes select the features available for this login:
 
 ```ruby
 Vouch.routes(self) do |auth|
-  auth.scope :user, model: "User" do
+  auth.scope model: "User" do
     auth.sessions
     auth.registrations
   end
@@ -27,10 +41,12 @@ end
 ## Protect pages
 
 ```ruby
+# app/controllers/authenticated_controller.rb
 class AuthenticatedController < ApplicationController
   before_action :authenticate_user!
 end
 
+# app/controllers/projects_controller.rb
 class ProjectsController < AuthenticatedController
   def index
     @projects = current_user.projects
@@ -38,15 +54,15 @@ class ProjectsController < AuthenticatedController
 end
 ```
 
-`authenticate_user!` redirects visitors to sign-in and returns them to the requested page afterward. `current_user` returns the signed-in `User`; `user_signed_in?` checks whether one is signed in.
+`authenticate_user!` sends visitors to sign-in and returns them to the requested page afterward. `current_user` returns the signed-in user; `user_signed_in?` checks whether one is signed in.
 
-Vouch adds these methods through `Vouch::ApplicationHelpers`, which is included automatically in Rails controllers. `current_user` and `user_signed_in?` are also available in views.
+These methods come from `Vouch::ApplicationHelpers`, which Vouch automatically includes in Rails controllers. Current-record and signed-in helpers are available in views too.
 
-Keep authentication requirements in a base such as `AuthenticatedController`, because Vouch's public sign-in and registration endpoints also inherit `ApplicationController`.
+Keep forced authentication in `AuthenticatedController`: the generated sign-in and registration endpoints inherit your `ApplicationController` and must be accessible before sign-in.
 
-## Sign-in and registration links
+## Sign-in links
 
-| Action | Route | Helper |
+| Action | Request | Helper |
 | --- | --- | --- |
 | Sign-in form | `GET /users/sign_in` | `new_user_session_path` |
 | Sign in | `POST /users/sign_in` | `user_session_path` |
@@ -60,11 +76,12 @@ Keep authentication requirements in a base such as `AuthenticatedController`, be
 <%= button_to "Sign out", user_sign_out_path, method: :delete %>
 ```
 
-## Choose a destination after sign-in
+## Redirect after sign-in
 
-Sign-in and registration default to your application's `root_path`. Override the destination in the generated controller:
+Sign-in returns to the requested protected page, or `root_path` if there was no requested page. Change that fallback in the generated controller:
 
 ```ruby
+# app/controllers/users/sessions_controller.rb
 class Users::SessionsController < Vouch::SessionsController
   private
 
@@ -74,64 +91,78 @@ class Users::SessionsController < Vouch::SessionsController
 end
 ```
 
-A previously requested protected page takes precedence over this fallback. See [controllers](docs/controllers.md#redirects) for registration, sign-out, and shared redirect methods that also cover MFA and OAuth completion.
+[Controllers and redirects](docs/controllers.md#redirects) also covers registration, sign-out and shared redirects that apply when MFA or OAuth completes sign-in.
 
-## Add authentication features
+## Add a feature
 
-- [Password resets and password history](docs/passwords-and-recovery.md)
-- [Phone verification and MFA](docs/verification-and-mfa.md)
-- [Sign in with an OAuth provider](docs/oauth.md)
-- [Invite people to your application](docs/invitations.md)
-- [Impersonate a user for support](docs/impersonation.md)
+- [Password reset and password history](docs/passwords-and-recovery.md)
+- [Verification, MFA and recovery codes](docs/verification-and-mfa.md)
+- [OAuth sign-in](docs/oauth.md)
+- [Invitations](docs/invitations.md)
+- [Impersonation](docs/impersonation.md)
 
-[Setup and customization](docs/setup.md) also covers usernames, multiple login resolvers, and custom models.
+Each guide shows its generator, schema changes, generated pages and customization methods.
 
 ## Multi-tenant applications
 
-For people who can belong to several organisations, separate their credentials from their memberships:
+When one person can join several organisations, separate the account from its memberships:
 
 ```sh
-bin/rails generate vouch:scope users Account:account User:identity Organisation:tenant
+bin/rails generate vouch:scope User --account Account --tenant Organisation
 bin/rails db:migrate
 ```
 
-`Account` holds the email and password. Each `User` belongs to that account and one `Organisation`. The generated registration form creates an account, an organisation, and its initial membership.
+`Account` holds the email and password. Each `User` belongs to that account and an `Organisation`. The registration form asks for an organisation name and creates the account, organisation and first membership together.
 
-The routes have one scope for account sign-in and another for selecting a membership:
+The migrations create `accounts` with the credential columns shown above, `organisations` with a required `name`, and `users` with required foreign keys:
 
 ```ruby
-Vouch.routes(self) do |auth|
-  auth.scope :account, model: "Account" do
-    auth.sessions
-    auth.registrations
-  end
-
-  auth.scope :user, account_scope: :account, identity: "User", tenant: "Organisation" do
-    auth.sessions
-  end
+create_table :organisations do |t|
+  t.string :name, null: false
+  t.timestamps
 end
+create_table :accounts do |t|
+  t.string :email_address, null: false
+  t.string :password_digest, null: false
+  t.bigint :auth_session_version, null: false, default: 0
+  t.timestamps
+end
+add_index :accounts, "lower(email_address)", unique: true, name: "index_accounts_on_lower_email_address"
+create_table :users do |t|
+  t.bigint :account_id, null: false
+  t.bigint :organisation_id, null: false
+  t.timestamps
+end
+add_index :users, :account_id
+add_index :users, :organisation_id
+add_foreign_key :users, :accounts
+add_foreign_key :users, :organisations
 ```
 
-Continue using `before_action :authenticate_user!` on organisation pages. It checks both the account and its selected membership:
+Continue using `authenticate_user!` on organisation pages. It checks the account authentication and selected membership. One available membership is selected automatically; several produce a selection page. Required MFA must complete before access is granted.
 
-1. A visitor signs in to their account, completing MFA if enabled.
-2. One available membership is selected automatically; several produce a selection form.
-3. The visitor returns to the page they requested. An account without an available membership cannot enter organisation pages.
+Use `current_account`, `current_user` and `current_organisation` to access those records. An account settings page can use `authenticate_account!` without requiring an organisation membership.
 
-Use `current_account` for credentials, `current_user` for the selected membership, and `current_organisation` for its organisation. Tenant helper names follow your tenant model's name.
+[Setup](docs/setup.md#multi-tenant-setup) shows the generated models and routes. [Authentication policies](docs/authentication-policy.md) explains organisation-specific MFA requirements.
 
-An account-only page, such as a membership chooser, can use `authenticate_account!`. Signing out of the account ends its membership sessions; signing out of a membership leaves the account signed in.
+## Customize the implementation
 
-See [model mapping](docs/model-mapping.md) for associations, primary keys, and separate administrator logins.
+Edit the generated views and controller subclasses for ordinary changes. When you need to edit an endpoint’s actions directly, [eject its controller](docs/controllers.md#eject-a-controller) into your application:
 
-## Further customization
+```sh
+bin/rails generate vouch:eject users sessions
+```
 
-- [Controllers and complete route reference](docs/controllers.md)
+Further guides:
+
+- [Setup, usernames and login resolvers](docs/setup.md)
+- [Controllers, routes and ejection](docs/controllers.md)
+- [Models, keys and authentication scopes](docs/model-mapping.md)
 - [Authentication policies](docs/authentication-policy.md)
 - [Sessions and lifecycle hooks](docs/sessions-and-hooks.md)
-- [Handling cancelled changes](docs/persistence.md)
-- [Integrating with an existing Warden configuration](docs/warden.md)
-- [Testing custom MFA credentials](docs/credential-adapter-contract.md)
+- [Advanced integration and persistence](docs/persistence.md)
+- [Existing Warden middleware](docs/warden.md)
+- [Testing a custom MFA credential](docs/credential-adapter-contract.md)
 
 ## Development
 
@@ -141,6 +172,6 @@ RAILS_ENV=test bundle exec rake app:db:prepare
 bundle exec rspec
 ```
 
-The test suite uses PostgreSQL. The development Gemfile uses sibling `active_hooks` and `otp_courier` checkouts; use `VOUCH_RELEASE_DEPS=1` to install published dependencies instead.
+The suite uses PostgreSQL. The development Gemfile uses sibling `active_hooks` and `otp_courier` checkouts; set `VOUCH_RELEASE_DEPS=1` to use published dependencies.
 
 [Changelog](CHANGELOG.md) · [MIT license](LICENSE.txt)

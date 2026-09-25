@@ -11,9 +11,29 @@ bin/rails db:migrate
 
 This adds reset-token storage and methods to `User`, a `Users::PasswordResetsController`, request and replacement-password forms, routes, and `UserPasswordResetMailer`. The generated model delivery method calls that mailer. You do not need to write token-handling actions.
 
-For a multi-tenant login with credentials stored in `Account`, run the same command with `Account`. Password reset changes the credentials used across that account's memberships.
+The migration adds:
 
-The generator infers the route scope and controller namespace. Supply `--auth-scope` or `--controller-path` when yours use different names. To generate only model support and schema, explicitly use:
+```ruby
+add_column :users, :password_reset_token_digest, :string
+add_column :users, :password_reset_sent_at, :datetime
+add_index :users, :password_reset_token_digest, unique: true
+```
+
+For a **multi-tenant application**, generate against the account:
+
+```sh
+bin/rails generate vouch:password_resetable Account
+```
+
+The same columns are added to `accounts`; the generated controller and routes use `accounts`. An account has one password. Resetting it changes the password used to sign in to that account, whichever organisation the person subsequently selects.
+
+The generator infers the route scope and controller namespace. For a custom namespace:
+
+```sh
+bin/rails generate vouch:password_resetable User --auth-scope customer --controller-path portal
+```
+
+To generate only the model feature and the same reset-token schema, without pages:
 
 ```sh
 bin/rails generate vouch:password_resetable User --model-only
@@ -63,7 +83,11 @@ config.action_mailer.default_url_options = { host: "app.example.com", protocol: 
 | Choose password | `GET /users/password_reset/edit?token=…` | Checks the link and displays the password form. |
 | Save password | `PATCH /users/password_reset` | Validates and changes the password, then returns to sign-in. |
 
-An invalid or expired link returns to sign-in. A password validation error redisplays the form so the person can correct it. The request form submits top-level `email_address`; the replacement form submits `user[password]` and `user[password_confirmation]` with the token. If you use another sign-in identifier, update the request form to match your [login resolver](setup.md).
+An invalid or expired link returns to sign-in. A password validation error redisplays the replacement-password form with its validation errors.
+
+The request form submits `email_address`. If you identify users by `username` instead of `email_address`, change that field to `username` and register the corresponding [login resolver](setup.md#use-usernames-for-sign-in).
+
+The replacement form submits `user[password]`, `user[password_confirmation]` and the reset token. It does not need the sign-in identifier again.
 
 **Resetting a password does not bypass MFA.** It does not sign the person in or disable their second factor. Their next sign-in still requires MFA when enabled.
 
@@ -87,9 +111,10 @@ user.deliver_password_reset_token(result.value) if result.ok?
 
 ```ruby
 # Inside your custom password-update action
-user = User.find_by_auth_password_reset_token(params[:token])
-result = user&.reset_password_with_token!(params[:token],
-  password: params[:password], password_confirmation: params[:password_confirmation])
+token = params.require(:token)
+password_params = params.require(:user).permit(:password, :password_confirmation)
+user = User.find_by_auth_password_reset_token(token)
+result = user&.reset_password_with_token!(token, **password_params.to_h.symbolize_keys)
 
 if result&.ok?
   redirect_to new_user_session_path
@@ -109,7 +134,21 @@ bin/rails db:migrate
 
 The generator adds the `PasswordArchive` model, its table, the association on `User`, and the password-history feature. New passwords are checked against the current password and retained history.
 
-Configure the history on the credentials model:
+The default migration creates a concrete owner relationship:
+
+```ruby
+create_table :password_archives do |t|
+  t.bigint :account_id, null: false
+  t.string :password_digest, null: false
+  t.datetime :created_at, null: false
+end
+add_index :password_archives, [:account_id, :created_at]
+add_foreign_key :password_archives, :users, column: :account_id
+```
+
+`account_id` refers to `users` in this example. The generator configures that association explicitly.
+
+Configure how much history to retain:
 
 ```ruby
 # app/models/user.rb
@@ -120,60 +159,30 @@ class User < ApplicationRecord
 end
 ```
 
-Keep the model's existing features and associations. The generated archive belongs to the requested model. If several different credentials classes deliberately share one archive table, opt into `--polymorphic` when generating it.
-
-## Account recovery codes
-
-Recovery codes provide an alternative proof when someone loses access to their usual factor. They do not reset a password or create a session by themselves. Your recovery page decides how successful proof lets the person replace a lost factor.
+When several credentials models share an archive table, opt into polymorphic ownership:
 
 ```sh
-bin/rails generate vouch:recoverable User
-bin/rails db:migrate
+bin/rails generate vouch:password_trackable User --polymorphic
 ```
 
-In an authenticated recovery-settings action, generate a set and display the returned plaintext codes once:
+That migration replaces the concrete owner with:
 
 ```ruby
-result = current_user.generate_recovery_codes!
-@codes = result.value
+t.references :account, polymorphic: true, null: false
 ```
 
-A replacement set invalidates the earlier set. The database stores hashes. In your recovery action, after identifying the user through your recovery flow:
+It adds `account_type` and `account_id`, includes both in the history index and omits the concrete foreign key. The password digest and timestamp columns stay the same.
 
-```ruby
-result = user.consume_recovery_code!(params[:recovery_code])
-if result.ok?
-  # Continue your application's factor-replacement flow.
-end
-```
+## Recover access after losing an MFA device
 
-A code can be used once. Handle unsuccessful results, including lockout, before allowing factor changes. Do not treat a submitted user ID alone as authorization to change that user's credentials.
+Password reset changes a password; it does not bypass MFA. [Recovery codes](recovery-codes.md) provide an alternate second factor after password authentication. You can enable codes owned by the account, an individual credential, or both.
 
-## Backup codes for one credential
+For confirming an email address through a link, see [signed verification links](verification-and-mfa.md#signed-verification-links).
 
-`Vouch::BackupCodable` attaches codes to a particular MFA credential, rather than the whole account:
+## Edit the reset actions
 
 ```sh
-bin/rails generate vouch:backup_codes Phone
-bin/rails db:migrate
+bin/rails generate vouch:eject users password_resets
 ```
 
-The generator adds the backup-code model, table, and association to `Phone`. Generate a replacement set with `credential.regenerate_backup_codes!` and show its returned codes once. With `TwoFactorable` and `BackupCodable` on that credential, its normal challenge verification accepts an unused backup code too.
-
-This is useful when the person still has their password but cannot receive that credential's current code. It differs from the account-recovery workflow above, which your application supplies.
-
-## Signed verification links
-
-Use `TokenVerifiable` to confirm a recipient through a clickable link, rather than reset a password:
-
-```ruby
-# app/models/email_confirmation.rb
-class EmailConfirmation < ApplicationRecord
-  include Vouch::TokenVerifiable::Concern
-  self.token_subject_attribute = :email_address
-end
-```
-
-The model needs `verified_at` and `confirmation_nonce` columns. After saving it, `confirmation.confirmation_token` produces a token for your delivery method. Your confirmation endpoint calls `EmailConfirmation.consume_token(token)` and checks `result.ok?`.
-
-A successful confirmation consumes the token. Saving a recipient change invalidates earlier links and clears verification, even if the address later changes back. Without `token_subject_attribute`, the link verifies the record without binding it to a recipient field.
+The actions become editable in `app/controllers/users/password_resets_controller.rb`, retaining your controller customizations. [Ejection](controllers.md#eject-a-controller) explains which shared Vouch methods remain in use.

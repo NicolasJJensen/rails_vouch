@@ -35,6 +35,7 @@ Gem::Specification.new do |spec|
       "docs/sessions-and-hooks.md",
       "docs/verification-and-mfa.md",
       "docs/passwords-and-recovery.md",
+      "docs/recovery-codes.md",
       "docs/persistence.md",
       "docs/invitations.md",
       "docs/impersonation.md",

@@ -18,17 +18,18 @@ RSpec.describe "documentation executable contracts" do
 
   it "keeps the split-model route sample at the generated baseline" do
     source = documentation_ruby_block(
-      path: "README.md",
-      containing: 'auth.scope :account, model: "Account"'
+      path: "docs/setup.md",
+      containing: 'auth.scope model: "Account"'
     )
     expect(source).to include("Vouch.routes(self)")
 
     previous_mappings = Vouch.mappings.dup
+    Vouch.mappings.clear
     serializers = Warden::SessionSerializer.instance_methods(false).to_h do |name|
       [name, Warden::SessionSerializer.instance_method(name)]
     end
     routes = ActionDispatch::Routing::RouteSet.new
-    routes.draw { eval(source, binding, "README.md") } # rubocop:disable Security/Eval
+    routes.draw { eval(source, binding, "docs/setup.md") } # rubocop:disable Security/Eval
 
     helpers = routes.url_helpers
     expect(helpers).to respond_to(:new_user_session_path)
@@ -82,7 +83,7 @@ RSpec.describe "documentation executable contracts" do
       installer = Vouch::Generators::InstallGenerator.new([])
       installer.destination_root = directory
       installer.invoke_all
-      generator = Vouch::Generators::ScopeGenerator.new(["users", "User"], single_model: true)
+      generator = Vouch::Generators::ScopeGenerator.new(["User"])
       generator.destination_root = directory
       generator.invoke_all
     end

@@ -6,49 +6,34 @@ successful completion.
 
 ## Session rotation
 
-Vouch renews the Rails session identifier during authentication. Renewal keeps
-ordinary application data, such as a shopping cart or locale, while Vouch
-removes authentication state belonging to the affected scope. CSRF, flash,
-return destinations, credential drafts, pending invitations, and MFA state
-are retained or cleared according to the current flow.
-
-For example, `session[:cart]` keeps its contents after sign-in. Unrelated
-Warden logins also remain signed in. Warden renews the session identifier when
-it stores a user; Vouch also requests renewal for intermediate authentication
-steps such as MFA, before a user is stored. Renewal prevents reuse of the old
-session identifier without discarding application data.
-
-Credential drafts use the controller's `credential_drafts` getter and setter.
-If a draft contains an Active Record object, provide your own serializer or use
-a server-side store; do not deserialize client-supplied class names without an
-allowlist.
+Vouch renews the session identifier during authentication to prevent session fixation. Application data such as `session[:cart]` and `session[:locale]` is preserved, as are unrelated authentication scopes.
 
 ## Lifecycle hooks
 
 Lifecycle hooks are class methods on Vouch controllers. They are available for
 sign-in, sign-out, sign-up, OAuth sign-in, OAuth linking, OAuth account
-creation, invitation revocation, and impersonation start and end.
+creation, invitation acceptance and revocation, and impersonation start and end.
 
-Each lifecycle has an outer chain and a commit chain. For example, sign-in
+Each lifecycle has a transactional chain and an outer commit chain. For example, sign-in
 uses `before_sign_in`, `around_sign_in`, and `after_sign_in`, plus
 `before_commit_of_sign_in`, `around_commit_of_sign_in`, and
 `after_commit_of_sign_in`.
 
 ```ruby
 class Users::SessionsController < Vouch::SessionsController
-  before_sign_in do |account, identity|
+  before_commit_of_sign_in do |account, identity|
     Rails.logger.info("signing in #{identity.id} for account #{account.id}")
   end
 
-  before_commit_of_sign_in do |account, identity|
+  before_sign_in do |account, identity|
     AuditLog.create!(account: account, event: "sign_in", identity: identity)
   end
 
-  after_commit_of_sign_in do |_account, identity|
+  after_sign_in do |_account, identity|
     identity.update!(last_seen_at: Time.current)
   end
 
-  after_sign_in do |_account, identity|
+  after_commit_of_sign_in do |_account, identity|
     Analytics.track("signed_in", identity_id: identity.id)
   end
 end
@@ -58,12 +43,12 @@ The normal order is:
 
 | Phase | Transaction state | Runs when |
 | --- | --- | --- |
-| `before_*` | No Vouch persistence transaction | Before the lifecycle starts |
-| `around_*` | Outside the commit transaction | Around the complete lifecycle |
-| `before_commit_of_*` | Inside a new Active Record transaction | Before lifecycle writes |
-| `around_commit_of_*` | Inside that transaction | Around lifecycle writes |
-| `after_commit_of_*` | Inside that transaction | After writes, before the transaction finishes |
-| `after_*` | After the transaction commits | After successful persistence; completed sign-in also publishes session state |
+| `before_commit_of_*` | Before Vouch opens its transaction | Decide whether to start the operation |
+| `around_commit_of_*` | Wraps the transaction and session publication | Observe the complete operation |
+| `before_*` | Inside the transaction | Add database work before the operation |
+| `around_*` | Inside the transaction | Wrap the operation's database work |
+| `after_*` | Inside the transaction | Add database work after the operation |
+| `after_commit_of_*` | After commit and successful session publication | Deliver notifications or call external services |
 
 | Lifecycle | Arguments | Example use |
 | --- | --- | --- |
@@ -73,16 +58,17 @@ The normal order is:
 | `oauth_sign_in` | Credentials record, identity, `auth_hash:` | Record a provider login. |
 | `oauth_link` | Current identity, `auth_hash:` | Record a newly linked provider. |
 | `oauth_account_creation` | `auth_hash:` initially; account and identity are added after creation | Provision an OAuth signup. |
+| `invitation_acceptance` | Invitation identity, credentials account | Create records for the accepted membership. |
 | `invitation_revocation` | Invitation identity, credentials account | Audit an invitation withdrawal. |
 | `impersonation_start` | Current identity, target | Record who began impersonation. |
 | `impersonation_end` | Current identity, original operator | Record restoration. |
 
-Each row has the outer and `commit_of_*` callback chains shown above. In a
+Each row has the transactional and `commit_of_*` callback chains shown above. In a
 single-model setup, the credentials record and identity are the same `User`.
-`AuditLog` and `Analytics` in the example are services you supply.
+`AuditLog` is an application model and `Analytics` an application service in this example.
 
 Event hooks use `on_*` for password reset token generation, password changes,
-invitation token generation and acceptance, and two-factor verification:
+invitation token generation, and two-factor verification:
 
 ```ruby
 class Users::PasswordResetsController < Vouch::PasswordResetsController
@@ -97,25 +83,22 @@ end
 | `on_password_reset_token_generation` | Credentials record, raw reset token |
 | `on_password_change` | Credentials record |
 | `on_invitation_token_generation` | Submitted identifier, invitation identity |
-| `on_invitation_acceptance` | Invitation identity, credentials record |
 | `on_two_factor_verification` | Credentials record, selected identity, verified credential |
 
-Use ActiveHooks' `with_env` option when your callback needs the callback
-environment rather than the arguments directly.
+`on_invitation_acceptance` is a convenient spelling of `after_invitation_acceptance`; both run inside the acceptance transaction.
+
+For advanced callback arguments and wrapping, see the [ActiveHooks documentation](https://github.com/NicolasJJensen/active_hooks).
 
 ## Cancellation and transaction boundaries
 
-Throwing `:abort` from a `before_*` callback cancels the lifecycle before any
-transaction begins. An `around_*` callback that does not call its continuation
-also cancels the lifecycle. Cancellation in the commit chain rolls back the
-transaction. An `ActiveRecord::Rollback` raised by persistence or an
-`after_commit_of_*` callback has the same rollback effect.
+Throwing `:abort` from a `before_commit_of_*` callback cancels the lifecycle before a transaction begins. An `around_*` callback that does not call its continuation
+also cancels the lifecycle. Cancellation in a transactional callback rolls back the transaction. Raising `ActiveRecord::Rollback` from that transactional work has the same effect.
 
 For example, reject a login before writing its audit entry:
 
 ```ruby
 # In Users::SessionsController
-before_commit_of_sign_in do |user, _identity|
+before_sign_in do |user, _identity|
   throw(:abort) if user.suspended?
 end
 ```
@@ -125,15 +108,13 @@ callback does not cancel it; use `throw(:abort)`.
 
 Vouch rejects an authentication lifecycle started inside an existing joinable
 Active Record transaction with `Vouch::ConfigurationError`. This keeps the
-outer `after_*` callbacks from running before an enclosing transaction can later roll
-back. Start the authentication request outside the enclosing transaction and use
-the commit chain for database work.
+outer `after_commit_of_*` callbacks from running before an enclosing transaction can later roll
+back. Start the authentication request outside the enclosing transaction and use the ordinary lifecycle callbacks for database work.
 
-`after_sign_in` and `after_oauth_sign_in` observe the completed login.
-`after_sign_up` and `after_oauth_account_creation` observe successful record
+`after_commit_of_sign_in` and `after_commit_of_oauth_sign_in` observe the completed login.
+`after_commit_of_sign_up` and `after_commit_of_oauth_account_creation` observe successful record
 creation, which can still be followed by MFA before the person is signed in.
-Sign-out callbacks observe no current identity for the signed-out scope. An
-exception from `after_*` cannot undo the committed database operation.
+Sign-out callbacks observe no current identity for the signed-out scope. An exception from `after_commit_of_*` cannot undo the committed database operation.
 
 ## Account and membership sessions
 
@@ -148,12 +129,8 @@ impersonation, ending the membership session also clears the parent account
 session when required to avoid leaving an untracked target session.
 
 
-## Authentication events
+## Authentication evidence
 
-Second-factor completion keeps the verified credential through identity
-selection and passes it to `on_two_factor_verification`. OAuth continuation
-state stores the provider, UID, and the default profile fields `email`, `name`,
-and `image`; it does not store provider access or refresh tokens. Hosts using a
-cookie session with stricter size limits can override the protected
-`serialize_oauth` and `parse_oauth` methods together with a bounded,
-serializable format.
+MFA completion records the method used and when it was verified. Recovery codes are recorded as `recovery_code`, not as the credential's ordinary method. [Organisation MFA policies](authentication-policy.md#mfa-required-by-an-organisation) use that evidence when deciding whether another challenge is required.
+
+OAuth field retention is described in [retained provider data](oauth.md#advanced-retained-provider-data).

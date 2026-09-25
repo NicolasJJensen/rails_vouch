@@ -9,5 +9,9 @@
 - Lifecycle callbacks with separate transaction callbacks using ActiveHooks.
 - Custom scalar and composite primary keys in authentication, tokens, and generated associations.
 - Verification subjects composed of one or several attributes.
-- Password history, lockout, reset-token revocation, recovery codes, and credential backup codes.
+- Account and credential recovery codes with generated management and sign-in pages.
+- Organisation-specific MFA policies with recorded authentication evidence.
+- Nested impersonation with original-operator helpers and cross-scope restoration.
+- One-argument scope generation, nested membership routes, and controller ejection that preserves overrides.
+- Password history, lockout, reset-token revocation, and explicit session invalidation.
 - Task-oriented setup guides, complete route references, and executable integration examples.

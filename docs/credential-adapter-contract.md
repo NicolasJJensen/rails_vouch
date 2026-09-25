@@ -18,7 +18,7 @@ require "vouch/testing/credential_adapter_contract"
 Vouch::Testing::CredentialAdapterContract.install!
 ```
 
-Then provide an adapter in the credential spec:
+Define the adapter below in `spec/support/phone_credential_adapter.rb` and require it from `spec/rails_helper.rb`. Then use it in `spec/models/phone_spec.rb`:
 
 ```ruby
 RSpec.describe Phone do

@@ -106,6 +106,7 @@ Here, `Portal` does not identify the `:user` scope, so the declaration makes tha
 | `PasswordResetsController` | Send a reset link and accept a replacement password. |
 | `TwoFactorChallengeController` | Check the second factor during sign-in. |
 | `TwoFactorCredentialsController` | List, enroll, verify, and remove second-factor credentials. The generator supplies enrollment actions for your credential model. |
+| `RecoveryCodesController` | Display remaining recovery codes and generate a replacement set for an authenticated account or owned credential. |
 | `OmniAuthsController` | Handle provider sign-in, registration, and account linking. |
 | `InvitationsController` | Invite someone, accept an invitation, or revoke it. |
 | `ImpersonationsController` | Switch to an authorized target and restore the original signed-in user. |
@@ -134,6 +135,10 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `POST /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#create` |
 | | `PATCH/PUT /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#update` |
 | | `DELETE /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#destroy` |
+| `auth.two_factor` | `GET /users/recovery` | `user_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#recovery` |
+| | `POST /users/recovery` | `user_consume_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#consume_recovery` |
+| | `GET /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#show` |
+| | `POST /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#create` |
 | `auth.oauth_callbacks` | `GET /users/auth/:provider/callback` | No named helper | `Users::OmniAuthsController#callback` |
 | | `GET /users/auth/failure` | `users_auth_failure_path` | `Users::OmniAuthsController#failure` |
 | `auth.invitations` | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
@@ -150,44 +155,78 @@ OAuth request URLs are provided by OmniAuth; [the OAuth guide](oauth.md) shows t
 
 Use `bin/rails routes` to inspect your enabled routes. [Custom prefixes](model-mapping.md) change URLs and route helper names independently.
 
-## Copy a controller for larger changes
+## Registration
 
-A subclass or [hook](sessions-and-hooks.md) is usually enough. Eject a controller when you need to change the action itself:
+Override record construction when signup creates an organisation and membership. `build_tenant(account)` and `build_identity(account, tenant:)` return unsaved records; Vouch saves them in the registration transaction.
+
+```ruby
+class Accounts::RegistrationsController < Vouch::RegistrationsController
+  private
+
+  def build_tenant(account)
+    Organisation.new(params.require(:organisation).permit(:name))
+  end
+
+  def build_identity(account, tenant:)
+    tenant.users.build(account: account)
+  end
+end
+```
+
+Add accompanying database records with a transactional hook:
+
+```ruby
+class Accounts::RegistrationsController < Vouch::RegistrationsController
+  after_sign_up do |account, identity|
+    Preferences.create!(account: account)
+  end
+end
+```
+
+`Preferences` is an example model you supply. Invited registration uses the existing membership, then runs registration hooks in the same transaction. Existing accounts accepting another invitation use the invitation-acceptance hooks instead. [Invitations](invitations.md#registration-customization) shows both cases; [OAuth](oauth.md#create-an-organisation-during-signup) shows sharing construction methods with provider signup.
+
+## Eject a controller
+
+Use a subclass override or [hook](sessions-and-hooks.md) for small changes. Eject when you want the full endpoint actions editable in your application:
 
 ```sh
 bin/rails generate vouch:eject users sessions
 ```
 
-The generated file contains the endpoint implementation, beginning with:
+This creates a local implementation controller and points your existing controller at it:
 
 ```ruby
-# app/controllers/users/sessions_controller.rb
-class Users::SessionsController < ApplicationController
+# app/controllers/users/sessions_implementation_controller.rb
+class Users::SessionsImplementationController < ApplicationController
   include Vouch::Authentication
 
-  # The copied actions and private methods follow.
+  # Full copied actions and their supporting methods are in this file.
 end
 ```
 
-It replaces the subclass at the same route destination. For a differently named namespace, supply the scope and update the route:
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Users::SessionsImplementationController
+  # Your existing overrides stay here; super calls the local implementation.
+end
+```
+
+Edit either local file. The route still points to `Users::SessionsController`. Keeping the local implementation as its superclass preserves your overrides, `super` calls and generated enrollment customizations. Re-running the generator does not replace the local implementation.
+
+For a linked membership scope, ejecting its generated `SessionsController` copies membership selection rather than password authentication.
+
+The copied actions still use `Vouch::Authentication` and the gem's model/session services. Ejection gives you ownership of the controller implementation; it does not copy the whole gem into your application.
+
+For a custom namespace, supply the authentication scope:
 
 ```sh
 bin/rails generate vouch:eject portal sessions --auth-scope user
 ```
 
-```ruby
-# app/controllers/portal/sessions_controller.rb
-class Portal::SessionsController < ApplicationController
-  include Vouch::Authentication
-  auth_scope :user
-
-  # The copied actions and private methods follow.
-end
-```
+Connect it in the scope's route block:
 
 ```ruby
-# config/routes.rb, inside the User scope
- auth.sessions controller: "portal/sessions"
+auth.sessions controller: "portal/sessions"
 ```
 
-Other supported endpoint names are `membership_sessions`, `registrations`, `password_resets`, `invitations`, `two_factor_challenge`, `two_factor_credentials`, `omni_auths`, and `impersonations`. Ejecting `membership_sessions` creates `Users::MembershipSessionsController`; connect it with `auth.sessions controller: "users/membership_sessions"`.
+Supported endpoints include `sessions`, `membership_sessions`, `registrations`, `password_resets`, `invitations`, `two_factor_challenge`, `two_factor_credentials`, `recovery_codes`, `omni_auths` and `impersonations`.
