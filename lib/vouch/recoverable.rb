@@ -73,28 +73,14 @@ module Vouch
     # them immediately; the gem never reproduces them.
     def generate_recovery_codes!
       plaintexts = Array.new(recoverable_value(:code_count)) { generate_recovery_plaintext }
-      # BCrypt is intentionally done before taking the host-row lock. Code
-      # generation can be expensive and should not hold up auth operations.
-      digests = plaintexts.map { |code| BCrypt::Password.create(code) }
-
-      Vouch::Persistence.transaction(self) do
-        # Serialize against concurrent consume_recovery_code! on this host.
-        lock!
-
-        recovery_codes_relation.delete_all
-
-        digests.each do |digest|
-          attributes = {code_digest: digest}
-          if composite_recovery_key?
-            attributes[:recoverable_type] = recoverable_polymorphic_name
-            attributes[:recoverable_key] = Vouch::RecordKey.dump(self)
-          end
-          Vouch::Persistence.create!(recovery_codes_relation, **attributes)
-        end
-
-        Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil)
+      attributes = {}
+      if composite_recovery_key?
+        attributes = {recoverable_type: recoverable_polymorphic_name, recoverable_key: Vouch::RecordKey.dump(self)}
       end
-
+      result = Vouch::RecoveryCodes.replace!(self, relation: recovery_codes_relation,
+        plaintexts: plaintexts, attributes: attributes,
+        after_replace: -> { Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil) })
+      return result unless result.ok?
       Vouch::Result.ok(plaintexts.map { |code| format_recovery_code(code) })
     end
 
@@ -109,43 +95,15 @@ module Vouch
       return Vouch::Result.locked if recovery_locked?
 
       normalized = code.to_s.gsub(/\s/, "").delete("-").upcase
-
-      Vouch::Persistence.transaction(self) do
-        # Lock the host row for the whole transaction so the counter
-        # increment below is race-free against concurrent attempts.
-        lock!
-
-        # A request may have waited for another failed attempt to lock this
-        # account. Recheck after acquiring the row lock.
-        next Vouch::Result.locked if recovery_locked?
-
-        if normalized.empty?
-          bump_failed_recovery_attempt!
-          next Vouch::Result.invalid
-        end
-
-        # SELECT FOR UPDATE — held until COMMIT. Two concurrent submissions
-        # of the same code can't both flip used_at.
-        unused = recovery_codes_relation
-                   .where(used_at: nil)
-                   .lock("FOR UPDATE")
-                   .to_a
-
-        # BCrypt::Errors::InvalidHash propagates intentionally: a corrupted
-        # code_digest column means database integrity is compromised.
-        match = unused.find { |row| BCrypt::Password.new(row.code_digest) == normalized }
-
-        if match
-          Vouch::Persistence.update!(match, used_at: Time.current)
-          Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil)
-          Vouch::Result.ok(match)
-        else
-          bump_failed_recovery_attempt!
-          Vouch::Result.invalid
-        end
+      if normalized.empty?
+        Vouch::Persistence.transaction(self) { lock!; bump_failed_recovery_attempt! }
+        return Vouch::Result.invalid
       end
-    rescue Vouch::Persistence::Cancelled
-      Vouch::Result.cancelled
+
+      Vouch::RecoveryCodes.consume!(self, relation: recovery_codes_relation, submitted: normalized,
+        normalize: ->(value) { value }, eligible: -> { !recovery_locked? },
+        on_success: ->(_) { Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil) },
+        on_failure: -> { bump_failed_recovery_attempt! })
     end
 
     private

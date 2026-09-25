@@ -4,11 +4,11 @@ require "rails_helper"
 require "omniauth"
 
 RSpec.describe "authentication writes cancelled by host callbacks", type: :request do
-  it "does not publish sign-out state when its commit hook rolls back" do
+  it "does not publish sign-out state when its transactional hook rolls back" do
     user = create(:user)
     sign_in(user)
     original_hooks = Users::SessionsController.__hooks
-    Users::SessionsController.after_commit_of_sign_out { raise ActiveRecord::Rollback }
+    Users::SessionsController.after_sign_out { raise ActiveRecord::Rollback }
 
     delete "/users/sign_out"
 
@@ -60,7 +60,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     OmniAuthIdentity.skip_callback(:create, :after, callback) if callback
   end
 
-  it "does not roll back an OAuth link after its lifecycle hook rolls back" do
+  it "rolls back an OAuth link when its transactional lifecycle hook rolls back" do
     original_hooks = Users::OmniAuthsController.__hooks
     user = create(:user)
     sign_in(user)
@@ -71,11 +71,10 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     )
     Users::OmniAuthsController.after_oauth_link { raise ActiveRecord::Rollback }
 
-    expect {
-      get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => auth_hash }
-    }.to raise_error(ActiveRecord::Rollback)
+    get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => auth_hash }
 
-    expect(OmniAuthIdentity.where(provider: "google_oauth2", uid: "rolled-back-provider-link")).to exist
+    expect(response).to have_http_status(:forbidden)
+    expect(OmniAuthIdentity.where(provider: "google_oauth2", uid: "rolled-back-provider-link")).not_to exist
   ensure
     Users::OmniAuthsController.__hooks = original_hooks if original_hooks
   end
@@ -86,8 +85,8 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
       :user,
       :invited,
       organisation: organisation,
-      invitation_sent_at: 1.day.ago,
-      invitation_registration_required: true
+      account: create(:account, registration_required: true),
+      invitation_sent_at: 1.day.ago
     )
     original_digest = invitation.account.password_digest
     original_token = invitation.invitation_token
@@ -106,7 +105,6 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
 
     expect(response).to have_http_status(:unprocessable_content)
     expect(invitation.reload.invitation_token).to eq(original_token)
-    expect(invitation).to be_invitation_registration_required
     expect(invitation.account.reload.password_digest).to eq(original_digest)
     expect(invitation.account).to be_registration_required
     get "/users/two_factor_credentials"
@@ -124,8 +122,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
       :invited,
       account: account,
       organisation: organisation,
-      invitation_sent_at: 1.day.ago,
-      invitation_registration_required: false
+      invitation_sent_at: 1.day.ago
     )
     original_token = invitation.invitation_token
     callback = proc do
@@ -133,10 +130,8 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     end
     User.set_callback(:update, :after, callback)
     published = []
-    allow_any_instance_of(Users::InvitationsController).to receive(:run_hooks).and_wrap_original do |original, *args, **options, &block|
-      published << args.first
-      original.call(*args, **options, &block)
-    end
+    original_hooks = Users::InvitationsController.__hooks
+    Users::InvitationsController.after_commit_of_invitation_acceptance { published << :accepted }
     sign_in(current_user)
 
     get "/users/invitation/accept", params: { token: original_token }
@@ -144,8 +139,9 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     expect(response).to have_http_status(:unprocessable_content)
     expect(invitation.reload.invitation_token).to eq(original_token)
     expect(invitation.invitation_accepted_at).to be_nil
-    expect(published).not_to include(:invitation_acceptance)
+    expect(published).to be_empty
   ensure
+    Users::InvitationsController.__hooks = original_hooks if original_hooks
     User.skip_callback(:update, :after, callback) if callback
   end
 
@@ -181,7 +177,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     User.set_callback(:update, :after, callback)
     published = []
     allow_any_instance_of(Users::InvitationsController).to receive(:auth_mapping).and_return(mapping)
-    allow_any_instance_of(Users::InvitationsController).to receive(:build_invited_identity).and_return(target)
+    allow_any_instance_of(Users::InvitationsController).to receive(:build_invited_account).and_return(target)
     allow_any_instance_of(Users::InvitationsController).to receive(:run_hooks) do |_controller, name, *|
       published << name
     end

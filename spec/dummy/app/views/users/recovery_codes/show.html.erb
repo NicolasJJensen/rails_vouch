@@ -1,0 +1,5 @@
+<% if @recovery_codes %>
+  <% @recovery_codes.each do |code| %><code><%= code %></code><% end %>
+<% else %>
+  <p><%= @remaining_recovery_codes %> recovery codes remaining</p>
+<% end %>

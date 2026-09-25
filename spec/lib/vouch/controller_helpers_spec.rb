@@ -26,19 +26,21 @@ RSpec.describe Vouch::ControllerHelpers do
     Vouch.mappings[:user] = @original_mapping
   end
 
-  describe "#build_registration" do
+  describe "registration construction" do
     it "keeps onboarding extension points private on the controller facade" do
       expect(controller.private_methods).to include(
-        :build_registration,
-        :registration_tenant_attributes,
+        :create_registration_identity!,
+        :build_tenant,
+        :build_identity,
         :accept_pending_invitation,
-        :build_invited_identity
+        :build_invited_account
       )
       expect(controller.public_methods).not_to include(
-        :build_registration,
-        :registration_tenant_attributes,
+        :create_registration_identity!,
+        :build_tenant,
+        :build_identity,
         :accept_pending_invitation,
-        :build_invited_identity
+        :build_invited_account
       )
     end
 
@@ -52,13 +54,12 @@ RSpec.describe Vouch::ControllerHelpers do
       end
 
       it "creates a tenant and identity via reflection" do
-        # Override registration_tenant_attributes on this test controller
-        controller.define_singleton_method(:registration_tenant_attributes) do |account|
-          { name: "#{account.email_address}'s Organisation" }
+        controller.define_singleton_method(:build_tenant) do |account|
+          Organisation.new(name: "#{account.email_address}'s Organisation")
         end
 
         account = create(:account)
-        user = controller.send(:build_registration, account)
+        user = controller.send(:create_registration_identity!, account)
 
         expect(user).to be_a(User)
         expect(user).to be_persisted
@@ -77,15 +78,13 @@ RSpec.describe Vouch::ControllerHelpers do
         Vouch.mappings[:user] = mapping
       end
 
-      it "attempts to create an identity directly" do
+      it "builds an unsaved identity directly" do
         account = create(:account)
 
-        # In the dummy app, User requires an organisation (belongs_to with NOT NULL).
-        # A real no-tenant app wouldn't have this constraint.
-        # This verifies the code path tries Identity.create!(account:) without a tenant.
-        expect {
-          controller.send(:build_registration, account)
-        }.to raise_error(ActiveRecord::RecordInvalid, /Organisation must exist/)
+        identity = controller.send(:build_identity, account, tenant: nil)
+        expect(identity).to be_a(User)
+        expect(identity).not_to be_persisted
+        expect(identity.account).to eq(account)
       end
     end
 
@@ -100,7 +99,7 @@ RSpec.describe Vouch::ControllerHelpers do
 
       it "returns the account itself" do
         account = create(:account)
-        result = controller.send(:build_registration, account)
+        result = controller.send(:create_registration_identity!, account)
 
         expect(result).to eq(account)
       end
@@ -150,22 +149,21 @@ RSpec.describe Vouch::ControllerHelpers do
     end
   end
 
-  describe "#registration_tenant_attributes" do
+  describe "#build_tenant" do
     it "raises NotImplementedError by default" do
       account = create(:account)
 
       expect {
-        controller.send(:registration_tenant_attributes, account)
-      }.to raise_error(NotImplementedError, /must define #registration_tenant_attributes/)
+        controller.send(:build_tenant, account)
+      }.to raise_error(NotImplementedError, /Define #build_tenant/)
     end
   end
 
   describe "#build_invited_account" do
-    it "dispatches to the host build_invited_identity override" do
-      identity = double("invited account")
-      expect(controller).to receive(:build_invited_identity).with("person@example.com").and_return(identity)
-
-      expect(controller.send(:build_invited_account, "person@example.com")).to eq(identity)
+    it "requires the host to choose or create the account" do
+      expect {
+        controller.send(:build_invited_account, "person@example.com")
+      }.to raise_error(NotImplementedError, /Define #build_invited_account/)
     end
   end
 

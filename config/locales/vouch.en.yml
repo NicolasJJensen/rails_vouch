@@ -16,6 +16,8 @@ en:
       session_expired: "Session expired. Please sign in again."
       attempts_exceeded: "Too many verification attempts. Sign in again."
       no_identity: "No identity found."
+      recovery_code_used: "You signed in using a recovery code. Replace a lost authentication device in your security settings."
+      recovery_unavailable: "Recovery codes are not available for this sign-in."
     two_factor_credentials:
       removal_failed: "The authentication method could not be removed."
       added: "2FA method added."

@@ -157,11 +157,12 @@ RSpec.describe 'Controller integration policy' do
     Vouch.configuration.authentication_policy = original_policy if defined?(original_policy)
   end
 
-  it 'R19 builds registration attributes with the configured account association' do
-    mapping = Vouch::Mapping.new(:owner, account: 'Account', identity: 'User', associations: {identity_account: :owner})
+  it 'R19 builds an identity with the configured account association' do
+    mapping = Vouch::Mapping.new(:owner, account: 'Account', identity: 'User')
     allow(controller).to receive(:auth_mapping).and_return(mapping)
     account = create(:account)
-    expect(controller.send(:registration_identity_attributes, account, tenant: nil)).to eq(owner: account)
+    identity = controller.send(:build_identity, account, tenant: nil)
+    expect(identity.account).to eq(account)
   end
 
   it 'R4 rejects a password changed between primary authentication and completion' do

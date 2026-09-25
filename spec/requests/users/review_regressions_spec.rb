@@ -175,7 +175,7 @@ RSpec.describe 'Invitation completion', type: :request do
       post '/users/invitation', params: {email_address: " #{existing.email_address.upcase} "}
     }.not_to change(Account, :count)
     invitation = User.where(account: existing.account).where.not(invitation_token: nil).sole
-    expect(invitation.invitation_registration_required?).to be false
+    expect(invitation.account).not_to be_registration_required
     expect(invitation.organisation).to eq(operator.organisation)
     delete '/users/sign_out'
     get '/users/invitation/accept', params: {token: invitation.invitation_token}
@@ -220,7 +220,6 @@ RSpec.describe 'Invitation completion', type: :request do
 
   it 'R13 completes the invited account without creating another tenant or identity' do
     identity = create(:user, :invited)
-    identity.update!(invitation_registration_required: true)
     identity.account.update!(registration_required: true)
     original_counts = [Account.count, User.count, Organisation.count]
     get '/users/invitation/accept', params: {token: identity.invitation_token}
@@ -241,7 +240,6 @@ RSpec.describe 'Invitation completion', type: :request do
 
   it 'R13 rejects a revoked invitation retained in the session' do
     identity = create(:user, :invited)
-    identity.update!(invitation_registration_required: true)
     identity.account.update!(registration_required: true)
     get '/users/invitation/accept', params: {token: identity.invitation_token}
     identity.update!(invitation_token: nil)
@@ -271,7 +269,7 @@ RSpec.describe 'Hook and session contracts', type: :request do
   end
 
   it 'rolls back the account and tenant if registration cannot create its identity' do
-    allow_any_instance_of(Users::RegistrationsController).to receive(:build_identity_for_registration) do
+    allow_any_instance_of(Users::RegistrationsController).to receive(:build_identity) do
       raise ActiveRecord::RecordInvalid.new(User.new)
     end
     counts = [Account.count, Organisation.count, User.count]

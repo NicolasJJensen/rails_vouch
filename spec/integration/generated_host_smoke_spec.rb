@@ -737,8 +737,8 @@ RSpec.describe "generated host smoke test", :generated_host do
           delivered_invitee_id = File.read(Rails.root.join("tmp/invitation_delivery")) if File.exist?(Rails.root.join("tmp/invitation_delivery"))
           abort "invitation delivery hook did not run for persisted invitee" unless delivered_invitee_id == posted_invitee.id.to_s
           invitation_controller = #{namespace}::InvitationsController.allocate
-          invitee = invitation_controller.send(:build_invited_identity, " Invitee@example.test ")
-          reused = invitation_controller.send(:build_invited_identity, " invitee@example.test ")
+          invitee = invitation_controller.send(:build_invited_account, " Invitee@example.test ")
+          reused = invitation_controller.send(:build_invited_account, " invitee@example.test ")
           abort "host invitation identifier recipe failed" unless invitee.email_address == "invitee@example.test" && invitee.registration_required? && reused.id == invitee.id
         end
         puts "generated host login passed"

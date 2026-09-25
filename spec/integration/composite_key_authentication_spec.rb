@@ -76,6 +76,7 @@ RSpec.describe "composite-key authentication runtime", type: :model do
     mapping = double(
       scope_name: :cpk_warden_membership,
       membership_scope?: true,
+      tenant?: false,
       parent_scope_name: :cpk_warden_account,
       identity_class: identity_class
     )
@@ -84,14 +85,14 @@ RSpec.describe "composite-key authentication runtime", type: :model do
       .send(:register_warden_scope, mapping)
 
     serializer = Warden::SessionSerializer.new(
-      "warden" => instance_double(Warden::Proxy, user: first_account)
+      "warden" => instance_double(Warden::Proxy, user: first_account, raw_session: {})
     )
     payload = serializer.cpk_warden_membership_serialize(identity)
     expect(payload.first).to eq(Vouch::RecordKey.value(identity))
     expect(serializer.cpk_warden_membership_deserialize(payload)).to eq(identity)
 
     mismatched = Warden::SessionSerializer.new(
-      "warden" => instance_double(Warden::Proxy, user: other_account)
+      "warden" => instance_double(Warden::Proxy, user: other_account, raw_session: {})
     )
     expect(mismatched.cpk_warden_membership_deserialize(payload)).to be_nil
   end

@@ -35,21 +35,6 @@ RSpec.describe "Users::Impersonations", type: :request do
       expect(response).to redirect_to("/")
     end
 
-    it "does not publish impersonation when its commit hook rolls back" do
-      sign_in_via_login
-      original_hooks = Users::ImpersonationsController.__hooks
-      Users::ImpersonationsController.after_commit_of_impersonation_start do
-        raise ActiveRecord::Rollback
-      end
-
-      post "/users/impersonations/#{target_user.id}"
-
-      expect(response).to have_http_status(:forbidden)
-      delete "/users/impersonations"
-      expect(response).to have_http_status(:unprocessable_entity)
-    ensure
-      Users::ImpersonationsController.__hooks = original_hooks if original_hooks
-    end
   end
 
   describe "DELETE /users/impersonations" do

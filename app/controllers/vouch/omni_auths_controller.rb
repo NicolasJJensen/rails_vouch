@@ -83,7 +83,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
           account.public_send(auth_mapping.oauth_identity_association.name),
           auth_mapping.oauth_identity_class.oauth_attributes(@auth_hash)
         )
-        identity = build_registration(account)
+        identity = create_registration_identity!(account)
         commit_env.add(account, identity)
         true
       end

@@ -49,8 +49,10 @@ module Vouch
       end
       previous_current_mapping = @current_mapping
       previous_pending_impersonation_mappings = @pending_impersonation_mappings
+      previous_pending_memberships = @pending_memberships
       @current_mapping = mapping
       @pending_impersonation_mappings = []
+      @pending_memberships = []
       previous_mapping = Vouch.mappings[scope_name.to_sym]
       published = false
 
@@ -72,6 +74,12 @@ module Vouch
         register_warden_scope(mapping)
         register_account_scope(mapping) unless mapping.membership_scope?
         @pending_impersonation_mappings.each { |pending| register_impersonation_scope(pending) }
+        # Membership mappings need their parent credentials mapping to be
+        # registered first.  Deferring them also makes the nested route form
+        # an ergonomic spelling of the existing two independent scopes.
+        @pending_memberships.each do |membership|
+          scope(membership.fetch(:name), **membership.fetch(:options), &membership.fetch(:block))
+        end
       rescue StandardError
         if published
           if previous_mapping
@@ -84,7 +92,26 @@ module Vouch
       ensure
         @current_mapping = previous_current_mapping
         @pending_impersonation_mappings = previous_pending_impersonation_mappings
+        @pending_memberships = previous_pending_memberships
       end
+    end
+
+    # Define a membership authentication scope under the credentials scope
+    # currently being configured.  It expands to the same account_scope:
+    # mapping accepted by `scope`, while keeping the common route file short.
+    def membership(name = nil, model: nil, identity: nil, tenant: nil, **opts, &block)
+      parent = @current_mapping
+      raise Vouch::ConfigurationError, "auth.membership must appear inside auth.scope." unless parent
+      raise Vouch::ConfigurationError, "auth.membership requires a single-model credentials scope." if parent.split_model?
+      raise Vouch::ConfigurationError, "auth.membership requires model: or identity:." unless model || identity
+      raise Vouch::ConfigurationError, "auth.membership requires a route block." unless block
+
+      name ||= Vouch::Mapping.inferred_scope_name(model: model, identity: identity)
+      @pending_memberships << {
+        name: name,
+        options: opts.merge(account_scope: parent.scope_name, identity: identity || model, tenant: tenant),
+        block: block
+      }
     end
 
     def sessions(path_names: {}, controller: nil)
@@ -129,11 +156,12 @@ module Vouch
       end
     end
 
-    def two_factor(challenge_controller: nil, credentials_controller: nil)
+    def two_factor(challenge_controller: nil, credentials_controller: nil, recovery_controller: nil)
       require_credentials_scope!
       m = @current_mapping
       challenge_ctrl = challenge_controller || "#{m.path}/two_factor_challenge"
       creds_ctrl     = credentials_controller || "#{m.path}/two_factor_credentials"
+      recovery_ctrl  = recovery_controller || "#{m.path}/recovery_codes"
 
       router.scope m.path, as: m.helper_prefix do
         router.resources :two_factor_challenges, only: [:index, :show, :update],
@@ -142,6 +170,9 @@ module Vouch
         end
         router.resources :two_factor_credentials, only: [:index, :new, :create, :update, :destroy],
                          controller: creds_ctrl
+        router.get "recovery", to: "#{challenge_ctrl}#recovery", as: :recovery_two_factor_challenge
+        router.post "recovery", to: "#{challenge_ctrl}#consume_recovery", as: :consume_recovery_two_factor_challenge
+        router.resource :recovery_codes, only: [:show, :create], controller: recovery_ctrl
       end
     end
 
@@ -232,6 +263,9 @@ module Vouch
           parent = env["warden"]&.user(mapping.parent_scope_name)
           next nil unless parent && parent.class == account.class &&
             Vouch::RecordKey.same?(parent, account, model: account.class)
+          next nil unless Vouch.membership_authentication_valid?(
+            env["warden"], mapping, identity, controller: env["action_controller.instance"]
+          )
         end
 
         identity

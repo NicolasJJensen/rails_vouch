@@ -175,6 +175,14 @@ module Vouch
       parent_scope_name || :"#{scope_name}_account"
     end
 
+    # MFA evidence belongs to the credentials authentication scope. A
+    # single-model credentials scope still has an internal account Warden
+    # scope, but linked memberships must read the evidence from the public
+    # parent scope rather than that provisional implementation detail.
+    def evidence_scope_name
+      parent_scope_name || scope_name
+    end
+
     def current_helper_name
       membership_scope? ? :"current_#{parent_scope_name}_#{scope_name}" : :"current_#{scope_name}"
     end

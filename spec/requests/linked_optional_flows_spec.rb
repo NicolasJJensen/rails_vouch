@@ -89,7 +89,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
   it "carries a member invitation through parent account registration" do
     invited_account = create(:account, registration_required: true)
     invitee = create(:user, :invited, account: invited_account, organisation: organisation,
-      invitation_registration_required: true, inviter: operator)
+      inviter: operator)
 
     get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }
     expect(response).to redirect_to("/linked_accounts/sign_up")
@@ -138,7 +138,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
   it "accepts an existing-account invitation after parent authentication" do
     invited_account = create(:account)
     invitee = create(:user, :invited, account: invited_account, organisation: organisation,
-      invitation_registration_required: false, inviter: operator)
+      inviter: operator)
 
     account_login(invited_account)
     get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }
@@ -153,7 +153,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
   it "does not consume an invitation for a different authenticated parent" do
     invited_account = create(:account)
     invitee = create(:user, :invited, account: invited_account, organisation: organisation,
-      invitation_registration_required: false, inviter: operator)
+      inviter: operator)
 
     account_login
     get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }

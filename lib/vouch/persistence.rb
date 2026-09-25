@@ -35,6 +35,10 @@ module Vouch
       record
     end
 
+    def self.destroy!(record)
+      ensure_saved!(record, record.destroy!)
+    end
+
     def self.ensure_saved!(record, result)
       raise Cancelled.new('Authentication state was not saved', record) unless result
 

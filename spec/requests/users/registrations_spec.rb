@@ -67,7 +67,7 @@ RSpec.describe "Users::Registrations", type: :request do
 
     it "accepts an invitation when invited_user_id is in session" do
       organisation = create(:organisation)
-      invited_user = create(:user, :invited, organisation: organisation, invitation_sent_at: 1.day.ago, invitation_registration_required: true)
+      invited_user = create(:user, :invited, account: create(:account, registration_required: true), organisation: organisation, invitation_sent_at: 1.day.ago)
 
       # Set the invited_user_id in session by going through the accept flow
       get "/users/invitation/accept", params: { token: invited_user.invitation_token }

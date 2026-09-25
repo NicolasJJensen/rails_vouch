@@ -40,6 +40,26 @@ RSpec.describe Vouch::RouteBuilder do
       Vouch.deregister_mapping(:account)
     end
 
+    it "expands a nested membership declaration into a linked scope" do
+      test_routes = ActionDispatch::Routing::RouteSet.new
+      test_routes.draw do
+        Vouch::RouteBuilder.new(self).scope(model: "Account") do |auth|
+          auth.sessions
+          auth.membership :nested_member, model: "User", tenant: "Organisation" do |membership|
+            membership.sessions
+          end
+        end
+      end
+
+      membership = Vouch.mapping_for(:nested_member)
+      expect(membership.parent_scope_name).to eq(:account)
+      expect(membership.account_class_name).to eq("Account")
+      expect(membership.tenant_class_name).to eq("Organisation")
+    ensure
+      Vouch.deregister_mapping(:account)
+      Vouch.deregister_mapping(:nested_member)
+    end
+
     it "rejects replacing a scope with a different model configuration" do
       test_routes = ActionDispatch::Routing::RouteSet.new
       stub_const("InferenceCollision", Class.new)

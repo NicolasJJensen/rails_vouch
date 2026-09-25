@@ -67,6 +67,20 @@ RSpec.describe Vouch::ApplicationHelpers, type: :controller do
     expect(controller.current_user).to eq(identity)
   end
 
+  it "exposes the effective user as the true user outside impersonation" do
+    allow(proxy).to receive(:user).with(:user).and_return(identity)
+    expect(controller.true_user).to eq(identity)
+    expect(controller.impersonating_user?).to be(false)
+    expect(controller.class._helper_methods).to include(:true_user, :impersonating_user?)
+  end
+
+  it "does not present the target as the original actor for another source scope" do
+    allow(proxy).to receive(:user).with(:user).and_return(identity)
+    session[Vouch::ImpersonationStack::SESSION_KEY] = [{"source_scope" => "admin", "target_scope" => "user"}]
+    expect(controller.true_user).to be_nil
+    expect(controller.impersonating_user?).to be(true)
+  end
+
   it "keeps separate scopes independent, including when they share model classes" do
     original = Vouch.mappings[:customer]
     mapping = Vouch::Mapping.new(:customer, account: "Account", identity: "User", tenant: "Organisation")

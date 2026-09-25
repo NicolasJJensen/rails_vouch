@@ -20,9 +20,29 @@ RSpec.describe "Users::Invitations", type: :request do
     end
 
     it "redirects to registration for valid token" do
-      invitee = create(:user, :invited, organisation: organisation, invitation_sent_at: 1.day.ago, invitation_registration_required: true, inviter: user)
+      invitee = create(:user, :invited, account: create(:account, registration_required: true), organisation: organisation, invitation_sent_at: 1.day.ago, inviter: user)
       get "/users/invitation/accept", params: { token: invitee.invitation_token }
       expect(response).to redirect_to("/users/sign_up")
+    end
+  end
+
+  describe "ordinary sign-in" do
+    it "does not allow an unaccepted membership invitation to be selected" do
+      invitation = create(:user, :invited, account: account, organisation: organisation,
+        invitation_sent_at: Time.current, inviter: user)
+      create(:user, account: account, organisation: organisation)
+
+      Warden.on_next_request do |proxy|
+        context = Vouch::PendingAuthentication.build(account,
+          identities: Vouch.mapping_for(:user).identities_for(account).where(invitation_token: nil),
+          method: :password, hook: :sign_in)
+        proxy.set_user(account, scope: :user_account, store: true)
+        proxy.raw_session[Vouch::Session.key_for(:user, :selection)] = context
+      end
+      post "/users/select", params: {identity_id: Vouch::RecordKey.to_param(invitation)}
+
+      expect(response).to redirect_to("/users/sign_in")
+      expect(invitation.reload.invitation_token).to be_present
     end
   end
 
@@ -80,6 +100,31 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(response).to redirect_to("/")
       expect(flash[:notice]).to eq(I18n.t("vouch.invitations.sent"))
     end
+
+    it "does not create a second membership when the account already belongs to the organisation" do
+      sign_in(user)
+
+      expect {
+        post "/users/invitation", params: {email_address: account.email_address}
+      }.not_to change(User, :count)
+
+      expect(response).to redirect_to("/")
+    end
+
+    it "reissues a pending invitation for the same account and organisation" do
+      sign_in(user)
+      post "/users/invitation", params: {email_address: "pending-reissue@example.com"}
+      invitation = User.order(:id).last
+      original_token = invitation.invitation_token
+
+      expect {
+        post "/users/invitation", params: {email_address: "pending-reissue@example.com"}
+      }.not_to change(User, :count)
+
+      expect(invitation.reload.invitation_token).to be_present
+      expect(invitation.invitation_token).not_to eq(original_token)
+      expect(invitation.invitation_accepted_at).to be_nil
+    end
   end
 
   describe "DELETE /users/invitation" do
@@ -90,7 +135,7 @@ RSpec.describe "Users::Invitations", type: :request do
 
     it "revokes an invitation when authenticated" do
       sign_in(user)
-      invitee = create(:user, :invited, organisation: organisation, invitation_sent_at: 1.day.ago, invitation_registration_required: true, inviter: user)
+      invitee = create(:user, :invited, account: create(:account, registration_required: true), organisation: organisation, invitation_sent_at: 1.day.ago, inviter: user)
 
       expect {
         delete "/users/invitation", params: { invitation_token: invitee.invitation_token }
@@ -156,27 +201,23 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(Account.exists?(existing.id)).to be true
     end
 
-    it "uses sign-in for remaining invitations after registration and rejects a pending signup form" do
-      first = invite
-      second = invite
+    it "rejects a pending signup form after the invitation has been accepted" do
+      invitation = invite
       logout(:user)
       other_browser = ActionDispatch::Integration::Session.new(Rails.application)
       other_browser.host! "www.example.com"
-      other_browser.get "/users/invitation/accept", params: { token: second.invitation_token }
+      other_browser.get "/users/invitation/accept", params: { token: invitation.invitation_token }
       expect(other_browser.response.location).to eq("http://www.example.com/users/sign_up")
 
       logout(:user)
-      get "/users/invitation/accept", params: { token: first.invitation_token }
+      get "/users/invitation/accept", params: { token: invitation.invitation_token }
       post "/users/sign_up", params: { account: { password: "first-password123", password_confirmation: "first-password123" } }
-      expect(first.reload.invitation_accepted_at).to be_present
+      expect(invitation.reload.invitation_accepted_at).to be_present
       other_browser.post "/users/sign_up", params: { account: { password: "replacement-password123", password_confirmation: "replacement-password123" } }
       expect(other_browser.response.location).to eq("http://www.example.com/users/sign_in")
-      expect(first.account.reload.authenticate("first-password123")).to be_truthy
-      other_browser.get "/users/invitation/accept", params: { token: second.invitation_token }
+      expect(invitation.account.reload.authenticate("first-password123")).to be_truthy
+      other_browser.get "/users/invitation/accept", params: { token: invitation.invitation_token }
       expect(other_browser.response.location).to eq("http://www.example.com/users/sign_in")
-      other_browser.post "/users/sign_in", params: { email_address: first.account.email_address, password: "first-password123" }
-      other_browser.post "/users/select", params: { identity_id: second.id }
-      expect(second.reload.invitation_accepted_at).to be_present
     end
 
     it "revokes the invitation without invoking host account destruction" do
@@ -194,13 +235,13 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(Account.exists?(invitation.account_id)).to be true
       replacement = invite
       expect(replacement.account_id).to eq(invitation.account_id)
-      expect(replacement.invitation_registration_required?).to be true
+      expect(replacement.account.registration_required?).to be true
     end
 
     it "allows a host around hook to remove a disposable placeholder atomically" do
       invitation = invite
       original_hooks = Users::InvitationsController.__hooks
-      Users::InvitationsController.around_commit_of_invitation_revocation do |operation, _invitation, account|
+      Users::InvitationsController.around_invitation_revocation do |operation, _invitation, account|
         operation.call
         account.destroy!
       end
@@ -217,7 +258,7 @@ RSpec.describe "Users::Invitations", type: :request do
       callback = -> { throw :abort }
       Account.set_callback(:destroy, :before, callback)
       original_hooks = Users::InvitationsController.__hooks
-      Users::InvitationsController.around_commit_of_invitation_revocation do |operation, _invitation, account|
+      Users::InvitationsController.around_invitation_revocation do |operation, _invitation, account|
         operation.call
         account.destroy!
       end

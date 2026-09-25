@@ -2,12 +2,10 @@
 
 require_relative "persistence"
 
-# BackupCodable concern — single-use recovery codes attached to a 2FA
-# credential. Applied to TOTP models where "lost device" is the recovery
-# scenario; any code in the current set substitutes for a TOTP code.
-#
-# Not applicable to Phone/Email 2FA — for those, recovery is credential
-# replacement (verify a new phone/email), not code fallback.
+# BackupCodable concern — single-use recovery codes attached to any
+# TwoFactorable credential. A set belongs to its credential owner, so an
+# application may enable it for a phone, email, authenticator, or another
+# factor independently of account-owned recovery codes.
 #
 # The host declares the has_many association; the concern assumes it's
 # named :backup_codes and points at a model with `code_digest:string` and
@@ -37,7 +35,9 @@ module Vouch
     # consumed the final permitted attempt.
     module TwoFactorChallenge
       def verify_challenge(code, token:)
-        result = consume_backup_code!(code)
+        return super if Vouch::BackupCodable.recovery_code_fallback_disabled?
+
+        result = consume_recovery_code!(code)
         return result unless result.invalid?
 
         super
@@ -53,70 +53,56 @@ module Vouch
       end
     end
 
+    class << self
+      def without_recovery_code_fallback
+        previous = Thread.current[:vouch_disable_recovery_code_fallback]
+        Thread.current[:vouch_disable_recovery_code_fallback] = true
+        yield
+      ensure
+        Thread.current[:vouch_disable_recovery_code_fallback] = previous
+      end
+
+      def recovery_code_fallback_disabled?
+        Thread.current[:vouch_disable_recovery_code_fallback]
+      end
+    end
+
     included do
       install_two_factor_challenge_wrapper!
     end
 
-    def regenerate_backup_codes!(count: backup_codable_config.code_count,
+    def generate_recovery_codes!(count: backup_codable_config.code_count,
                                  bytes: backup_codable_config.code_bytes)
       raise ArgumentError, "cannot regenerate backup codes for an unpersisted record" unless persisted?
 
       plain = Array.new(count) { SecureRandom.hex(bytes) }
-      digests = plain.map { |code| BCrypt::Password.create(code) }
-
-      Vouch::Persistence.transaction(self) do
-        # Serialize regeneration with consumption so a concurrent request
-        # cannot consume a row from a set that is being replaced.
-        lock!
-        backup_codes.destroy_all
-        digests.each do |digest|
-          Vouch::Persistence.create!(backup_codes, code_digest: digest)
-        end
-      end
-
-      Vouch::Result.ok(plain)
+      Vouch::RecoveryCodes.replace!(self, relation: backup_codes, plaintexts: plain)
     end
+    alias_method :regenerate_backup_codes!, :generate_recovery_codes!
 
-    def consume_backup_code!(submitted)
+    def consume_recovery_code!(submitted)
       raise ArgumentError, "cannot consume backup codes for an unpersisted record" unless persisted?
       return Vouch::Result.locked unless backup_code_factor_eligible?
 
-      submitted = submitted.to_s.strip
-      return Vouch::Result.invalid if submitted.empty?
-
-      Vouch::Persistence.transaction(self) do
-        lock!
-        next Vouch::Result.locked unless backup_code_factor_eligible?
-
-        # Lock candidate rows before comparing and marking them used. A pair
-        # of concurrent submissions must not both pass the unused check.
-        rows = backup_codes.where(used_at: nil).lock.to_a
-        match = rows.find { |row| BCrypt::Password.new(row.code_digest) == submitted }
-        if match
-          Vouch::Persistence.update!(match, used_at: Time.current)
+      Vouch::RecoveryCodes.consume!(self, relation: backup_codes, submitted: submitted,
+        eligible: -> { backup_code_factor_eligible? }, on_success: ->(_) {
           if backup_code_two_factor_credential?
-            Vouch::Persistence.update!(self,
-              two_factor_failed_attempts: 0,
-              two_factor_locked_at:       nil,
-              two_factor_last_used_at:    Time.current
-            )
+            Vouch::Persistence.update!(self, two_factor_failed_attempts: 0,
+              two_factor_locked_at: nil, two_factor_last_used_at: Time.current)
           end
-          Vouch::Result.ok(match)
-        else
-          Vouch::Result.invalid
-        end
-      end
-    rescue Vouch::Persistence::Cancelled
-      Vouch::Result.cancelled
+        })
     end
+    alias_method :consume_backup_code!, :consume_recovery_code!
 
     def backup_codes_remaining
       backup_codes.where(used_at: nil).count
     end
+    alias_method :recovery_codes_remaining, :backup_codes_remaining
 
     def backup_codes_low?
       backup_codes_remaining < backup_codable_config.warn_at_remaining
     end
+    alias_method :recovery_codes_low?, :backup_codes_low?
 
     private
 

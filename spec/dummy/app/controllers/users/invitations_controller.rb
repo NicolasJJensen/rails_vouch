@@ -7,7 +7,7 @@ class Users::InvitationsController < Vouch::InvitationsController
     true
   end
 
-  def build_invited_identity(identifier)
+  def build_invited_account(identifier)
     identifier = identifier.to_s.strip.downcase
     existing = Account.find_by(email_address: identifier)
     return existing if existing

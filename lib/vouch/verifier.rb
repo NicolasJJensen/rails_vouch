@@ -100,7 +100,7 @@ module Vouch
     end
 
     def verify_identity_invitable(identity, mapping, errors)
-      required = %w[invitation_token invitation_sent_at invitation_accepted_at invitation_registration_required inviter_id]
+      required = %w[invitation_token invitation_sent_at invitation_accepted_at inviter_id]
       required.each do |column|
         errors << "scope :#{mapping.scope_name}: #{identity.name} requires column #{column.inspect} for invitations" unless identity.column_names.include?(column)
       end

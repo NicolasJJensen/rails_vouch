@@ -118,7 +118,7 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
 
     migrations_directory = File.join(directory, "db/migrate")
     migration_paths = Dir.children(migrations_directory).sort.map { |name| File.join(migrations_directory, name) }
-    expect(migration_paths.length).to eq(6)
+    expect(migration_paths.length).to eq(7)
     oauth_migration = migration_paths.find { |path| path.end_with?("_create_oauth_identities.rb") }
     password_migration = migration_paths.find { |path| path.end_with?("_create_password_archives.rb") }
     backup_migration = migration_paths.find { |path| path.end_with?("_create_#{owner_table.singularize}_backup_codes.rb") }

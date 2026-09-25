@@ -25,7 +25,7 @@
 #
 # Usage:
 #   result = <IdentityModel>.invite!(invited_by: current_user) do |invitee|
-#     invitee.account = build_invited_identity("new@example.com")
+#     invitee.account = build_invited_account("new@example.com")
 #     invitee.<tenant_association> = current_user.<tenant_association>
 #   end
 #   invitee = result.value
@@ -58,12 +58,24 @@ module Vouch
           end
 
           Vouch::Persistence.update!(self,
-            invitation_registration_required: false,
             invitation_token:       nil,
             invitation_sent_at:     nil,
             invitation_accepted_at: Time.current
           )
         end
+      end
+
+      def reissue_invitation!(invited_by: nil)
+        Vouch::Persistence.transaction(self) do
+          lock!
+          return self unless invitation_token.present? && invitation_accepted_at.nil?
+
+          Vouch::Persistence.update!(self,
+            invitation_token: SecureRandom.uuid,
+            invitation_sent_at: Time.current,
+            inviter: invited_by)
+        end
+        self
       end
 
       class_methods do
@@ -72,7 +84,7 @@ module Vouch
         # Use the block to set up the invitee's associations:
         #
         #   result = <IdentityModel>.invite!(invited_by: current_user) do |invitee|
-        #     invitee.account = build_invited_identity("new@example.com")
+        #     invitee.account = build_invited_account("new@example.com")
         #     invitee.<tenant_association> = current_user.<tenant_association>
         #   end
         #   invitee = result.value

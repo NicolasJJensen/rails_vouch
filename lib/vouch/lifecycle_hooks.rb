@@ -12,24 +12,23 @@ module Vouch
       end
 
       core_ran = false
-      result = run_hooks(kind, *args, **kwargs) do |env|
+      result = run_hooks(:"commit_of_#{kind}", *args, **kwargs) do |env|
         core_ran = true
         operation.call(env)
       end
       core_ran ? result : false
     end
 
-    # Run the transactional half of a lifecycle. The outer lifecycle hook is
-    # deliberately outside this transaction so its before callbacks can make
-    # decisions without observing a persistence transaction. A callback that
-    # cancels, or an around callback that does not yield, leaves `core_ran`
-    # false and rolls the transaction back.
+    # Runs the persistence half of a lifecycle. `commit_of_*` wraps this
+    # helper and therefore runs after a successful transaction and any session
+    # publication performed by its caller. Ordinary callbacks run inside the
+    # transaction, where they can add writes or abort them atomically.
     def run_commit_hooks(kind, *args, **kwargs)
       committed = false
 
       ActiveRecord::Base.transaction(requires_new: true) do
         core_ran = false
-        result = run_hooks(:"commit_of_#{kind}", *args, **kwargs) do |env|
+        result = run_hooks(kind, *args, **kwargs) do |env|
           core_ran = true
           yield env
         end

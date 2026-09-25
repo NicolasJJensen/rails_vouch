@@ -12,6 +12,14 @@ module Vouch
         session[key(:two_factor)] = context
       end
 
+      def store_evidence!(evidence)
+        session[key(:evidence)] = evidence
+      end
+
+      def evidence
+        session[key(:evidence)]
+      end
+
       def load_second_factor
         load_pending(:two_factor)
       end
@@ -26,6 +34,7 @@ module Vouch
       def load_selection
         # The account Warden scope proves this is a tier-2 selection session.
         return nil unless warden.user(account_scope)
+        return nil unless session[key(:selection)]
 
         load_pending(:selection)
       end
@@ -48,7 +57,10 @@ module Vouch
         else
           session.delete(key(purpose))
           # MFA challenge tokens are invalidated by their controller outcomes.
-          warden.logout(account_scope) if purpose == :selection
+          # A linked membership can use this key for a targeted additional
+          # MFA continuation while its parent account is already signed in.
+          # Expiring that continuation must not sign the account out.
+          warden.logout(account_scope) if purpose == :selection && !mapping.membership_scope?
           nil
         end
       end

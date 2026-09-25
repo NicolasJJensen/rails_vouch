@@ -33,13 +33,14 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
     expect(response).to redirect_to("/users/sign_in")
   end
 
-  it "raises after publishing when an after hook cancels sign-in" do
+  it "rolls back the profile and denies sign-in when a transactional after hook cancels" do
     Users::OmniAuthsController.after_oauth_sign_in { raise ActiveRecord::Rollback }
-    expect { callback }.to raise_error(ActiveRecord::Rollback)
-    expect(account.reload.email_address).to eq("oauth-after@example.com")
+    callback
+    expect(response).to redirect_to("/users/sign_in")
+    expect(account.reload.email_address).to eq("oauth-before@example.com")
   end
 
-  it "keeps the profile update when an MFA after hook cancels sign-in" do
+  it "rolls back the profile when an MFA transactional after hook cancels sign-in" do
     account.update!(failed_attempts: 3)
     credential = account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
     account.enable_two_factor!
@@ -50,10 +51,9 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
     callback
     expect(response).to redirect_to("/users/two_factor_challenges")
     get "/users/two_factor_challenges/#{credential.id}"
-    expect { patch "/users/two_factor_challenges/#{credential.id}", params: {code: delivered} }
-      .to raise_error(ActiveRecord::Rollback)
-
-    expect(account.reload.email_address).to eq("oauth-after@example.com")
+    patch "/users/two_factor_challenges/#{credential.id}", params: {code: delivered}
+    expect(response).to redirect_to("/users/sign_in")
+    expect(account.reload.email_address).to eq("oauth-before@example.com")
   end
 
   it "updates the profile inside the lifecycle before publishing authentication" do
@@ -64,9 +64,16 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
     callback
     expect(response).to redirect_to("/")
     expect(observed.first.first).to eq("oauth-after@example.com")
-    expect(observed.first.last).to be_present
+    expect(observed.first.last).to be_nil
     get "/users/two_factor_credentials"
     expect(response).to have_http_status(:ok)
+  end
+
+  it "keeps committed data and authentication when a post-commit callback raises" do
+    Users::OmniAuthsController.after_commit_of_oauth_sign_in { raise "notification failed" }
+
+    expect { callback }.to raise_error(RuntimeError, "notification failed")
+    expect(account.reload.email_address).to eq("oauth-after@example.com")
   end
 
   it "defers the update until both MFA and identity selection complete" do

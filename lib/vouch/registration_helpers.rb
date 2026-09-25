@@ -2,50 +2,49 @@ module Vouch
   module RegistrationHelpers
     private
 
-    def build_registration(account)
-      mapping = auth_mapping
+    # Builds and saves the records that make up a registration. Host overrides
+    # build unsaved records so Vouch can persist every record in one
+    # transaction.
+    def create_registration_identity!(account)
+      tenant = build_tenant(account)
+      Vouch::Persistence.save!(tenant) if tenant && !tenant.persisted?
 
-      if mapping.tenant?
-        tenant = build_tenant_for_registration(account)
-        build_identity_for_registration(account, tenant: tenant)
-      elsif mapping.split_model?
-        build_identity_for_registration(account, tenant: nil)
-      else
-        account
-      end
+      identity = build_identity(account, tenant: tenant)
+      Vouch::Persistence.save!(identity) unless identity.equal?(account) || identity.persisted?
+      identity
     end
 
-    def build_tenant_for_registration(account)
-      Vouch::Persistence.create!(
-        auth_mapping.tenant_class,
-        registration_tenant_attributes(account)
-      )
-    end
+    # Return an unsaved tenant for a split-model registration. Override this
+    # in the generated application registration controller.
+    def build_tenant(account)
+      return nil unless registration_mapping.tenant?
 
-    def build_identity_for_registration(account, tenant:)
-      attrs = registration_identity_attributes(account, tenant: tenant)
-      if tenant
-        assoc = auth_mapping.tenant_identity_association
-        Vouch::Persistence.create!(tenant.send(assoc.name), attrs)
-      else
-        Vouch::Persistence.create!(auth_mapping.identity_class, attrs)
-      end
-    end
-
-    def registration_identity_attributes(account, tenant:)
-      { auth_mapping.account_association => account }
-    end
-
-    def registration_tenant_attributes(account)
       raise NotImplementedError, <<~MSG.squish
-        The host controller must define #registration_tenant_attributes(account).
-        Return a hash of attributes for creating the tenant.
-
-        Example:
-          def registration_tenant_attributes(account)
-            { name: "\#{account.email_address}'s Workspace" }
-          end
+        Define #build_tenant(account) in the host registration controller.
+        Return an unsaved #{registration_mapping.tenant_class_name}.
       MSG
+    end
+
+    # Return an unsaved identity. For a single-model scope the account itself
+    # is the identity. The returned record is persisted by Vouch.
+    def build_identity(account, tenant:)
+      mapping = registration_mapping
+      return account unless mapping.split_model?
+
+      attributes = {mapping.account_association => account}
+      if tenant
+        tenant.public_send(mapping.tenant_identity_association.name).build(attributes)
+      else
+        mapping.identity_class.new(attributes)
+      end
+    end
+
+    def registration_mapping
+      destination = session[Vouch::Session.key_for(auth_scope_name, :destination_scope)]
+      return auth_mapping unless destination && Vouch.registered_scope?(destination)
+
+      mapping = Vouch.mapping_for(destination)
+      mapping.parent_scope_name == auth_scope_name ? mapping : auth_mapping
     end
   end
 end

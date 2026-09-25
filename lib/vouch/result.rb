@@ -7,13 +7,13 @@
 # appropriate response.
 #
 module Vouch
-  Result = Struct.new(:status, :token) do
+  Result = Struct.new(:status, :token, :metadata) do
     STATUSES = %i[ok invalid locked cancelled].freeze
 
-    def initialize(status, token = nil)
+    def initialize(status, token = nil, metadata = nil)
       raise ArgumentError, "unknown authentication result: #{status.inspect}" unless STATUSES.include?(status)
 
-      super
+      super(status, token, metadata || {})
     end
 
     alias value token
@@ -36,8 +36,12 @@ module Vouch
       status == :cancelled
     end
 
-    def self.ok(token = nil)
-      new(:ok, token)
+    def recovery_code?
+      metadata[:recovery_code] == true
+    end
+
+    def self.ok(token = nil, **metadata)
+      new(:ok, token, metadata)
     end
 
     def self.invalid

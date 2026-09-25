@@ -21,18 +21,18 @@ RSpec.describe Vouch::LifecycleHooks do
     end
   end
 
-  it "runs commit callbacks inside the transaction" do
+  it "runs ordinary callbacks inside the transaction" do
     calls = []
-    controller_class.set_hook(:commit_of_save, :before, -> { calls << [:before, ActiveRecord::Base.connection.open_transactions] })
-    controller_class.set_hook(:commit_of_save, :after, -> { calls << [:after, ActiveRecord::Base.connection.open_transactions] })
+    controller_class.set_hook(:save, :before, -> { calls << [:before, ActiveRecord::Base.connection.open_transactions] })
+    controller_class.set_hook(:save, :after, -> { calls << [:after, ActiveRecord::Base.connection.open_transactions] })
 
     controller_class.new.run_save
 
     expect(calls).to all(satisfy { |(_, transactions)| transactions.positive? })
   end
 
-  it "rolls back when a commit before callback halts" do
-    controller_class.set_hook(:commit_of_save, :before, -> { throw(:abort) })
+  it "rolls back when a before callback halts" do
+    controller_class.set_hook(:save, :before, -> { throw(:abort) })
     account = Account.new(email_address: "after-hook-#{SecureRandom.hex(6)}@example.com",
       password: "password123", password_confirmation: "password123")
 
@@ -45,7 +45,7 @@ RSpec.describe Vouch::LifecycleHooks do
   end
 
   it "rolls back when an around callback does not yield" do
-    controller_class.set_hook(:commit_of_save, :around, ->(_operation) { :cached })
+    controller_class.set_hook(:save, :around, ->(_operation) { :cached })
     account = Account.new(email_address: "around-hook-#{SecureRandom.hex(6)}@example.com",
       password: "password123", password_confirmation: "password123")
 
@@ -70,8 +70,8 @@ RSpec.describe Vouch::LifecycleHooks do
     expect(calls).to be_empty
   end
 
-  it "reports an outer around callback that does not yield as cancelled" do
-    controller_class.set_hook(:save, :around, ->(_operation) { :cached })
+  it "reports a commit callback that does not yield as cancelled" do
+    controller_class.set_hook(:commit_of_save, :around, ->(_operation) { :cached })
 
     expect(controller_class.new.run_authenticated_save).to be(false)
   end

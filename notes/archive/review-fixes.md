@@ -35,7 +35,7 @@ Additional policy, generator, compatibility, and concurrency tests are added wit
 
 ## Integration changes
 
-Verifiable hosts need `verification_version` (bigint, default 0, non-null). Invitable identity models need `invitation_registration_required` (boolean, default false, non-null). Generators and dummy migrations include these fields. Callback-bypassing writes to credential subjects must perform equivalent verification invalidation.
+Verifiable hosts need `verification_version` (bigint, default 0, non-null). Callback-bypassing writes to credential subjects must perform equivalent verification invalidation.
 
 At the time of this review, auth controllers shared a base class and configurable inherited callbacks. That design has since been replaced by direct `ApplicationController` inheritance and the `Vouch::Authentication` concern; use an application-defined protected base for page guards. A host that already installs Warden can disable gem middleware installation and call `Vouch.configure_warden` on its manager.
 

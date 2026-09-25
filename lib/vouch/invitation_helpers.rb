@@ -29,39 +29,111 @@ module Vouch
     end
 
     def invitation_requires_registration?(invitation)
-      invitation.invitation_registration_required? && invitation_account_for(invitation).registration_required?
+      invitation_account_for(invitation).registration_required?
     end
 
-    def accept_pending_invitation(account, publish: true)
+    def run_authentication_hooks_with_invitation(kind, account, *args, **kwargs, &operation)
+      invitation = pending_invited_identity unless @wrapping_invitation_acceptance
+      unless invitation && invitation_account_for(invitation) == account
+        return run_authentication_hooks(kind, account, *args, **kwargs, &operation)
+      end
+
+      previous = @completed_invitation_acceptance
+      wrapped = true
+      @wrapping_invitation_acceptance = true
+      @completed_invitation_acceptance = nil
+      run_authentication_hooks(:invitation_acceptance, invitation, account) do |env|
+        completed = run_authentication_hooks(kind, account, *args, **kwargs, &operation)
+        env.abort! unless completed && @completed_invitation_acceptance
+        true
+      end
+    ensure
+      if wrapped
+        @wrapping_invitation_acceptance = false
+        @completed_invitation_acceptance = previous
+      end
+    end
+
+    def accept_pending_invitation(account, publish: true, transactional: false)
       invitation = pending_invited_identity
       return nil unless invitation && invitation_account_for(invitation) == account
       return nil if invitation_requires_registration?(invitation)
-      accepted = account.with_lock do
-        invitation.with_lock do
-          # The invitation can be reassigned or require registration while it waits for this lock.
-          next false unless invitation_account_for(invitation) == account
-          next false if invitation_requires_registration?(invitation)
-          next false unless valid_pending_invitation?(invitation)
-          invitation.accept_invitation!
-          true
+
+      return accept_pending_invitation_in_transaction(account, invitation) if transactional
+
+      accepted = run_authentication_hooks(:invitation_acceptance, invitation, account) do |env|
+        committed = begin
+          run_commit_hooks(:invitation_acceptance, invitation, account) do
+            consume_pending_invitation!(account, invitation)
+          end
+        rescue Vouch::Persistence::Cancelled
+          false
         end
+        env.abort! unless committed
+        if committed && publish
+          publish_invitation_acceptance
+        end
+        committed
       end
       return nil unless accepted
-      publish_invitation_acceptance(account, invitation) if publish
       invitation
     end
 
-    def publish_invitation_acceptance(account, invitation)
-      authentication_session.clear_invitation
-      run_hooks(:invitation_acceptance, invitation) { |env| env.add(account) }
+    def accept_pending_invitation_in_transaction(account, invitation)
+      accepted = account.with_lock do
+        invitation.with_lock do
+          # The invitation can be reassigned or require registration while it waits for this lock.
+          locked_invitation = invitation.class.find(invitation.id)
+          next false unless invitation_account_for(locked_invitation) == account
+          next false if invitation_requires_registration?(locked_invitation)
+          next false unless valid_pending_invitation?(locked_invitation)
+
+          core_ran = false
+          result = run_hooks(:invitation_acceptance, locked_invitation, account) do
+            core_ran = true
+            perform_pending_invitation_acceptance(account, locked_invitation)
+            true
+          end
+          raise Vouch::Persistence::Cancelled unless core_ran && result
+
+          true
+        end
+      end
+      accepted || raise(Vouch::Persistence::Cancelled)
     end
 
-    def build_invited_account(identifier)
-      build_invited_identity(identifier)
+    def perform_pending_invitation_acceptance(account, invitation)
+      # The caller holds both records' locks. Recheck the account relation and
+      # token immediately before consuming the invitation.
+      invitation.reload
+      raise Vouch::Persistence::Cancelled unless invitation_account_for(invitation) == account
+      raise Vouch::Persistence::Cancelled if invitation_requires_registration?(invitation)
+      raise Vouch::Persistence::Cancelled unless valid_pending_invitation?(invitation)
+
+      invitation.accept_invitation!
+      @completed_invitation_acceptance = invitation
+    end
+
+    def consume_pending_invitation!(account, invitation)
+      account.with_lock do
+        invitation.with_lock do
+          locked_invitation = invitation.class.find(invitation.id)
+          perform_pending_invitation_acceptance(account, locked_invitation)
+        end
+      end
+    end
+
+    def publish_invitation_acceptance
+      authentication_session.clear_invitation
     end
 
     def invitation_account_for(invitation)
-      invitation_mapping_for(invitation).account_for(invitation)
+      mapping = invitation_mapping_for(invitation)
+      if mapping.split_model?
+        association = invitation.association(mapping.account_association)
+        association.reset if association.loaded?
+      end
+      mapping.account_for(invitation)
     end
 
     def invitation_mapping_for(invitation)
@@ -70,10 +142,10 @@ module Vouch
       scope ? Vouch.mapping_for(scope) : auth_mapping
     end
 
-    def build_invited_identity(identifier)
+    def build_invited_account(identifier)
       account_class_name = auth_mapping.account_class_name
       raise NotImplementedError, <<~MSG.squish
-        Define #build_invited_identity(identifier) in the host controller.
+        Define #build_invited_account(identifier) in the host controller.
         Return an existing #{account_class_name} or create one with a random
         password. Normalize the identifier using the account model's rules.
       MSG

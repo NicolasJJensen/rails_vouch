@@ -52,6 +52,44 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
   end
 
   describe "with 2FA session" do
+    describe "POST /users/recovery" do
+      it "consumes an account recovery code in the pending MFA flow and signs in" do
+        code = account.generate_recovery_codes!.value.first
+        establish_2fa_session
+
+        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+
+        expect(response).to redirect_to("/")
+        expect(account.recovery_codes_remaining).to eq(9)
+        expect(flash[:notice]).to include("recovery code")
+      end
+
+      it "does not allow a recovery code to be replayed" do
+        code = account.generate_recovery_codes!.value.first
+        establish_2fa_session
+        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        delete "/users/sign_out"
+
+        establish_2fa_session
+        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        expect(response).to have_http_status(:unprocessable_entity)
+      end
+
+      it "shows the recovery warning after membership selection completes" do
+        create(:user, account: account)
+        code = account.generate_recovery_codes!.value.first
+        establish_2fa_session
+
+        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        expect(response).to redirect_to("/users/select")
+        follow_redirect!
+        post "/users/select", params: {identity_id: user.id}
+
+        expect(response).to redirect_to("/")
+        expect(flash[:notice]).to include("recovery code")
+      end
+    end
+
     describe "GET /users/two_factor_challenges" do
       it "renders the credential selection page" do
         establish_2fa_session

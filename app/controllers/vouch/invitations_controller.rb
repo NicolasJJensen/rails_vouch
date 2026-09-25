@@ -9,24 +9,30 @@ class Vouch::InvitationsController < ::ApplicationController
     identifier = params[:email_address] || params[:identifier]
     transaction_record = auth_mapping.identity_class.new
     invitee = Vouch::Persistence.transaction(transaction_record) do
-      account = build_invited_identity(identifier)
+      account = build_invited_account(identifier)
       account.lock!
-      requires_registration = account.registration_required?
       if auth_mapping.split_model?
-        result = auth_mapping.identity_class.invite!(invited_by: current_identity) do |identity|
-          identity.public_send("#{auth_mapping.account_association}=", account)
-          identity.invitation_registration_required = requires_registration
-          assign_tenant_to_invitee(identity, current_identity)
+        existing = existing_identity_for_invitation(account)
+        if existing
+          existing.with_lock do
+            existing.reissue_invitation!(invited_by: current_identity) if existing.invitation_token.present? && existing.invitation_accepted_at.nil?
+          end
+          existing if existing.invitation_token.present?
+        else
+          result = auth_mapping.identity_class.invite!(invited_by: current_identity) do |identity|
+            identity.public_send("#{auth_mapping.account_association}=", account)
+            assign_tenant_to_invitee(identity, current_identity)
+          end
+          result.value
         end
-        result.value
       else
         Vouch::Persistence.update!(account,
           invitation_token: SecureRandom.uuid, invitation_sent_at: Time.current,
-          inviter: current_identity, invitation_registration_required: requires_registration)
+          inviter: current_identity)
         account
       end
     end
-    run_hooks(:invitation_token_generation, identifier, invitee) { |env| env.add(invitee) }
+    run_hooks(:invitation_token_generation, identifier, invitee) { |env| env.add(invitee) } if invitee
     redirect_to root_path, notice: I18n.t('vouch.invitations.sent')
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
          Vouch::Persistence::Cancelled
@@ -111,5 +117,13 @@ class Vouch::InvitationsController < ::ApplicationController
       relation = relation.where(association => current_identity.public_send(association))
     end
     relation
+  end
+
+  def existing_identity_for_invitation(account)
+    relation = auth_mapping.identities_for(account)
+    return relation.first unless auth_mapping.tenant?
+
+    association = auth_mapping.identity_tenant_association.name
+    relation.find_by(association => current_identity.public_send(association))
   end
 end

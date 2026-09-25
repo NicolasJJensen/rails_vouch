@@ -62,24 +62,38 @@ module Vouch
       each_mapping.select { |mapping| mapping.parent_scope_name == scope.to_sym }
     end
 
-    def authenticated_identity(warden, scope)
+    def authenticated_identity(warden, scope, controller: nil)
       mapping = mapping_for(scope)
       identity = warden.user(scope)
       return identity unless identity && mapping.membership_scope?
 
       account = warden.user(mapping.parent_scope_name)
       owner = mapping.account_for(identity)
-      return identity if account && owner && account.class == owner.class && account.id == owner.id
+      return identity if account && owner && account.class == owner.class && account.id == owner.id &&
+        membership_authentication_valid?(warden, mapping, identity, controller: controller)
 
       nil
     end
 
+    def membership_authentication_valid?(warden, mapping, identity, controller: nil)
+      policy = configuration.authentication_policy
+      policy = policy.constantize if policy.is_a?(String)
+      policy = policy.new if policy.is_a?(Class)
+      return true unless policy.respond_to?(:membership_mfa_requirements)
+
+      AuthenticationEvidence.membership_valid?(warden.raw_session, mapping, identity,
+        policy: policy, controller: controller)
+    end
+
     def logout_scope(warden, session, scope)
       mapping = mapping_for(scope)
+      impersonation_scopes = Vouch::ImpersonationStack.logout_scopes(session, scope: scope)
+      session.delete(Vouch::ImpersonationStack::SESSION_KEY) if impersonation_scopes.any?
       if mapping.membership_scope? && warden.user(:"#{scope}_impersonation")
         scope = mapping.parent_scope_name
       end
-      scopes = [scope.to_sym] + dependent_mappings(scope).map(&:scope_name)
+      roots = [scope.to_sym] + impersonation_scopes
+      scopes = (roots + roots.flat_map { |name| dependent_mappings(name).map(&:scope_name) }).uniq
       scopes.each do |name|
         mapping = mapping_for(name)
         owned = [name, :"#{name}_impersonation"]
@@ -179,7 +193,8 @@ module Vouch
       selection: "selection",
       oauth_registration: "oauth_registration",
       destination_scope: "destination_scope",
-      completion: "completion"
+      completion: "completion",
+      evidence: "authentication_evidence"
     }.freeze
 
     def self.key_for(scope, purpose)

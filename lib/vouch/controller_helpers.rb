@@ -16,6 +16,7 @@ module Vouch
       oauth_link
       oauth_account_creation
       invitation_revocation
+      invitation_acceptance
       impersonation_start
       impersonation_end
     ].freeze
@@ -26,7 +27,6 @@ module Vouch
       password_reset_token_generation
       password_change
       invitation_token_generation
-      invitation_acceptance
       two_factor_verification
     ].freeze
 
@@ -40,7 +40,7 @@ module Vouch
     included do
       include ActiveHooks::Callbacks
 
-      class_attribute :_auth_scope_name, instance_writer: false
+      class_attribute :_auth_scope_name, :_impersonator_scope_name, instance_writer: false
 
       define_hooks(*(ALL_AUTH_HOOKS + AUTH_COMMIT_HOOKS))
     end
@@ -48,6 +48,10 @@ module Vouch
     class_methods do
       def auth_scope(scope_name)
         self._auth_scope_name = scope_name.to_sym
+      end
+
+      def impersonator_scope(scope_name)
+        self._impersonator_scope_name = scope_name.to_sym
       end
 
       AUTH_LIFECYCLE_HOOKS.each do |hook_name|
@@ -70,6 +74,13 @@ module Vouch
         define_method(:"on_#{hook_name}") do |*args, **opts, &block|
           set_hook(hook_name, :on, *args, **opts, &block)
         end
+      end
+
+      # Invitation acceptance is a lifecycle because applications commonly
+      # create membership-owned records at the same time. Keep the friendly
+      # `on_` spelling, but run it inside the acceptance transaction.
+      def on_invitation_acceptance(*args, **opts, &block)
+        set_hook(:invitation_acceptance, :after, *args, **opts, &block)
       end
     end
 
@@ -111,6 +122,18 @@ module Vouch
 
     def impersonation_scope
       :"#{auth_scope_name}_impersonation"
+    end
+
+    def impersonator_scope_name
+      _impersonator_scope_name || auth_scope_name
+    end
+
+    def impersonator_mapping
+      Vouch.mapping_for(impersonator_scope_name)
+    end
+
+    def current_impersonator
+      Vouch.authenticated_identity(warden, impersonator_scope_name)
     end
 
     def return_to_session_key
@@ -194,6 +217,32 @@ module Vouch
       Vouch::Session.key_for(auth_scope_name, :selection)
     end
 
+    def authentication_evidence
+      session[Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)]
+    end
+
+    def membership_mfa_requirements(account, identity)
+      return nil unless authentication_policy.respond_to?(:membership_mfa_requirements)
+
+      tenant = auth_mapping.tenant? ? identity.public_send(auth_mapping.identity_tenant_association.name) : nil
+      authentication_policy.membership_mfa_requirements(account, identity: identity, tenant: tenant, controller: self)
+    end
+
+    def membership_mfa_context_valid?(account, identity, context)
+      scope = context["membership_scope"]
+      return true unless scope
+
+      mapping = Vouch.mapping_for(scope)
+      return true unless authentication_policy.respond_to?(:membership_mfa_requirements)
+      tenant = mapping.tenant? ? identity.public_send(mapping.identity_tenant_association.name) : nil
+      requirements = authentication_policy.membership_mfa_requirements(account, identity: identity, tenant: tenant, controller: self)
+      Vouch::AuthenticationEvidence.qualifies?(context["evidence"], requirements, account: account, mapping: mapping)
+    end
+
+    def membership_mfa_satisfied?(account, identity)
+      Vouch::AuthenticationEvidence.qualifies?(authentication_evidence, membership_mfa_requirements(account, identity), account: account, mapping: auth_mapping)
+    end
+
     def context_credential(account, context)
       reference = context['factor']
       return nil unless reference
@@ -217,6 +266,7 @@ module Vouch
     end
 
     def valid_context_factor?(account, context)
+      return true if context.dig('evidence', 'method') == 'recovery_code'
       return true unless context['factor_required'] || needs_second_factor?(account, context)
       factor = context_credential(account, context)
       factor && factor.two_factor_enabled? && factor.verified? && !factor.two_factor_locked? &&
@@ -224,7 +274,16 @@ module Vouch
     end
 
     def candidate_identities_for(account)
-      auth_mapping.identities_for(account)
+      identities = auth_mapping.identities_for(account)
+      return identities unless auth_mapping.split_model? && auth_mapping.identity_class.column_names.include?("invitation_token")
+
+      invitation = pending_invited_identity
+      permitted_pending = invitation && invitation_account_for(invitation) == account &&
+        valid_pending_invitation?(invitation)
+      accepted = identities.where(invitation_token: nil)
+      return accepted unless permitted_pending
+
+      accepted.or(identities.where(Vouch::RecordKey.attributes_for(invitation)))
     end
 
     def after_sign_in_path
@@ -240,6 +299,7 @@ module Vouch
     end
 
     def redirect_after_authentication(**options)
+      flash.keep(:notice)
       target = session.delete(Vouch::Session.key_for(auth_scope_name, :destination_scope))
       if target && Vouch.registered_scope?(target)
         mapping = Vouch.mapping_for(target)
@@ -292,6 +352,10 @@ module Vouch
       send(:"#{auth_mapping.helper_prefix}_two_factor_credentials_path")
     end
 
+    def recovery_codes_path
+      send(:"#{auth_mapping.helper_prefix}_recovery_codes_path")
+    end
+
     def warden
       request.env.fetch('warden')
     end
@@ -331,7 +395,7 @@ module Vouch
     end
 
     def current_identity
-      Vouch.authenticated_identity(warden, auth_scope_name)
+      Vouch.authenticated_identity(warden, auth_scope_name, controller: self)
     end
 
     def current_account

@@ -43,6 +43,7 @@ module Vouch
       # Verifiable (Phone → :e164, Totp → :label, Email → :address); host
       # can override for a different display name.
       class_attribute :two_factor_label_attribute, instance_writer: false
+      class_attribute :two_factor_authentication_method, instance_writer: false
 
       install_two_factor_challenge_wrapper! if ancestors.include?(Vouch::BackupCodable)
     end
@@ -64,6 +65,13 @@ module Vouch
       MSG
 
       Array(attr).map { |name| public_send(name).to_s }.join(" · ")
+    end
+
+    # A stable, host-configurable description of the proof type used in
+    # session evidence (for example :totp, :sms, or :email). It is distinct
+    # from the credential's Ruby class, which policies use for type matching.
+    def authentication_method
+      self.class.two_factor_authentication_method || self.class.model_name.singular.to_sym
     end
 
     def two_factor_enabled?

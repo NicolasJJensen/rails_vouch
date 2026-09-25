@@ -41,7 +41,8 @@ module Vouch
 
       def public_names(mapping)
         names = [mapping.current_helper_name, :"current_#{mapping.scope_name}",
-          :"#{mapping.scope_name}_signed_in?", :"authenticate_#{mapping.scope_name}!"].uniq
+          :"#{mapping.scope_name}_signed_in?", :"authenticate_#{mapping.scope_name}!",
+          :"true_#{mapping.scope_name}", :"impersonating_#{mapping.scope_name}?"].uniq
         names << :"current_#{mapping.scope_name}_#{tenant_name(mapping)}" if mapping.tenant?
         names
       end
@@ -50,10 +51,20 @@ module Vouch
         scope = mapping.scope_name
         identity_method = mapping.current_helper_name
         signed_in_method = :"#{scope}_signed_in?"
-        define_method(identity_method) { Vouch.authenticated_identity(request.env.fetch("warden"), scope) }
+        define_method(identity_method) { Vouch.authenticated_identity(request.env.fetch("warden"), scope, controller: self) }
         short_name = :"current_#{scope}"
         alias_method short_name, identity_method unless short_name == identity_method
         define_method(signed_in_method) { public_send(identity_method).present? }
+        define_method(:"true_#{scope}") do
+          if Vouch::ImpersonationStack.active?(session)
+            Vouch::ImpersonationStack.original(warden: request.env.fetch("warden"), session: session, scope: scope)
+          else
+            public_send(identity_method)
+          end
+        end
+        define_method(:"impersonating_#{scope}?") do
+          Vouch::ImpersonationStack.active?(session, scope: scope)
+        end
         define_method(:"authenticate_#{scope}!") do
           return if public_send(signed_in_method)
 
@@ -62,7 +73,8 @@ module Vouch
           redirect_to public_send(:"new_#{current_mapping.helper_prefix}_session_path")
         end
         @generated_methods.concat(public_names(mapping))
-        helper_names.concat([identity_method, short_name, signed_in_method]).uniq!
+        helper_names.concat([identity_method, short_name, signed_in_method,
+          :"true_#{scope}", :"impersonating_#{scope}?"]).uniq!
         install_tenant_helper(mapping, identity_method) if mapping.tenant?
       end
 

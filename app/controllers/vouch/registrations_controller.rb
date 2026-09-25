@@ -25,7 +25,7 @@ class Vouch::RegistrationsController < ::ApplicationController
     @account = invitation ? invitation_account_for(invitation) : auth_mapping.account_class.new(account_params)
     identity = nil
     outcome = nil
-    committed = run_authentication_hooks(:sign_up, @account) do |env|
+    committed = run_authentication_hooks_with_invitation(:sign_up, @account) do |env|
       completed = run_commit_hooks(:sign_up, *env.args, **env.kwargs) do |commit_env|
         if invitation
           @account.lock!
@@ -35,11 +35,11 @@ class Vouch::RegistrationsController < ::ApplicationController
           end
           Vouch::Persistence.update!(@account, invited_account_params)
           @account.complete_registration!
-          invitation.accept_invitation!
+          accept_pending_invitation_in_transaction(@account, invitation)
           identity = invitation
         else
           Vouch::Persistence.save!(@account)
-          identity = build_registration(@account)
+          identity = create_registration_identity!(@account)
         end
         commit_env.add(identity)
         true
@@ -47,7 +47,7 @@ class Vouch::RegistrationsController < ::ApplicationController
       env.abort! unless completed
       if invitation
         session.delete(invited_user_session_key)
-        run_hooks(:invitation_acceptance, identity) { |invitation_env| invitation_env.add(@account) }
+        publish_invitation_acceptance
       end
       clear_credential_drafts
       outcome = complete_sign_in(@account, method: :registration)
@@ -86,7 +86,7 @@ class Vouch::RegistrationsController < ::ApplicationController
           @account.public_send(auth_mapping.oauth_identity_association.name),
           auth_mapping.oauth_identity_class.oauth_attributes(oauth)
         )
-        identity = build_registration(@account)
+        identity = create_registration_identity!(@account)
         commit_env.add(@account, identity)
         true
       end

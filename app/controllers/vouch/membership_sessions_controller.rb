@@ -16,6 +16,10 @@ class Vouch::MembershipSessionsController < ::ApplicationController
       return
     end
     @account = current_account
+    if (pending = authentication_session.load_selection) && pending.context["membership_mfa"]
+      @identities = pending_candidate_identities(@account, pending.context).to_a
+      return establish_membership(@identities.first, pending.context) if @identities.one?
+    end
     @identities = candidate_identities_for(@account).to_a
     return head(:forbidden) if @identities.empty?
 
@@ -86,23 +90,40 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     end
   end
 
+  def parent_two_factor_challenges_path
+    parent = Vouch.mapping_for(auth_mapping.parent_scope_name)
+    public_send(:"#{parent.helper_prefix}_two_factor_challenges_path")
+  end
+
   def establish_membership(identity, context)
     account = current_account
+    requirements = membership_mfa_requirements(account, identity)
+    unless membership_mfa_satisfied?(account, identity)
+      context['identity_ids'] = [Vouch::RecordKey.serialize(identity)]
+      context['membership_mfa'] = requirements.stringify_keys if requirements
+      context['membership_scope'] = auth_scope_name.to_s
+      authentication_session.renew!
+      session[Vouch::Session.key_for(auth_mapping.parent_scope_name, :two_factor)] = context
+      redirect_to parent_two_factor_challenges_path
+      return
+    end
     invitation = nil
-    completed = run_authentication_hooks(:sign_in, account, identity) do |env|
+    completed = run_authentication_hooks_with_invitation(:sign_in, account, identity) do |env|
       committed = run_commit_hooks(:sign_in, *env.args, **env.kwargs) do
         account.lock!
         next false unless Vouch::PendingAuthentication.valid?(context, account)
         next false unless authentication_allowed?(account, context)
-        next false unless pending_candidate_identities(account, context).any? { |candidate| candidate.id == identity.id }
+        next false unless pending_candidate_identities(account, context).any? { |candidate| Vouch::RecordKey.same?(candidate, identity) }
 
-        invitation = accept_pending_invitation(account, publish: false)
+        invitation = accept_pending_invitation(account, publish: false, transactional: true)
         true
       end
       env.abort! unless committed
       renew_authentication_session
       session.delete(selection_session_key)
-      publish_invitation_acceptance(account, invitation) if invitation
+      if invitation
+        publish_invitation_acceptance
+      end
       warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
       true
     end

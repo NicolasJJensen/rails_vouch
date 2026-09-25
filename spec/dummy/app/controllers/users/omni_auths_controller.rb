@@ -3,7 +3,11 @@
 class Users::OmniAuthsController < Vouch::OmniAuthsController
   private
 
-  def registration_tenant_attributes(account)
-    { name: "#{account.email_address}'s Organisation" }
+  def build_tenant(account)
+    Organisation.new(name: "#{account.email_address}'s Organisation")
+  end
+
+  def build_identity(account, tenant:)
+    tenant.users.build(account: account)
   end
 end
