@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Independent URL segments and named helpers for session and registration routes.
+- OAuth registration forms by default, with prefilled provider data and controlled automatic-signup failure redirects.
+- Inline migration references and indexes with repeatable feature generation.
+- Feature-specific guides with contents, registration flow diagrams, and complete customization examples.
+
 - Password authentication for single-model applications and linked account/membership scopes.
 - Generated sign-in, registration, password reset, MFA enrollment, OAuth, invitation, and impersonation endpoints.
 - Application controller helpers, named tenant helpers, and controller or shared redirect overrides.

@@ -4,6 +4,13 @@ This guide explains the model-level results and exceptions used when writing cus
 
 A Rails callback can prevent a reset token, password, or verification state from being saved. Your code must not treat that operation as successful or deliver a token whose state was rolled back.
 
+## Contents
+
+- [Generate, then deliver](#generate-then-deliver)
+- [Result conventions](#result-conventions)
+- [Group custom database changes](#group-custom-database-changes)
+- [External effects and callbacks](#external-effects-and-callbacks)
+
 ## Generate, then deliver
 
 For a custom password-reset service:

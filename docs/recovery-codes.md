@@ -11,9 +11,18 @@ You can attach a set to an account, a particular MFA credential, or both:
 
 Both use the same hashed-storage and single-use implementation. Replacing a set invalidates old codes for that owner only.
 
+## Contents
+
+- [Account-owned codes](#account-owned-codes)
+- [Credential-owned codes](#credential-owned-codes)
+- [Generate and replace a set](#generate-and-replace-a-set)
+- [Sign in with a code](#sign-in-with-a-code)
+- [Routes and customization](#routes-and-customization)
+- [Organisation requirements](#organisation-requirements)
+
 ## Account-owned codes
 
-After installing [MFA](verification-and-mfa.md), add recovery codes to its account:
+After installing [MFA](mfa.md), add recovery codes to its account:
 
 ```sh
 bin/rails generate vouch:recovery_codes User
@@ -23,17 +32,17 @@ bin/rails db:migrate
 The migrations add attempt tracking to `users` and create the recovery-code table:
 
 ```ruby
-add_column :users, :recovery_attempts, :bigint, default: 0, null: false
-add_column :users, :recovery_locked_at, :datetime
+change_table :users do |t|
+  t.bigint :recovery_attempts, default: 0, null: false
+  t.datetime :recovery_locked_at
+end
 
 create_table :vouch_recovery_codes do |t|
-  t.string :recoverable_type, null: false
-  t.bigint :recoverable_id, null: false
+  t.references :recoverable, polymorphic: true, null: false
   t.string :code_digest, null: false
   t.datetime :used_at
   t.timestamps
 end
-add_index :vouch_recovery_codes, [:recoverable_type, :recoverable_id], name: "index_vouch_recovery_codes_on_recoverable"
 ```
 
 The shared table identifies its owner with `recoverable_type` and `recoverable_id`. Only hashes are stored; Vouch returns plaintext codes when a set is generated.
@@ -59,14 +68,12 @@ The migration creates:
 
 ```ruby
 create_table :phone_backup_codes do |t|
-  t.bigint :phone_id, null: false
+  t.references :phone, null: false, foreign_key: true
   t.string :code_digest, null: false
   t.datetime :used_at
   t.timestamps
+  t.index :used_at
 end
-add_index :phone_backup_codes, :used_at
-add_index :phone_backup_codes, :phone_id
-add_foreign_key :phone_backup_codes, :phones
 ```
 
 The internal association is named `backup_codes`; the public feature and its model methods use recovery-code terminology. The same setup works for other `TwoFactorable` credentials, including email and authenticator models.

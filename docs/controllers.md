@@ -1,5 +1,14 @@
 # Controllers and routes
 
+## Contents
+
+- [Protect pages](#protect-pages)
+- [Customize an authentication endpoint](#customize-an-authentication-endpoint)
+- [Endpoint reference](#endpoint-reference)
+- [Routes](#routes)
+- [Registration](#registration)
+- [Eject a controller](#eject-a-controller)
+
 ## Protect pages
 
 Put the authentication requirement on a base controller for pages that require sign-in:
@@ -113,6 +122,26 @@ Here, `Portal` does not identify the `:user` scope, so the declaration makes tha
 
 ## Routes
 
+The standard declarations accept route options. `paths:` changes URL segments.
+`path_names:` supplies the complete helper basename for an action; it does not
+change the controller action. `as:` changes the normal scope helper prefix:
+
+```ruby
+auth.scope model: "User", path: "accounts", as: "account" do
+  auth.sessions paths: {new: "login", create: "login", destroy: "logout"},
+    path_names: {new: :sign_in, create: :create_session, destroy: :sign_out}
+  auth.registrations
+end
+```
+
+This produces `sign_in_path` for `GET /accounts/login`,
+`create_session_path` for `POST /accounts/login`, and `sign_out_path` for
+`DELETE /accounts/logout`. The explicit `path_names:` values replace the
+usual `account_` helper prefix. Use the generated form helpers or
+`vouch_route_path(:sessions, :create)` and
+`vouch_route_path(:registrations, :create)` when an application configures
+nonstandard paths.
+
 These routes use `auth.scope model: "User"` with the corresponding feature declarations. Optional feature generators add their declarations. Every named `_path` helper also has a Rails `_url` variant.
 
 | Declaration | Request | Helper | Action |
@@ -183,7 +212,7 @@ class Accounts::RegistrationsController < Vouch::RegistrationsController
 end
 ```
 
-`Preferences` is an example model you supply. Invited registration uses the existing membership, then runs registration hooks in the same transaction. Existing accounts accepting another invitation use the invitation-acceptance hooks instead. [Invitations](invitations.md#registration-customization) shows both cases; [OAuth](oauth.md#create-an-organisation-during-signup) shows sharing construction methods with provider signup.
+`Preferences` is an example model you supply. Invited registration uses the existing membership, then runs registration hooks in the same transaction. Existing accounts accepting another invitation use the invitation-acceptance hooks instead. [Invitations](invitations.md#registration-customization) shows both cases; [Registration](registration.md#construct-records-transactionally) shows sharing construction methods with provider signup.
 
 ## Eject a controller
 

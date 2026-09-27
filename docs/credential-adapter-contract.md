@@ -8,6 +8,12 @@ and persistence guarantees as Vouch credentials.
 The contract is test support only. It does not load RSpec at runtime or add it
 to the gem's dependencies.
 
+## Contents
+
+- [Install the shared examples](#install-the-shared-examples)
+- [Minimal adapter interface](#minimal-adapter-interface)
+- [What the contract checks](#what-the-contract-checks)
+
 ## Install the shared examples
 
 Load the contract from your application's spec helper:

@@ -1,11 +1,39 @@
 # Models and authentication scopes
 
+In a multi-tenant application, one `Account` signs in and selects a `User` membership in an `Organisation`. Nest the membership declaration inside its account scope:
+
+```ruby
+Vouch.routes(self) do |auth|
+  auth.scope model: "Account" do
+    auth.sessions
+    auth.registrations
+
+    auth.membership model: "User", tenant: "Organisation" do
+      auth.sessions
+    end
+  end
+end
+```
+
+Scope names are inferred from the model names. `current_account` returns the signed-in account, `current_user` its selected membership, and `current_organisation` the selected organisation.
+
+## Contents
+
+- [One model](#one-model)
+- [Multi-tenant models](#multi-tenant-models)
+- [Shared account scopes](#shared-account-scopes)
+- [Exclude inactive memberships](#exclude-inactive-memberships)
+- [Change route names](#change-route-names)
+- [Primary keys](#primary-keys)
+- [Custom association names](#custom-association-names)
+- [Separate administrator logins](#separate-administrator-logins)
+
 ## One model
 
 A single `User` model can hold passwords and represent the signed-in person:
 
 ```ruby
-auth.scope :user, model: "User" do
+auth.scope model: "User" do
   auth.sessions
   auth.registrations
 end
@@ -13,9 +41,55 @@ end
 
 This configuration gives you `current_user`, `user_signed_in?`, and `authenticate_user!`.
 
+## Multi-tenant models
+
+The command in the [README](../README.md#use-a-shared-account-and-memberships) creates these relationships:
+
+```ruby
+class Account < ApplicationRecord
+  has_many :users, dependent: :destroy
+end
+
+class User < ApplicationRecord
+  belongs_to :account
+  belongs_to :organisation
+end
+
+class Organisation < ApplicationRecord
+  has_many :users, dependent: :destroy
+end
+```
+
+The generated `Account` also includes Vouch authentication, `has_secure_password`, and email normalization and validation. The migrations create:
+
+```ruby
+create_table :accounts do |t|
+  t.string :email_address, null: false
+  t.string :password_digest, null: false
+  t.bigint :auth_session_version, null: false, default: 0
+  t.timestamps
+  t.index "lower(email_address)", unique: true, name: "index_accounts_on_lower_email_address"
+end
+
+create_table :organisations do |t|
+  t.string :name, null: false
+  t.timestamps
+end
+
+create_table :users do |t|
+  t.references :account, null: false, foreign_key: true
+  t.references :organisation, null: false, foreign_key: true
+  t.timestamps
+end
+```
+
+After account authentication and any required MFA, Vouch checks the account's memberships. With one eligible membership it continues automatically; with several it shows a selector; with none it denies membership access. An organisation may require an additional [MFA challenge](authentication-policy.md#mfa-required-by-an-organisation).
+
+`authenticate_user!` requires both account authentication and a selected membership. Use `authenticate_account!` for settings available before an organisation is selected.
+
 ## Shared account scopes
 
-The [multi-tenant setup](setup.md#multi-tenant-setup) generates an `Account` with `User` memberships in organisations. Use separate declarations when more than one membership scope needs the same account login:
+The [standard nested setup](../README.md#use-a-shared-account-and-memberships) generates an `Account` with `User` memberships in organisations. A separately declared membership can reference an existing account scope with `account_scope:`. This is equivalent to nesting; it can be useful when routes are organized in separate files:
 
 ```ruby
 Vouch.routes(self) do |auth|
@@ -30,7 +104,7 @@ Vouch.routes(self) do |auth|
 end
 ```
 
-`account_scope: :account` connects membership selection to the existing account login. Omitting `tenant:` also supports separate account and identity models without organisation ownership.
+`account_scope: :account` connects membership selection to the existing account login. Omitting `tenant:` also supports separate account and identity models without organisation ownership. Do not add it to the normal nested declaration above.
 
 `authenticate_user!` checks both sessions. `current_account.users` lists all memberships; `current_user` is the selected one. `current_organisation` is that membership's organisation.
 
@@ -53,7 +127,7 @@ Starting from `super` keeps the lookup restricted to the signed-in account. Vouc
 ## Change route names
 
 ```ruby
-auth.scope :user, model: "User", path: "members", as: "member" do
+auth.scope model: "User", path: "members", as: "member" do
   auth.sessions
 end
 ```
@@ -124,7 +198,7 @@ This is optional. Many applications use one user model with their own role and p
 For separate administrator credentials:
 
 ```ruby
-auth.scope :admin, model: "Admin" do
+auth.scope model: "Admin" do
   auth.sessions
 end
 ```

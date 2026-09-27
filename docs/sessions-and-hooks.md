@@ -4,6 +4,14 @@ Sign-in keeps your application’s session data. Lifecycle hooks let you add wor
 before authentication changes, inside their database transaction, or after
 successful completion.
 
+## Contents
+
+- [Session rotation](#session-rotation)
+- [Lifecycle hooks](#lifecycle-hooks)
+- [Cancellation and transaction boundaries](#cancellation-and-transaction-boundaries)
+- [Account and membership sessions](#account-and-membership-sessions)
+- [Authentication evidence](#authentication-evidence)
+
 ## Session rotation
 
 Vouch renews the session identifier during authentication to prevent session fixation. Application data such as `session[:cart]` and `session[:locale]` is preserved, as are unrelated authentication scopes.
@@ -14,23 +22,12 @@ Lifecycle hooks are class methods on Vouch controllers. They are available for
 sign-in, sign-out, sign-up, OAuth sign-in, OAuth linking, OAuth account
 creation, invitation acceptance and revocation, and impersonation start and end.
 
-Each lifecycle has a transactional chain and an outer commit chain. For example, sign-in
-uses `before_sign_in`, `around_sign_in`, and `after_sign_in`, plus
-`before_commit_of_sign_in`, `around_commit_of_sign_in`, and
-`after_commit_of_sign_in`.
+Use `before_sign_in` or `after_sign_in` for database work that must roll back if sign-in fails. Use `after_commit_of_sign_in` for work outside the database, such as notifying another service after sign-in succeeds.
 
 ```ruby
 class Users::SessionsController < Vouch::SessionsController
-  before_commit_of_sign_in do |account, identity|
-    Rails.logger.info("signing in #{identity.id} for account #{account.id}")
-  end
-
   before_sign_in do |account, identity|
     AuditLog.create!(account: account, event: "sign_in", identity: identity)
-  end
-
-  after_sign_in do |_account, identity|
-    identity.update!(last_seen_at: Time.current)
   end
 
   after_commit_of_sign_in do |_account, identity|
@@ -39,7 +36,7 @@ class Users::SessionsController < Vouch::SessionsController
 end
 ```
 
-The normal order is:
+The full set of callback phases follows this order. `before_commit_of_sign_in` runs before Vouch opens the transaction; `before_sign_in` runs inside it.
 
 | Phase | Transaction state | Runs when |
 | --- | --- | --- |
@@ -49,6 +46,9 @@ The normal order is:
 | `around_*` | Inside the transaction | Wrap the operation's database work |
 | `after_*` | Inside the transaction | Add database work after the operation |
 | `after_commit_of_*` | After commit and successful session publication | Deliver notifications or call external services |
+
+The following table lists the available lifecycles, their arguments, and a
+typical use. Each supports the phases in the preceding table.
 
 | Lifecycle | Arguments | Example use |
 | --- | --- | --- |
@@ -63,17 +63,37 @@ The normal order is:
 | `impersonation_start` | Original operator, target | Record who began impersonation. |
 | `impersonation_end` | Current identity, original operator | Record restoration. |
 
-Each row has the transactional and `commit_of_*` callback chains shown above. In a
-single-model setup, the credentials record and identity are the same `User`.
-`AuditLog` is an application model and `Analytics` an application service in this example.
+In a single-model setup, the credentials record and identity are the same
+`User`. `AuditLog` is an application model and `Analytics` an application
+service in this example.
 
-Event hooks use `on_*` for password reset token generation, password changes,
-invitation token generation, and two-factor verification:
+Event hooks use `on_*` for password reset token generation, password changes, invitation token generation, and two-factor verification.
+
+Password reset already has a delivery callback: Vouch calls the model’s `deliver_password_reset_token` method, which the generator supplies. Change that method to customize delivery:
+
+```ruby
+class Account < ApplicationRecord
+  def deliver_password_reset_token(token)
+    AccountPasswordResetMailer.reset(self, token).deliver_later
+  end
+end
+```
+
+Vouch’s supplied password-reset controller already registers
+`on_password_reset_token_generation` and calls
+`account.deliver_password_reset_token(token)`. The generated model method
+then calls its generated mailer. To use a different mailer or delivery
+service, override the model method as shown above. Do not add a second
+password-reset token-generation hook for delivery: it would run alongside the
+generated hook and can send the reset message twice.
+
+Use an event hook for additional event-specific work that is not the supplied
+delivery path:
 
 ```ruby
 class Users::PasswordResetsController < Vouch::PasswordResetsController
-  on_password_reset_token_generation do |account, token|
-    AccountMailer.password_reset(account, token).deliver_later
+  on_password_change do |account|
+    AuditLog.create!(account:, event: "password_changed")
   end
 end
 ```
@@ -138,4 +158,4 @@ not signed in. Ordinary membership selection is blocked until impersonation ends
 
 MFA completion records the method used and when it was verified. Recovery codes are recorded as `recovery_code`, not as the credential's ordinary method. [Organisation MFA policies](authentication-policy.md#mfa-required-by-an-organisation) use that evidence when deciding whether another challenge is required.
 
-OAuth field retention is described in [retained provider data](oauth.md#advanced-retained-provider-data).
+OAuth field retention is described in [retained provider data](oauth.md#retain-additional-provider-data).

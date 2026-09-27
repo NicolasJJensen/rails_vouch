@@ -2,6 +2,15 @@
 
 An invitation lets someone join your application through a link. In a multi-tenant application, they can join an organisation with an existing account or register a new account.
 
+## Contents
+
+- [Add invitations](#add-invitations)
+- [Invite someone to an organisation](#invite-someone-to-an-organisation)
+- [Revoke an invitation](#revoke-an-invitation)
+- [Routes](#routes)
+- [Registration customization](#registration-customization)
+- [Edit the invitation actions](#edit-the-invitation-actions)
+
 ## Add invitations
 
 For an existing Vouch `User` model:
@@ -14,14 +23,14 @@ bin/rails db:migrate
 The generator adds invitation fields and associations to `User`, a controller and form, a mailer and template, and invitation routes. The invitation is stored on the `User` record, not a separate invitations table. The migration adds:
 
 ```ruby
-add_column :users, :invitation_token, :string
-add_column :users, :invitation_sent_at, :datetime
-add_column :users, :invitation_accepted_at, :datetime
-add_column :users, :inviter_id, :bigint
-add_index :users, :invitation_token, unique: true
-add_index :users, :inviter_id
-add_foreign_key :users, :users, column: :inviter_id
-add_column :users, :registration_required, :boolean, default: false, null: false
+change_table :users do |t|
+  t.string :invitation_token
+  t.datetime :invitation_sent_at
+  t.datetime :invitation_accepted_at
+  t.references :inviter, foreign_key: {to_table: :users}
+  t.boolean :registration_required, default: false, null: false
+  t.index :invitation_token, unique: true
+end
 ```
 
 `registration_required` distinguishes a newly invited person who still needs to choose a password from someone who already completed registration.

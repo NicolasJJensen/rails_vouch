@@ -1,6 +1,19 @@
 # Authentication policy
 
-Use an authentication policy to decide whether someone may sign in and whether they must complete MFA. Vouch applies the policy to password and OAuth sign-in, as well as custom flows that call `complete_sign_in`.
+The default policy blocks locked accounts and requires MFA when the account has enabled it. You do not need a custom policy for ordinary sign-in.
+
+Add one when the same rule must apply across authentication methods. For example, suspending a user should block both password and OAuth sign-in; a check in the password controller alone would leave OAuth unaffected. Vouch also applies the policy to [custom authentication endpoints](advanced-custom-authentication.md) that use its completion API.
+
+This policy decides admission and MFA requirements. Permissions such as who may edit a project belong in your application's authorization code. To end logins that already exist, use [session invalidation](#revoke-established-sessions).
+
+## Contents
+
+- [Block suspended users](#block-suspended-users)
+- [MFA and trusted providers](#mfa-and-trusted-providers)
+- [Pending sign-in timeout](#pending-sign-in-timeout)
+- [Revoke established sessions](#revoke-established-sessions)
+- [Restrict available memberships](#restrict-available-memberships)
+- [MFA required by an organisation](#mfa-required-by-an-organisation)
 
 ## Block suspended users
 
@@ -61,7 +74,7 @@ For a more specific rule, override `two_factor_required?` on your policy:
  end
 ```
 
-`requires_mfa_by_policy?` is an example predicate, not a required Vouch method. Replace that expression with your application's rule. When making MFA mandatory, use the [generated enrollment pages](verification-and-mfa.md#enroll-a-phone) to establish a usable factor before enforcing the requirement.
+`requires_mfa_by_policy?` is an example predicate, not a required Vouch method. Replace that expression with your application's rule. When making MFA mandatory, use the [generated enrollment pages](mfa.md#add-phone-based-mfa) to establish a usable factor before enforcing the requirement.
 
 ## Pending sign-in timeout
 
@@ -73,49 +86,15 @@ Vouch.configure do |config|
 end
 ```
 
-When it expires, they must authenticate again. This does not set an inactivity timeout for a completed login.
+Pending authentication is stored in the Rails session, including when it began and which account supplied the first proof. It is not a completed Warden login. If account MFA is required, Vouch does not publish the account to Warden until MFA succeeds.
 
-## Lock an account after failed passwords
+In a multi-tenant flow, the account may already be signed in while membership selection or an additional organisation challenge remains pending. That does not grant access to the pending membership.
 
-Generate the tracking columns on the credentials model:
-
-```sh
-bin/rails generate vouch:lockable User
-bin/rails db:migrate
-```
-
-The migration adds:
-
-```ruby
-change_table :users do |t|
-  t.bigint :consecutive_locks, default: 0, null: false
-  t.integer :failed_attempts, default: 0, null: false
-  t.datetime :locked_at
-end
-add_index :users, :locked_at
-```
-
-Enable the feature on `User`:
-
-```ruby
-# app/models/user.rb
-authenticates_with :lockable
-```
-
-Configure the threshold and initial lockout duration:
-
-```ruby
-Vouch.configure do |config|
-  config.lockable.max_failed_attempts = 5
-  config.lockable.lockout_duration = 5.minutes
-end
-```
-
-Repeated lockouts increase the duration. A successful login clears the failure count and lockout history. For a multi-tenant application, run `bin/rails generate vouch:lockable Account` and enable the feature on `Account`; the same columns are added to `accounts`. All memberships use that account's password and lockout state.
+When the pending step expires, the person must authenticate again. This setting also bounds OAuth registration continuations; it does not set an inactivity timeout for established logins.
 
 ## Revoke established sessions
 
-Changing a password invalidates established sessions and pending sign-in attempts. Lockout blocks new sign-in by default; to invalidate existing logins on lockout too:
+Changing a password invalidates established sessions and pending sign-in attempts. [Lockout](lockout.md) blocks new sign-in by default; to invalidate existing logins on lockout too:
 
 ```ruby
 Vouch.configure do |config|
@@ -123,14 +102,16 @@ Vouch.configure do |config|
 end
 ```
 
-The scope generator includes `auth_session_version`. When a security action should end earlier sessions, call `invalidate_authentication_sessions!` on the credentials record:
+To end earlier sessions after a security change, call `invalidate_authentication_sessions!` on the signed-in user:
 
 ```ruby
 # In your account-security action, after authorizing the change
 current_user.invalidate_authentication_sessions!
 ```
 
-For an existing model that lacks the column, add it with:
+In a multi-tenant application, call the method on `Account`, which owns authentication.
+
+Vouch tracks revocation with an `auth_session_version` column, included by the scope generator. For an existing model that lacks it, add the column with:
 
 ```sh
 bin/rails generate migration AddAuthSessionVersionToUsers auth_session_version:bigint
@@ -162,20 +143,6 @@ end
 
 This example assumes an `active` column on your membership model. `super` keeps the account ownership restriction. Vouch checks eligibility again when the person submits their choice, so a membership disabled while the form was open cannot be selected.
 
-## Custom authentication flows
-
-If you write an endpoint that calls `complete_sign_in`, handle its result:
-
-| Result | Next step |
-| --- | --- |
-| `:signed_in` | Redirect after completed authentication. |
-| `:needs_two_factor` | Show the MFA challenge list. |
-| `:needs_selection` | Show the membership selector. |
-| `:no_identity` | Deny membership access; no eligible identity remains. |
-| `:denied` | Show authentication failure. |
-
-The supplied controllers already handle these outcomes. A Warden strategy you add yourself must use a name other than Vouch's `:password` strategy.
-
 ## MFA required by an organisation
 
 An account may permit several factor types while an organisation requires a particular authenticator. Define membership requirements on the same authentication policy:
@@ -197,12 +164,14 @@ An account may permit several factor types while an organisation requires a part
 
 The requirements can restrict the credential class, its authentication method, or both:
 
-| Option | Meaning |
-| --- | --- |
-| `credential_types` | Allowed model classes, such as `[Totp]` or `[Phone, Totp]` |
-| `credential_methods` | Allowed method names, useful when one model implements multiple authenticator types |
-| `max_age` | Maximum age of the successful proof before another challenge is required |
-| `allow_recovery_codes` | Whether a recovery code may replace that challenge; defaults to false |
+All keys are optional. Return `nil` or an empty hash for no additional requirement. A nonempty requirements hash requires qualifying MFA evidence; omitted restrictions use these defaults:
+
+| Option | Meaning | When omitted |
+| --- | --- | --- |
+| `credential_types` | Allowed model classes, such as `[Totp]` or `[Phone, Totp]` | Any configured credential class |
+| `credential_methods` | Allowed method names, useful when one model implements several authenticator types | Any credential method |
+| `max_age` | Maximum age of the successful proof before another challenge is required | No additional age limit |
+| `allow_recovery_codes` | Whether a recovery code may replace that challenge | `false` |
 
 A credential's method name defaults to its model name. Set a stable name on the model:
 

@@ -4,6 +4,12 @@ Vouch installs Warden middleware by default. Use this guide when your applicatio
 already owns Warden middleware or needs to configure its defaults explicitly.
 See [model mapping](model-mapping.md) for scope definitions.
 
+## Contents
+
+- [Configure existing middleware](#configure-existing-middleware)
+- [Scope ownership](#scope-ownership)
+- [Account and membership sessions](#account-and-membership-sessions)
+
 ## Configure existing middleware
 
 Disable Vouch's middleware initializer and configure the manager in your application's

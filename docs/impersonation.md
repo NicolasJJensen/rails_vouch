@@ -4,6 +4,14 @@ Impersonation gives an authorized operator a temporary view of one target identi
 
 In a single-model `:user` setup, `current_user` is the target and `true_user` is the original operator. In a linked account and membership setup, `current_user` is the target membership while `current_account` remains the operator's account. `current_user.account` is the target membership's associated data; it is not a login for that account.
 
+## Contents
+
+- [Add impersonation](#add-impersonation)
+- [Choose the operator scope](#choose-the-operator-scope)
+- [Start and stop](#start-and-stop)
+- [Composite primary keys](#composite-primary-keys)
+- [Edit the switching actions](#edit-the-switching-actions)
+
 ## Add impersonation
 
 For an existing `:user` scope:

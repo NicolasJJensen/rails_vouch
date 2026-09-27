@@ -18,7 +18,7 @@ RSpec.describe "documentation executable contracts" do
 
   it "keeps the split-model route sample at the generated baseline" do
     source = documentation_ruby_block(
-      path: "docs/setup.md",
+      path: "docs/model-mapping.md",
       containing: 'auth.scope model: "Account"'
     )
     expect(source).to include("Vouch.routes(self)")
@@ -29,7 +29,7 @@ RSpec.describe "documentation executable contracts" do
       [name, Warden::SessionSerializer.instance_method(name)]
     end
     routes = ActionDispatch::Routing::RouteSet.new
-    routes.draw { eval(source, binding, "docs/setup.md") } # rubocop:disable Security/Eval
+    routes.draw { eval(source, binding, "docs/model-mapping.md") } # rubocop:disable Security/Eval
 
     helpers = routes.url_helpers
     expect(helpers).to respond_to(:new_user_session_path)
@@ -54,7 +54,7 @@ RSpec.describe "documentation executable contracts" do
 
   it "documents attribute-bound verification without replacing the persisted MFA preference" do
     source = documentation_ruby_block(
-      path: "docs/verification-and-mfa.md",
+      path: "docs/mfa.md",
       containing: "self.verifiable_subject_attribute = :e164"
     )
     expect(source).to include("self.verifiable_subject_attribute = :e164")
@@ -90,7 +90,7 @@ RSpec.describe "documentation executable contracts" do
 
     routes = File.read(File.join(directory, "config/routes.rb"))
     expect(routes.scan("Vouch.routes(self)").size).to eq(1)
-    expect(routes).to include('auth.scope :user, model: "User"')
+    expect(routes).to include('auth.scope model: "User"')
     expect(routes).to include('root "dashboard#show"', "auth.sessions", "auth.registrations")
     expect(routes).not_to include("auth.user_selection")
     model = File.read(File.join(directory, "app/models/user.rb"))
