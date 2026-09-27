@@ -9,10 +9,7 @@ class <%= codes_migration_class_name %> < ActiveRecord::Migration[<%= Rails::VER
       t.string   :code_digest,      null: false
       t.datetime :used_at
       t.timestamps
+      t.index [<%= composite_recoverable? ? ":recoverable_type, :recoverable_key" : ":recoverable_type, :recoverable_id" %>], name: "index_vouch_recovery_codes_on_recoverable"
     end
-
-    add_index :vouch_recovery_codes,
-              [<%= composite_recoverable? ? ":recoverable_type, :recoverable_key" : ":recoverable_type, :recoverable_id" %>],
-              name: "index_vouch_recovery_codes_on_recoverable"
   end
 end

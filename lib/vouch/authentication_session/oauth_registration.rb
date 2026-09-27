@@ -33,6 +33,14 @@ module Vouch
         session.key?(key(:oauth_registration))
       end
 
+      def oauth_initiation_return_to
+        session[Vouch::OAuthInitiation.return_to_key(scope)]
+      end
+
+      def clear_oauth_initiation_return_to
+        session.delete(Vouch::OAuthInitiation.return_to_key(scope))
+      end
+
       def clear_oauth_registration
         session.delete(key(:oauth_registration))
       end

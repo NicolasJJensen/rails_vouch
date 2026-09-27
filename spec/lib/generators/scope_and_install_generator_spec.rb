@@ -69,7 +69,7 @@ RSpec.describe "Vouch generators" do
 
     expect(model).to include("has_secure_password")
     expect(migration).to include("auth_session_version")
-    expect(routes).to include('auth.scope :user, model: "User"') if routes.present?
+    expect(routes).to include('auth.scope model: "User"') if routes.present?
   end
 
   it "infers a split-model setup from account and tenant options" do
@@ -107,7 +107,7 @@ RSpec.describe "Vouch generators" do
     )
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
 
-    expect(routes).to include('auth.scope :member, model: "Member"')
+    expect(routes).to include('auth.scope model: "Member"')
   end
 
   it "creates the wrapper automatically and is safe to rerun" do
@@ -118,14 +118,14 @@ RSpec.describe "Vouch generators" do
     routes_path = File.join(@generator_directory, "config/routes.rb")
     routes = File.read(routes_path)
     expect(routes).to include("Vouch.routes(self)")
-    expect(routes.scan("auth.scope :member").length).to eq(1)
+    expect(routes.scan('auth.scope model: "Member"').length).to eq(1)
 
     Dir.chdir(@generator_directory) do
       generator = Vouch::Generators::ScopeGenerator.new(["members", "Member"], single_model: true)
       generator.destination_root = @generator_directory
       generator.invoke_all
     end
-    expect(File.read(routes_path).scan("auth.scope :member").length).to eq(1)
+    expect(File.read(routes_path).scan('auth.scope model: "Member"').length).to eq(1)
   end
 
   it "does not edit routes containing fake or ambiguous wrappers" do
@@ -311,8 +311,8 @@ RSpec.describe "Vouch generators" do
     )
 
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
-    expect(routes).to include('auth.scope :account, model: "Account"')
-    expect(routes).to include('auth.membership :user, model: "User"')
+    expect(routes).to include('auth.scope model: "Account"')
+    expect(routes).to include('auth.membership model: "User"')
     expect(routes.scan("auth.sessions").length).to eq(2)
     expect(routes).not_to include("auth.user_selection")
     expect(routes).not_to include("auth.passwords")
@@ -327,7 +327,7 @@ RSpec.describe "Vouch generators" do
     expect(File.read(File.join(@generator_directory, "app/controllers/users/sessions_controller.rb"))).to include(
       "< Vouch::MembershipSessionsController"
     )
-    expect(File.read(File.join(@generator_directory, "app/views/accounts/sessions/new.html.erb"))).to include("account_session_path")
+    expect(File.read(File.join(@generator_directory, "app/views/accounts/sessions/new.html.erb"))).to include("vouch_route_path(:sessions, :create)")
     expect(File.read(File.join(@generator_directory, "app/views/accounts/registrations/new.html.erb"))).to include(
       "scope: :account, method: :post"
     )
@@ -389,8 +389,8 @@ RSpec.describe "Vouch generators" do
       first_registration_view
     )
     routes = File.read(File.join(@generator_directory, "config/routes.rb"))
-    expect(routes.scan("auth.scope :account").length).to eq(1)
-    expect(routes.scan("auth.membership :user").length).to eq(1)
+    expect(routes.scan('auth.scope model: "Account"').length).to eq(1)
+    expect(routes.scan('auth.membership model: "User"').length).to eq(1)
   end
 
   it "generates only sessions and registrations for a single-model scope" do
@@ -456,7 +456,7 @@ RSpec.describe "Vouch generators" do
     )
     migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*oauth_identities.rb")].first)
 
-    expect(migration).to include("t.uuid :account_id")
+    expect(migration).to include("t.references :account, null: false, type: :uuid, foreign_key: {to_table: :accounts}")
     expect(migration).to include(":auth_data")
     expect(migration).not_to include(":raw_info")
   end
@@ -496,14 +496,14 @@ RSpec.describe "Vouch generators" do
     expect(controller).to include("email_address: normalized_identifier")
     expect(controller).to include("registration_required: true")
     migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*add_registration_required_to_accounts.rb")].sole)
-    expect(migration).to include("add_column :accounts, :registration_required, :boolean, default: false, null: false")
+    expect(migration).to include("t.boolean :registration_required, default: false, null: false")
   end
   it "generates registration state on the single-model account table" do
     @generator_directory = run_generator(
       Vouch::Generators::InvitationsGenerator, ["members"], { single_model: true }
     )
     migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*add_registration_required_to_members.rb")].sole)
-    expect(migration).to include("add_column :members, :registration_required")
+    expect(migration).to include("t.boolean :registration_required")
   end
 
   it "shares one registration-state migration across identity scopes for the same account" do

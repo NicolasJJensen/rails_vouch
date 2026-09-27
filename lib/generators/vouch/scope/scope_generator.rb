@@ -229,7 +229,7 @@ module Vouch
         path = File.join(destination_root, "config/routes.rb")
         wrapper = <<~RUBY
           Vouch.routes(self) do |auth|
-            # Add scopes with `bin/rails g vouch:scope <name> Account:account User:identity`
+            # Add a login with `bin/rails generate vouch:scope User`
           end
         RUBY
         RouteEditor.ensure_wrapper(path, wrapper) if File.file?(path)
@@ -348,7 +348,7 @@ module Vouch
         route_scope = @generated_scope_name.to_s.singularize
         if @single_model
           return <<~RUBY.rstrip
-              auth.scope :#{route_scope}, model: "#{@models[:identity]}" do
+              auth.scope #{explicit_scope_argument(route_scope, @models[:identity])}model: "#{@models[:identity]}" do
                 auth.sessions
                 auth.registrations
               end
@@ -356,7 +356,7 @@ module Vouch
         end
 
         [
-          "auth.scope :#{account_route_scope}, model: \"#{@account_class}\" do",
+          "auth.scope #{explicit_scope_argument(account_route_scope, @account_class)}model: \"#{@account_class}\" do",
           "  auth.sessions",
           "  auth.registrations",
           membership_route_block.lines.map { |line| "  #{line}" }.join.rstrip,
@@ -388,12 +388,16 @@ module Vouch
         end
       end
 
+      def explicit_scope_argument(scope, model)
+        scope.to_s == inferred_scope_name(model) ? "" : ":#{scope}, "
+      end
+
       def membership_route_block
         route_scope = @generated_scope_name.to_s.singularize
         settings = %(model: "#{@identity_class}")
         settings += %(, tenant: "#{@tenant_class}") if @tenant_class
         <<~RUBY.rstrip
-          auth.membership :#{route_scope}, #{settings} do
+          auth.membership #{explicit_scope_argument(route_scope, @identity_class)}#{settings} do
             auth.sessions
           end
         RUBY

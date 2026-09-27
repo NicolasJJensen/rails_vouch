@@ -59,4 +59,26 @@ RSpec.describe "feature generator contracts" do
       expect(Dir[File.join(directory, "db/migrate/*add_lockable_to_accounts.rb")]).not_to be_empty
     end
   end
+
+  {
+    lockable: {"locked_at" => "datetime"},
+    password_resetable: {"password_reset_token_digest" => "string"}
+  }.each do |feature, expected_types|
+    it "keeps #{feature} column types when inline table helpers are present" do
+      Dir.mktmpdir("vouch-#{feature}-inline-columns") do |directory|
+        generator_class = GENERATORS.fetch(feature)
+        generator = generator_class.new(["accounts"])
+        generator.destination_root = directory
+        Dir.chdir(directory) { generator.invoke_all }
+
+        expect(generator.send(:feature_column_types, feature.to_s)).to include(expected_types)
+        expect(generator.send(:pending_feature_column_types)).to include(expected_types)
+
+        rerun = generator_class.new(["accounts"])
+        rerun.destination_root = directory
+        Dir.chdir(directory) { rerun.create_feature_migration }
+        expect(Dir[File.join(directory, "db/migrate/*add_#{feature}_to_accounts.rb")]).to have_attributes(length: 1)
+      end
+    end
+  end
 end

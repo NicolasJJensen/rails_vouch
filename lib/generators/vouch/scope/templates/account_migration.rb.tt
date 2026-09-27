@@ -5,7 +5,7 @@ class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::
       t.string :password_digest, null: false
       t.bigint :auth_session_version, null: false, default: 0
       t.timestamps
+      t.index "lower(email_address)", unique: true, name: "<%= index_name(model_table(@account_class), "lower_email_address") %>"
     end
-    add_index :<%= model_table(@account_class) %>, "lower(email_address)", unique: true, name: "<%= index_name(model_table(@account_class), "lower_email_address") %>"
   end
 end

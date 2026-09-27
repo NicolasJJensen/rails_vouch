@@ -4,15 +4,21 @@ class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::
 <% [@account_class, @tenant_class].compact.each do |owner| -%>
 <% metadata = model_metadata(owner) -%>
 <% metadata.primary_keys.zip(metadata.foreign_keys).each do |key, foreign| -%>
+<% if metadata.primary_keys == ["id"] -%>
+      t.references :<%= metadata.association_key %>, null: false, type: :<%= primary_key_type || metadata.primary_key_types[key] %>, foreign_key: {to_table: :<%= metadata.table_name %>}
+<% else -%>
       t.<%= primary_key_type || metadata.primary_key_types[key] %> :<%= foreign %>, null: false
 <% end -%>
 <% end -%>
+<% end -%>
       t.timestamps
-    end
 <% [@account_class, @tenant_class].compact.each do |owner| -%>
 <% metadata = model_metadata(owner) -%>
-    add_index :<%= model_table(@identity_class) %>, <%= metadata.foreign_keys.inspect %>, name: "<%= index_name(model_table(@identity_class), metadata.foreign_keys.join('_')) %>"
-    add_foreign_key :<%= model_table(@identity_class) %>, :<%= metadata.table_name %>, column: <%= metadata.foreign_keys.one? ? metadata.foreign_keys.first.to_sym.inspect : metadata.foreign_keys.inspect %>, primary_key: <%= metadata.primary_keys.one? ? metadata.primary_keys.first.to_sym.inspect : metadata.primary_keys.inspect %>
+<% unless metadata.primary_keys == ["id"] -%>
+      t.index <%= metadata.foreign_keys.inspect %>, name: "<%= index_name(model_table(@identity_class), metadata.foreign_keys.join('_')) %>"
+      t.foreign_key :<%= metadata.table_name %>, column: <%= metadata.foreign_keys.one? ? metadata.foreign_keys.first.to_sym.inspect : metadata.foreign_keys.inspect %>, primary_key: <%= metadata.primary_keys.one? ? metadata.primary_keys.first.to_sym.inspect : metadata.primary_keys.inspect %>
 <% end -%>
+<% end -%>
+    end
   end
 end

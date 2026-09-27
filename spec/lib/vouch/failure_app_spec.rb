@@ -25,7 +25,7 @@ RSpec.describe Vouch::FailureApp do
 
       allow(app).to receive(:warden_options).and_return({ scope: :user })
       allow(Vouch).to receive(:mapping_for).with(:user).and_return(mapping)
-      allow(app).to receive(:new_user_session_path).and_return("/users/sign_in")
+      allow(app).to receive(:url_options).and_return({})
       allow(app).to receive(:flash).and_return(flash)
       allow(app).to receive(:redirect_to)
     end

@@ -52,6 +52,15 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     )
   end
 
+  it "uses inline references for a conventional UUID id", use_transactional_fixtures: false do
+    exercise_generated_keys(
+      key_columns: {id: :uuid},
+      key_values: {id: SecureRandom.uuid},
+      primary_key: "id",
+      inline_reference: true
+    )
+  end
+
   it "runs string migrations for a custom key", use_transactional_fixtures: false do
     exercise_generated_keys(
       key_columns: {user_number: :string},
@@ -70,7 +79,7 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
 
   private
 
-  def exercise_generated_keys(key_columns:, key_values:, primary_key:)
+  def exercise_generated_keys(key_columns:, key_values:, primary_key:, inline_reference: false)
     skip "custom primary key integration requires PostgreSQL" unless ActiveRecord::Base.connection.adapter_name == "PostgreSQL"
 
     suffix = "#{Process.pid}#{rand(100_000)}"
@@ -128,8 +137,14 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     [*migration_paths].each do |path|
       expect(RubyVM::InstructionSequence.compile(File.read(path))).to be_a(RubyVM::InstructionSequence)
     end
-    expect(File.read(oauth_migration)).to include("add_foreign_key")
-    expect(File.read(password_migration)).to include("add_foreign_key")
+    if inline_reference
+      expect(File.read(oauth_migration)).to include("t.references")
+      expect(File.read(password_migration)).to include("t.references")
+      expect(File.read(backup_migration)).to include("t.references")
+    else
+      expect(File.read(oauth_migration)).to include("t.foreign_key")
+      expect(File.read(password_migration)).to include("t.foreign_key")
+    end
 
     ActiveRecord::MigrationContext.new(File.join(directory, "db/migrate")).migrate
 
@@ -176,9 +191,9 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     expect(backup_code.public_send(owner_association)).to eq(owner)
     expect(owner.backup_codes).to include(backup_code)
 
-    invitee_keys = key_values.merge(
-      user_number: key_columns.fetch(:user_number) == :uuid ? SecureRandom.uuid : "invitee-#{SecureRandom.hex(6)}"
-    )
+    invitee_key = Array(primary_key).last.to_sym
+    invitee_value = key_columns.fetch(invitee_key) == :uuid ? SecureRandom.uuid : "invitee-#{SecureRandom.hex(6)}"
+    invitee_keys = key_values.merge(invitee_key => invitee_value)
     inviter_reflection = owner_class.reflect_on_association(:inviter)
     expect(Array(inviter_reflection.foreign_key).map(&:to_s)).to eq(owner_metadata.foreign_keys("inviter"))
     expect(Array(inviter_reflection.options[:primary_key]).map(&:to_s)).to eq(owner_metadata.primary_keys)
@@ -190,6 +205,7 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     expect(ActiveRecord::Base.connection.foreign_keys("password_archives").map(&:to_table)).to include(owner_table)
     expect(ActiveRecord::Base.connection.foreign_keys(owner_table).map(&:to_table)).to include(owner_table)
     expect(ActiveRecord::Base.connection.foreign_keys(backup_code_class.table_name).map(&:to_table)).to include(owner_table)
+    expect(ActiveRecord::Base.connection.index_exists?(owner_table, owner_metadata.foreign_keys("inviter"))).to be(true)
   ensure
     if Object.const_defined?(:OauthIdentity, false) && Object.const_get(:OauthIdentity, false) != original_oauth_identity
       Object.send(:remove_const, :OauthIdentity)

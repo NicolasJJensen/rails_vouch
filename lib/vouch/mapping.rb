@@ -91,6 +91,7 @@ module Vouch
         MSG
       end
 
+      @oauth_registration = :form
       @scope_name = scope_name
 
       if model
@@ -123,6 +124,45 @@ module Vouch
       @oauth_failure_path   = oauth_failure_path
       @oauth_callback_methods = Array(oauth_callback_methods || :get).map { |method| method.to_s.upcase }.freeze
       @oauth_failure_methods  = Array(oauth_failure_methods || :get).map { |method| method.to_s.upcase }.freeze
+    end
+
+    attr_accessor :oauth_registration, :oauth_callback_path, :oauth_callbacks_enabled
+
+    def configure_route_names(feature, names)
+      defaults = default_route_names.fetch(feature)
+      unknown = names.keys.map(&:to_sym) - defaults.keys
+      raise ConfigurationError, "Unknown #{feature} path_names: #{unknown.join(', ')}" if unknown.any?
+      names.each_value do |name|
+        unless name.to_s.match?(/\A[a-z][a-z0-9_]*\z/) && !name.to_s.end_with?("_path", "_url")
+          raise ConfigurationError, "Route helper names must be Ruby method names without _path or _url suffixes"
+        end
+      end
+      @route_names ||= {}
+      @route_names[feature] = names.transform_keys(&:to_sym).transform_values(&:to_sym)
+    end
+
+    def route_name(feature, action)
+      (@route_names || {}).fetch(feature, {}).fetch(action) { default_route_names.fetch(feature).fetch(action) }
+    end
+
+    def route_helper(feature, action)
+      :"#{route_name(feature, action)}_path"
+    end
+
+    def route_path(feature, action, context, **options)
+      helper = route_helper(feature, action)
+      if context.respond_to?(:_routes) && context.respond_to?(:url_options)
+        context._routes.url_helpers.public_send(helper, **context.url_options.merge(options))
+      else
+        context.send(helper, **options)
+      end
+    end
+
+    def default_route_names
+      {
+        sessions: {new: :"new_#{helper_prefix}_session", create: :"#{helper_prefix}_session", destroy: :"#{helper_prefix}_sign_out"},
+        registrations: {new: :"new_#{helper_prefix}_registration", create: :"#{helper_prefix}_registration"}
+      }
     end
 
     def account_class
@@ -246,7 +286,7 @@ module Vouch
       when "two_factor_challenges"
         helper_context.send(:"#{helper_prefix}_two_factor_challenges_path")
       else
-        helper_context.send(:"new_#{helper_prefix}_session_path")
+        route_path(:sessions, :new, helper_context)
       end
     end
 

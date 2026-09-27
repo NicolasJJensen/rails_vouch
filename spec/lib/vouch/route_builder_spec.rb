@@ -182,6 +182,50 @@ RSpec.describe Vouch::RouteBuilder do
       Vouch.mappings.delete(:member)
     end
 
+    it "keeps URL segments independent from full helper names" do
+      routes = ActionDispatch::Routing::RouteSet.new
+      routes.draw do
+        Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+          auth.sessions paths: {new: "login"}, path_names: {new: :sign_in}
+          auth.registrations paths: {new: "join"}, path_names: {new: :sign_up}
+        end
+      end
+
+      expect(routes.url_helpers.sign_in_path).to eq("/members/login")
+      expect(routes.url_helpers.member_session_path).to eq("/members/sign_in")
+      expect(routes.url_helpers.sign_up_path).to eq("/members/join")
+      expect(routes.url_helpers.member_registration_path).to eq("/members/sign_up")
+    end
+
+    it "rejects unknown route actions and helper suffixes" do
+      [{paths: {login: "login"}}, {path_names: {login: :sign_in}},
+       {path_names: {new: :sign_in_path}}].each do |options|
+        routes = ActionDispatch::Routing::RouteSet.new
+        expect do
+          routes.draw do
+            Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+              auth.sessions(**options)
+            end
+          end
+        end.to raise_error(Vouch::ConfigurationError)
+      end
+    end
+
+    it "defaults OAuth to registration forms and rejects unsupported modes" do
+      routes = ActionDispatch::Routing::RouteSet.new
+      routes.draw do
+        Vouch::RouteBuilder.new(self).scope(:member, model: "Account") { |auth| auth.oauth_callbacks }
+      end
+      expect(Vouch.mapping_for(:member).oauth_registration).to eq(:form)
+      expect do
+        routes.draw do
+          Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+            auth.oauth_callbacks registration: :unknown
+          end
+        end
+      end.to raise_error(Vouch::ConfigurationError, /registration/)
+    end
+
     it "only generates routes for features called in the block" do
       test_routes = ActionDispatch::Routing::RouteSet.new
       test_routes.draw do

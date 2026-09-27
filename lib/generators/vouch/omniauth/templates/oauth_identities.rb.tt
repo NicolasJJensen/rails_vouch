@@ -2,15 +2,21 @@ class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::
   def change
     create_table :oauth_identities do |t|
 <% owner_metadata.primary_keys.zip(owner_metadata.foreign_keys).each do |key, foreign| -%>
+<% if owner_metadata.primary_keys == ["id"] -%>
+      t.references :<%= owner_association %>, null: false, type: :<%= primary_key_type || owner_primary_key_types[key] %>, foreign_key: {to_table: :<%= owner_table %>}
+<% else -%>
       t.<%= primary_key_type || owner_primary_key_types[key] %> :<%= foreign %>, null: false
+<% end -%>
 <% end -%>
       t.string :provider, null: false
       t.string :uid, null: false
       t.json :auth_data
       t.timestamps
+      t.index [:provider, :uid], unique: true
+<% unless owner_metadata.primary_keys == ["id"] -%>
+      t.index <%= owner_metadata.foreign_keys.inspect %>
+      t.foreign_key :<%= owner_table %>, column: <%= owner_metadata.foreign_keys.one? ? owner_metadata.foreign_keys.first.to_sym.inspect : owner_metadata.foreign_keys.inspect %>, primary_key: <%= owner_primary_keys.one? ? owner_primary_keys.first.to_sym.inspect : owner_primary_keys.inspect %>
+<% end -%>
     end
-    add_index :oauth_identities, [:provider, :uid], unique: true
-    add_index :oauth_identities, <%= owner_metadata.foreign_keys.inspect %>
-    add_foreign_key :oauth_identities, :<%= owner_table %>, column: <%= owner_metadata.foreign_keys.one? ? owner_metadata.foreign_keys.first.to_sym.inspect : owner_metadata.foreign_keys.inspect %>, primary_key: <%= owner_primary_keys.one? ? owner_primary_keys.first.to_sym.inspect : owner_primary_keys.inspect %>
   end
 end

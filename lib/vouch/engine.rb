@@ -28,6 +28,19 @@ module Vouch
       end
     end
 
+    initializer "vouch.oauth_initiation", after: :load_config_initializers do |app|
+      # Middleware declarations are still a proxy here. Defer inspection until
+      # Rails merges it into the concrete stack, after host OmniAuth
+      # initializers have added their builders.
+      app.config.middleware.send(:operations) << lambda do |stack|
+        next unless defined?(OmniAuth::Builder)
+        next unless stack.any? { |middleware| middleware.klass == OmniAuth::Builder }
+        next if stack.any? { |middleware| middleware.klass == Vouch::OAuthInitiation }
+
+        stack.insert_before OmniAuth::Builder, Vouch::OAuthInitiation
+      end
+    end
+
     # Re-resolve mapping reflections after each Zeitwerk reload so association
     # objects point at the current model classes.
     # Adding new scopes in config/routes.rb still requires a restart.

@@ -185,7 +185,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     session[Vouch::Session.key_for(mapping.scope_name, :selection)] = context
     session.delete(two_factor_session_key)
     flash[:notice] = I18n.t("vouch.two_factor.recovery_code_used") if method == :recovery_code
-    redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path")
+    redirect_to mapping.route_path(:sessions, :new, self)
   end
 
   def membership_evidence_qualifies?(mapping, identity, evidence)

@@ -1,10 +1,10 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
     change_table :<%= table_name %> do |t|
-      t.datetime :verified_at
-      t.string   :confirmation_nonce
+      t.datetime :verified_at unless column_exists?(:<%= table_name %>, :verified_at)
+      t.string :confirmation_nonce unless column_exists?(:<%= table_name %>, :confirmation_nonce)
+      t.index :verified_at unless index_exists?(:<%= table_name %>, :verified_at)
+      t.index :confirmation_nonce, unique: true unless index_exists?(:<%= table_name %>, :confirmation_nonce)
     end
-    add_index :<%= table_name %>, :verified_at
-    add_index :<%= table_name %>, :confirmation_nonce, unique: true
   end
 end

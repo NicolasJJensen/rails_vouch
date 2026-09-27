@@ -216,7 +216,7 @@ RSpec.describe "feature generators with namespaced models" do
     _path, migration = generated_migration(directory, "add_invitations_to_legacy_phone_credentials")
 
     expect(migration).to match(/(?:change_table|add_column) :legacy_phone_credentials/)
-    expect(migration).to match(/(?:type: |, ):uuid/)
+    expect(migration).to include("t.references :inviter, type: :uuid, foreign_key: {to_table: :legacy_phone_credentials}")
   end
 
 end

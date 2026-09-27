@@ -1,5 +1,7 @@
 class AddAuthSessionVersionTo<%= model_table(@account_class).camelize %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
-    add_column :<%= model_table(@account_class) %>, :auth_session_version, :bigint, default: 0, null: false unless column_exists?(:<%= model_table(@account_class) %>, :auth_session_version)
+    change_table :<%= model_table(@account_class) %> do |t|
+      t.bigint :auth_session_version, default: 0, null: false unless column_exists?(:<%= model_table(@account_class) %>, :auth_session_version)
+    end
   end
 end

@@ -4,7 +4,7 @@
   <p role="alert"><%%= flash[:alert] %></p>
 <%% end %>
 
-<%%= form_with url: <%= @controller_route_scope %>_session_path, method: :post do %>
+<%%= form_with url: vouch_route_path(:sessions, :create), method: :post do %>
   <p>
     <%%= label_tag :email_address, "Email address" %>
     <%%= email_field_tag :email_address, params[:email_address], autocomplete: "email", required: true %>
@@ -16,4 +16,4 @@
   <%%= submit_tag "Sign in" %>
 <%% end %>
 
-<p><%%= link_to "Create an account", new_<%= @controller_route_scope %>_registration_path %></p>
+<p><%%= link_to "Create an account", vouch_route_path(:registrations, :new) %></p>

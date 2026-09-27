@@ -18,7 +18,7 @@ module Vouch
       scope ||= auth_scope_name if respond_to?(:auth_scope_name, true)
       scope ||= Vouch.single_registered_scope
       mapping = Vouch.mapping_for(scope)
-      public_send(:"new_#{mapping.helper_prefix}_session_path")
+      mapping.route_path(:sessions, :new, self)
     end
   end
 end

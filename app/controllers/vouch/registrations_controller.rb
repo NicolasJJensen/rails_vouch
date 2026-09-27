@@ -74,7 +74,10 @@ class Vouch::RegistrationsController < ::ApplicationController
 
   def create_oauth_registration
     oauth = pending_oauth_registration
-    return redirect_to(new_session_path, alert: I18n.t('vouch.oauth.failed')) unless oauth
+    unless oauth
+      authentication_session.clear_oauth_initiation_return_to
+      return redirect_to(new_session_path, alert: I18n.t('vouch.oauth.failed'))
+    end
 
     @account = auth_mapping.account_class.new_from_omniauth(oauth)
     @account.assign_attributes(account_params)
@@ -93,6 +96,7 @@ class Vouch::RegistrationsController < ::ApplicationController
       end
       env.abort! unless completed
       clear_oauth_registration
+      authentication_session.clear_oauth_initiation_return_to
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
       outcome = complete_sign_in(@account, hook: :oauth_sign_in, method: :oauth, auth_hash: oauth)
       env.add(@account, identity)
@@ -111,7 +115,11 @@ class Vouch::RegistrationsController < ::ApplicationController
   end
 
   def account_params
-    params.require(auth_mapping.account_param_key).permit(:email_address, :password, :password_confirmation)
+    attributes = params.require(auth_mapping.account_param_key).permit(:email_address, :password, :password_confirmation)
+    if oauth_registration_context?
+      %i[password password_confirmation].each { |name| attributes.delete(name) if attributes[name].blank? }
+    end
+    attributes
   end
 
   def invited_account_params

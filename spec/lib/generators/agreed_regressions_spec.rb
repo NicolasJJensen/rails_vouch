@@ -25,8 +25,8 @@ RSpec.describe 'Scope generator integration contracts' do
   it 'emits the association used by a custom account model' do
     generate('members', 'Owner:account', 'Member:identity')
     routes = File.read("#{@directory}/config/routes.rb")
-    expect(routes).to include('auth.scope :owner, model: "Owner"')
-    expect(routes).to include('auth.membership :member, model: "Member"')
+    expect(routes).to include('auth.scope model: "Owner"')
+    expect(routes).to include('auth.membership model: "Member"')
     expect(File.read("#{@directory}/app/models/member.rb")).to include('belongs_to :owner')
   end
 
@@ -40,22 +40,22 @@ RSpec.describe 'Scope generator integration contracts' do
     expect(identity).to include('self.table_name = "admin_users"')
     migrations = Dir["#{@directory}/db/migrate/*.rb"].map { |path| File.read(path) }.join
     expect(migrations).to include('create_table :admin_users')
-    expect(migrations).to include('add_foreign_key :admin_users, :admin_accounts')
+    expect(migrations).to include('foreign_key: {to_table: :admin_accounts}')
   end
   it 'inserts the new mapping after an existing customized feature block' do
     File.write("#{@directory}/config/routes.rb", <<~SOURCE)
       Rails.application.routes.draw do
         Vouch.routes(self) do |auth|
           auth.scope :existing, model: "Existing" do
-            auth.sessions(path_names: {sign_in: "login"})
+            auth.sessions(paths: {new: "login", create: "login"})
           end
         end
       end
     SOURCE
     generate('members', 'Owner:account', 'Member:identity')
     source = File.read("#{@directory}/config/routes.rb")
-    expect(source).to match(/auth\.sessions\(path_names:.*\)\n\s+end\n\s+auth\.scope :owner/)
-    expect(source).to include('auth.membership :member, model: "Member"')
+    expect(source).to match(/auth\.sessions\(paths:.*\)\n\s+end\n\s+auth\.scope model: "Owner"/)
+    expect(source).to include('auth.membership model: "Member"')
     expect { RubyVM::InstructionSequence.compile(source) }.not_to raise_error
   end
 
@@ -64,7 +64,7 @@ RSpec.describe 'Scope generator integration contracts' do
       Rails.application.routes.draw do
         Vouch.routes(self) do |auth|
           auth.scope :existing, model: "Existing" do
-            auth.sessions(path_names: {sign_in: "login"})
+            auth.sessions(paths: {new: "login", create: "login"})
           end
         end
       end
@@ -72,7 +72,7 @@ RSpec.describe 'Scope generator integration contracts' do
     generate('members', 'Owner:account', 'Member:identity')
     source = File.read("#{@directory}/config/routes.rb")
     route_start = source.lines.index { |line| line.include?('Vouch.routes(self)') }
-    member_line = source.lines.index { |line| line.include?('auth.membership :member') }
+    member_line = source.lines.index { |line| line.include?('auth.membership model: "Member"') }
     depth = 0
     member_depth = nil
     Ripper.lex(source).each do |(position, type, token, _state)|

@@ -109,7 +109,7 @@ class Vouch::ImpersonationsController < ::ApplicationController
     return head(:unauthorized) unless allowed_impersonator_scopes.one?
 
     mapping = impersonator_mapping
-    redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path")
+    redirect_to mapping.route_path(:sessions, :new, self)
   end
 
   def authenticate_impersonation_termination!

@@ -18,6 +18,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   def failure
+    authentication_session.clear_oauth_initiation_return_to
     redirect_to new_session_path, alert: I18n.t('vouch.oauth.failed')
   end
 
@@ -38,15 +39,22 @@ class Vouch::OmniAuthsController < ::ApplicationController
     session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
     outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth, auth_hash: @auth_hash, refresh_oauth: refresh_oauth)
     case outcome
-    when :signed_in then redirect_after_authentication
-    when :needs_two_factor then redirect_to two_factor_challenges_path
-    when :needs_selection then redirect_to select_path
+    when :signed_in
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_after_authentication
+    when :needs_two_factor
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_to two_factor_challenges_path
+    when :needs_selection
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_to select_path
     else failure
     end
   end
 
   def link_identity(existing)
     if existing && auth_mapping.account_for_oauth_identity(existing) != current_account
+      authentication_session.clear_oauth_initiation_return_to
       return redirect_to root_path, alert: I18n.t('vouch.oauth.already_linked')
     end
     linked = run_authentication_hooks(:oauth_link, current_identity, auth_hash: @auth_hash) do |env|
@@ -62,9 +70,11 @@ class Vouch::OmniAuthsController < ::ApplicationController
       env.abort! unless completed
       true
     end
+    authentication_session.clear_oauth_initiation_return_to
     linked ? redirect_to(root_path, notice: I18n.t('vouch.oauth.linked')) : head(:forbidden)
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
          Vouch::Persistence::Cancelled
+    authentication_session.clear_oauth_initiation_return_to
     redirect_to root_path, alert: I18n.t('vouch.oauth.already_linked')
   end
 
@@ -95,18 +105,32 @@ class Vouch::OmniAuthsController < ::ApplicationController
       env.add(account, identity)
       true
     end
-    if committed
-      case outcome
-      when :signed_in then redirect_after_authentication
-      when :needs_two_factor then redirect_to two_factor_challenges_path
-      when :needs_selection then redirect_to select_path
-      else failure
-      end
-    else
-      head(:forbidden)
+    return oauth_registration_failed(reason: :aborted) unless committed
+
+    case outcome
+    when :signed_in
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_after_authentication
+    when :needs_two_factor
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_to two_factor_challenges_path
+    when :needs_selection
+      authentication_session.clear_oauth_initiation_return_to
+      redirect_to select_path
+    else oauth_registration_failed(reason: :completion)
     end
-  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
-         Vouch::Persistence::Cancelled
-    failure
+  rescue ActiveRecord::RecordInvalid => error
+    oauth_registration_failed(reason: :validation, error: error)
+  rescue ActiveRecord::RecordNotUnique => error
+    oauth_registration_failed(reason: :conflict, error: error)
+  rescue Vouch::Persistence::Cancelled => error
+    oauth_registration_failed(reason: :cancelled, error: error)
+  end
+
+  def oauth_registration_failed(reason:, error: nil)
+    return_to = authentication_session.oauth_initiation_return_to
+    authentication_session.clear_oauth_registration
+    authentication_session.clear_oauth_initiation_return_to
+    redirect_to return_to || new_session_path, alert: I18n.t('vouch.oauth.failed')
   end
 end

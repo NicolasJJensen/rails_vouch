@@ -36,7 +36,7 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     expect(model).not_to include("polymorphic")
     expect(account).to include('has_many :oauth_identities, class_name: "OauthIdentity"')
     expect(account).to include("foreign_key: :user_id, primary_key: :id, dependent: :destroy")
-    expect(migration).to include("t.uuid :user_id, null: false", "add_foreign_key :oauth_identities, :users")
+    expect(migration).to include("t.references :user, null: false, type: :uuid, foreign_key: {to_table: :users}")
     expect(migration).not_to include("polymorphic")
     expect(migration).to include("t.string :provider, null: false")
     expect(migration).to include("t.string :uid, null: false")
@@ -62,7 +62,7 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
 
     expect(model).to include("belongs_to :member")
     expect(member).to include("foreign_key: :member_id, primary_key: :id, dependent: :destroy")
-    expect(migration).to include("t.bigint :member_id, null: false", "add_foreign_key :oauth_identities, :members")
+    expect(migration).to include("t.references :member, null: false, type: :bigint, foreign_key: {to_table: :members}")
   end
 
   it "does not duplicate an editable owner association" do

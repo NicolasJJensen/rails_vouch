@@ -9,7 +9,7 @@ Rails.application.routes.draw do
       auth.two_factor
       auth.invitations
       auth.impersonation
-      auth.oauth_callbacks
+      auth.oauth_callbacks registration: :automatic
     end
   end
 

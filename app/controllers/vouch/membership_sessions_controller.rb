@@ -79,7 +79,7 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     session[Vouch::Session.key_for(parent.scope_name, :destination_scope)] = auth_scope_name.to_s
     destination = session.delete(return_to_session_key)
     session[Vouch::Session.key_for(parent.scope_name, :return_to)] = destination if destination
-    redirect_to public_send(:"new_#{parent.helper_prefix}_session_path")
+    redirect_to parent.route_path(:sessions, :new, self)
   end
 
   def complete_combined_scope

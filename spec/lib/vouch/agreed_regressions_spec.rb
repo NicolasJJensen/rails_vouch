@@ -83,7 +83,7 @@ RSpec.describe 'Agreed model and mapping contracts' do
           path: 'members', as: :member,
           associations: {account_identities: :users, identity_account: :account,
             identity_tenant: :organisation, tenant_identities: :users} do
-          auth.sessions(path_names: {sign_in: 'login'}, controller: 'members/sessions')
+          auth.sessions(paths: {new: 'login', create: 'login'}, controller: 'members/sessions')
         end
       end
     end

@@ -12,6 +12,8 @@ module Vouch
     class FeatureBase < Rails::Generators::Base
       include Rails::Generators::Migration
 
+      TABLE_HELPER_METHODS = %w[index foreign_key references belongs_to].freeze
+
       argument :scope, type: :string, default: "users", banner: "scope"
       class_option :primary_key_type, type: :string, default: nil,
                                        desc: "Primary key type for generated references (for example, uuid)"
@@ -153,7 +155,7 @@ module Vouch
 
         source = File.read(path)
         source.scan(/add_column\s+:<%=\s*table_name\s*%>,\s+:([a-z_]+),\s+:([a-z_]+)/).to_h.merge(
-          source.scan(/t\.([a-z_]+)\s+:([a-z_]+)/).map { |type, name| [name, type] }.to_h
+          table_column_types(source)
         )
       end
 
@@ -163,17 +165,20 @@ module Vouch
           source.scan(/add_column\s+:#{Regexp.escape(table_name)},\s+:([a-z_]+),\s+:([a-z_]+)/).each do |name, type|
             columns[name] = type
           end
-          table_migration_blocks(source).each do |block|
-            block.scan(/t\.([a-z_]+)\s+:([a-z_]+)/).each do |type, name|
-              columns[name] = type
-            end
-          end
+          table_migration_blocks(source).each { |block| columns.merge!(table_column_types(block)) }
         end
       end
 
       def table_migration_blocks(source)
         table = Regexp.escape(table_name)
         source.scan(/(?:create_table|change_table)\s*\(?\s*:#{table}\b.*?\bdo\b.*?^\s*end/m)
+      end
+
+      def table_column_types(source)
+        source.scan(/t\.([a-z_]+)\s+:([a-z_]+)/)
+          .reject { |type, _name| TABLE_HELPER_METHODS.include?(type) }
+          .map { |type, name| [name, type] }
+          .to_h
       end
 
       def migration_column_type_matches?(actual, expected)

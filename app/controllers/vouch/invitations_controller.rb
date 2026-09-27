@@ -83,7 +83,7 @@ class Vouch::InvitationsController < ::ApplicationController
       if auth_mapping.membership_scope?
         parent = Vouch.mapping_for(auth_mapping.parent_scope_name)
         session[Vouch::Session.key_for(parent.scope_name, :destination_scope)] = auth_scope_name.to_s
-        redirect_to public_send(:"new_#{parent.helper_prefix}_registration_path")
+        redirect_to parent.route_path(:registrations, :new, self)
       else
         redirect_to new_registration_path
       end

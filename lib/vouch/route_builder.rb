@@ -114,17 +114,17 @@ module Vouch
       }
     end
 
-    def sessions(path_names: {}, controller: nil)
+    def sessions(paths: {}, path_names: {}, controller: nil)
       m = @current_mapping
       ctrl = controller || "#{m.path}/sessions"
-      sign_in  = path_names[:sign_in]  || "sign_in"
-      sign_out = path_names[:sign_out] || "sign_out"
+      routes = {new: "sign_in", create: "sign_in", destroy: "sign_out"}.merge(validate_paths!(:sessions, paths))
+      m.configure_route_names(:sessions, path_names)
       prefix = m.helper_prefix
 
       router.scope m.path do
-        router.get    sign_in,  to: "#{ctrl}#new",     as: :"new_#{prefix}_session"
-        router.post   sign_in,  to: "#{ctrl}#create",   as: :"#{prefix}_session"
-        router.delete sign_out, to: "#{ctrl}#destroy",  as: :"#{prefix}_sign_out"
+        router.get routes[:new], to: "#{ctrl}#new", as: m.route_name(:sessions, :new)
+        router.post routes[:create], to: "#{ctrl}#create", as: m.route_name(:sessions, :create)
+        router.delete routes[:destroy], to: "#{ctrl}#destroy", as: m.route_name(:sessions, :destroy)
         if m.split_model? && !m.membership_scope?
           router.get "select", to: "#{m.path}/membership_sessions#new", as: :"#{prefix}_select"
           router.post "select", to: "#{m.path}/membership_sessions#create"
@@ -132,16 +132,16 @@ module Vouch
       end
     end
 
-    def registrations(path_names: {}, controller: nil)
+    def registrations(paths: {}, path_names: {}, controller: nil)
       require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.path}/registrations"
-      sign_up = path_names[:sign_up] || "sign_up"
-      prefix = m.helper_prefix
+      routes = {new: "sign_up", create: "sign_up"}.merge(validate_paths!(:registrations, paths))
+      m.configure_route_names(:registrations, path_names)
 
       router.scope m.path do
-        router.get  sign_up, to: "#{ctrl}#new",    as: :"new_#{prefix}_registration"
-        router.post sign_up, to: "#{ctrl}#create",  as: :"#{prefix}_registration"
+        router.get routes[:new], to: "#{ctrl}#new", as: m.route_name(:registrations, :new)
+        router.post routes[:create], to: "#{ctrl}#create", as: m.route_name(:registrations, :create)
       end
     end
 
@@ -202,12 +202,18 @@ module Vouch
     end
 
     def oauth_callbacks(controller: nil, callback_path: nil, failure_path: nil,
-                        callback_methods: nil, failure_methods: nil)
+                        callback_methods: nil, failure_methods: nil, registration: :form)
       require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.path}/omni_auths"
+      unless %i[form automatic].include?(registration)
+        raise Vouch::ConfigurationError, "OAuth registration must be :form or :automatic"
+      end
+      m.oauth_registration = registration
 
       callback_path ||= m.oauth_callback_path || "/#{m.path}/auth/:provider/callback"
+      m.oauth_callback_path = callback_path
+      m.oauth_callbacks_enabled = true
       failure_path  ||= m.oauth_failure_path  || "/#{m.path}/auth/failure"
       callback_methods = Array(callback_methods || m.oauth_callback_methods)
       failure_methods  = Array(failure_methods || m.oauth_failure_methods)
@@ -223,6 +229,14 @@ module Vouch
     private
 
     attr_reader :router
+
+    def validate_paths!(feature, paths)
+      allowed = feature == :sessions ? %i[new create destroy] : %i[new create]
+      values = paths.transform_keys(&:to_sym)
+      unknown = values.keys - allowed
+      raise Vouch::ConfigurationError, "Unknown #{feature} paths: #{unknown.join(', ')}" if unknown.any?
+      values
+    end
 
     def require_credentials_scope!
       return unless @current_mapping.membership_scope?

@@ -88,6 +88,14 @@ module Vouch
       end
     end
 
+    def oauth_registration?
+      pending_oauth_registration.present?
+    end
+
+    def vouch_route_path(feature, action, **options)
+      auth_mapping.route_path(feature, action, self, **options)
+    end
+
     private
 
     def auth_mapping
@@ -327,7 +335,7 @@ module Vouch
           session[Vouch::Session.key_for(mapping.scope_name, :completion)] = completion if completion
           destination = session.delete(return_to_session_key)
           session[Vouch::Session.key_for(mapping.scope_name, :return_to)] ||= destination if destination
-          return redirect_to public_send(:"new_#{mapping.helper_prefix}_session_path"), **options
+          return redirect_to mapping.route_path(:sessions, :new, self), **options
         end
       end
       completion = session.delete(Vouch::Session.key_for(auth_scope_name, :completion))
@@ -344,19 +352,19 @@ module Vouch
     end
 
     def new_session_path
-      send(:"new_#{auth_mapping.helper_prefix}_session_path")
+      vouch_route_path(:sessions, :new)
     end
 
     def session_path
-      send(:"#{auth_mapping.helper_prefix}_session_path")
+      vouch_route_path(:sessions, :create)
     end
 
     def sign_out_path
-      send(:"#{auth_mapping.helper_prefix}_sign_out_path")
+      vouch_route_path(:sessions, :destroy)
     end
 
     def new_registration_path
-      send(:"new_#{auth_mapping.helper_prefix}_registration_path")
+      vouch_route_path(:registrations, :new)
     end
 
     def select_path
@@ -390,7 +398,7 @@ module Vouch
     end
 
     def oauth_registration_required?
-      false
+      auth_mapping.oauth_registration == :form
     end
 
     def begin_oauth_registration(auth_hash)

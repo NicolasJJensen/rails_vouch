@@ -70,7 +70,7 @@ module Vouch
 
           current_mapping = Vouch.mapping_for(scope)
           session[Vouch::Session.key_for(scope, :return_to)] = request.fullpath if request.get?
-          redirect_to public_send(:"new_#{current_mapping.helper_prefix}_session_path")
+          redirect_to current_mapping.route_path(:sessions, :new, self)
         end
         @generated_methods.concat(public_names(mapping))
         helper_names.concat([identity_method, short_name, signed_in_method,
