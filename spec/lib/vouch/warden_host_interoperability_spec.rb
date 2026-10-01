@@ -28,6 +28,7 @@ end
         proxy.set_user(host_identity, scope: :host_admin_contract, store: true, event: :authentication)
       when "/vouch-sign-in"
         controller = controller_class.new
+        controller.set_request!(ActionDispatch::Request.new(env))
         controller.define_singleton_method(:session) { proxy.raw_session }
         controller.define_singleton_method(:warden) { proxy }
         controller.define_singleton_method(:reset_session) { proxy.raw_session.clear }
@@ -55,6 +56,7 @@ end
     call.call("/restored-session")
 
     expect(observed[:result]).to eq(:signed_in)
+    expect(session.fetch(Vouch::Session.key_for(:user, :confirmation)).fetch("proof")).to include("method" => "password")
     expect(observed[:host]).to eq(host_identity)
     expect(observed[:auth]).to eq(auth_identity)
     expect(events).to include([host_identity.id, :host_admin_contract], [auth_identity.id, :user])

@@ -407,7 +407,11 @@ RSpec.describe Vouch::ControllerHelpers do
     it "is the seam complete_sign_in calls" do
       narrowed = User.where(id: user1.id)
       allow(controller).to receive(:candidate_identities_for).with(account).and_return(narrowed)
-      warden_proxy = instance_double(Warden::Proxy, set_user: nil)
+      warden_proxy = instance_double(Warden::Proxy)
+      published = nil
+      allow(warden_proxy).to receive(:set_user) { |identity, **| published = identity }
+      allow(warden_proxy).to receive(:user).with(:user) { published }
+      controller.set_request!(ActionDispatch::TestRequest.create("warden" => warden_proxy))
       allow(controller).to receive(:warden).and_return(warden_proxy)
       allow(controller).to receive(:renew_authentication_session)
       allow(controller).to receive(:run_hooks).and_yield(double(add: nil))

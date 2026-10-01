@@ -8,7 +8,12 @@ RSpec.describe 'Controller integration policy' do
   before do
     allow(controller).to receive(:session).and_return(session)
     allow(controller).to receive(:warden).and_return(proxy)
-    allow(proxy).to receive(:logout)
+    identities = {}
+    allow(proxy).to receive(:raw_session).and_return(session)
+    allow(proxy).to receive(:user) { |scope| identities[scope] }
+    allow(proxy).to receive(:set_user) { |identity, scope:, **| identities[scope] = identity }
+    allow(proxy).to receive(:logout) { |*scopes| scopes.each { |scope| identities.delete(scope) } }
+    controller.set_request!(ActionDispatch::TestRequest.create("warden" => proxy))
     allow(controller).to receive(:reset_session) { session.clear }
   end
 
@@ -175,13 +180,13 @@ RSpec.describe 'Controller integration policy' do
   it 'R25 forwards a direct completion block to the lifecycle environment' do
     account = create(:account)
     create(:user, account: account)
-    allow(proxy).to receive(:set_user)
     allow(controller).to receive(:run_hooks).and_wrap_original do |method, *args, &block|
       method.call(*args, &block)
     end
     called = false
     expect(controller.send(:complete_sign_in, account) { |env| called = env.respond_to?(:add) }).to eq(:signed_in)
     expect(called).to be true
+    expect(session.fetch(Vouch::Session.key_for(:user, :confirmation)).fetch("proof")).to include("method" => "password")
   end
 
   it 'retains the authenticated primary credential and replaces a stale marker after direct completion' do
@@ -193,7 +198,6 @@ RSpec.describe 'Controller integration policy' do
       two_factor_enabled_at: Time.current
     )
     allow(controller).to receive(:needs_second_factor?).and_return(false)
-    allow(proxy).to receive(:set_user)
     session[controller.send(:signed_in_via_session_key)] = { 'type' => 'Stale', 'id' => '1' }
 
     expect(controller.send(:complete_sign_in, account, signed_in_via: credential)).to eq(:signed_in)
@@ -224,7 +228,6 @@ RSpec.describe 'Controller integration policy' do
     account = create(:account)
     create(:user, account: account)
     allow(controller).to receive(:needs_second_factor?).and_return(false)
-    allow(proxy).to receive(:set_user)
     session[controller.send(:signed_in_via_session_key)] = {
       'type' => 'Phone', 'id' => '1', 'account_fingerprint' => Vouch::PendingAuthentication.fingerprint(account)
     }
@@ -238,7 +241,6 @@ RSpec.describe 'Controller integration policy' do
     credential = account.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
       verified_at: Time.current, two_factor_enabled_at: Time.current)
     allow(controller).to receive(:needs_second_factor?).and_return(false)
-    allow(proxy).to receive(:set_user)
     expect(controller.send(:complete_sign_in, account, method: :magic_link, signed_in_via: credential)).to eq(:needs_selection)
     context = session[controller.send(:selection_session_key)]
     expect(controller.send(:bind_identity, account, identities.first, context)).to eq(:signed_in)
