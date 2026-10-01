@@ -24,6 +24,8 @@ creation, invitation acceptance and revocation, and impersonation start and end.
 
 Use `before_sign_in` or `after_sign_in` for database work that must roll back if sign-in fails. Use `after_commit_of_sign_in` for work outside the database, such as notifying another service after sign-in succeeds.
 
+Vouch opens this transaction on the mapped credentials model's writing connection, including when that model uses a separate authentication database. Associated records and callback writes must use that same writing connection to commit or roll back together. A Rails transaction cannot make writes across separate connections atomic.
+
 ```ruby
 class Users::SessionsController < Vouch::SessionsController
   before_sign_in do |account, identity|
@@ -127,7 +129,7 @@ This assumes your model supplies `suspended?`. Returning `false` from a
 callback does not cancel it; use `throw(:abort)`.
 
 Vouch rejects an authentication lifecycle started inside an existing joinable
-Active Record transaction with `Vouch::ConfigurationError`. This keeps the
+transaction on that credentials model's writing connection with `Vouch::ConfigurationError`. This keeps the
 outer `after_commit_of_*` callbacks from running before an enclosing transaction can later roll
 back. Start the authentication request outside the enclosing transaction and use the ordinary lifecycle callbacks for database work.
 

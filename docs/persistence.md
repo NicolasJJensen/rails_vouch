@@ -60,7 +60,9 @@ Vouch::Persistence.transaction(user) do
 end
 ```
 
-This example assumes your `last_login_at` column and `AuditLog` model. `transaction(record)` opens a new transaction; a cancelled operation raises `Vouch::Persistence::Cancelled` and reloads a persisted record. That exception inherits from `ActiveRecord::RecordNotSaved`.
+This example assumes your `last_login_at` column and `AuditLog` model on the same writing connection as `user`. `transaction(record)` uses the record's connection and opens a transaction or, inside an existing transaction, a savepoint. A successful savepoint does not commit its outer transaction. A cancelled operation raises `Vouch::Persistence::Cancelled` and reloads the supplied persisted record. That exception inherits from `ActiveRecord::RecordNotSaved`.
+
+Authentication lifecycle transactions use the mapped credentials model's writing connection. Registration records that must be saved atomically must share that connection; this also applies when changing a recovery address and revoking its outstanding reset token together. Vouch does not provide transactions across separate database connections.
 
 `save!(record)`, `update!(record, attributes)`, `create!(model_or_relation, attributes)`, and `destroy!(record)` check that the write succeeded. Validation and uniqueness failures remain ordinary Active Record errors.
 
