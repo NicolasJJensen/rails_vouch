@@ -17,6 +17,20 @@ RSpec.describe "Users::Registrations", type: :request do
     end
   end
 
+  it "does not register after the host renders a denial before super" do
+    Users::RegistrationsController.define_method(:create) do
+      head :forbidden
+      super()
+    end
+    expect {
+      post "/users/sign_up", params: { account: { email_address: "denied@example.com",
+        password: "password123", password_confirmation: "password123" } }
+    }.not_to change(Account, :count)
+    expect(response).to have_http_status(:forbidden)
+  ensure
+    Users::RegistrationsController.remove_method(:create)
+  end
+
   describe "POST /users/sign_up" do
     it "creates an account and user" do
       expect {

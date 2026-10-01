@@ -19,6 +19,8 @@ class Vouch::RegistrationsController < ::ApplicationController
   end
 
   def create(&response_handler)
+    return if performed?
+
     result = oauth_registration_context? ? create_oauth_registration : create_password_registration
     respond_with_authentication_result(result, response_handler) { render_registration_result(result) }
   end

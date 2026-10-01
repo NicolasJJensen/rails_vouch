@@ -52,6 +52,7 @@ RSpec.describe "Users::Impersonations", type: :request do
     Users::ImpersonationsController.define_method(:create) do
       raise "Target was not prepared" unless @identity.id == target_id
       head :forbidden
+      super()
     end
     sign_in_via_login
 
@@ -97,6 +98,25 @@ RSpec.describe "Users::Impersonations", type: :request do
   ensure
     Users::ImpersonationsController.remove_method(:create)
     Users::ImpersonationsController.__hooks = hooks if hooks
+  end
+
+  %i[destroy destroy_all].each do |action|
+    it "preserves impersonation when the host denies #{action} before super" do
+      sign_in_via_login
+      post "/users/impersonations/#{target_user.id}"
+      previous_stack = request.session[Vouch::ImpersonationStack::SESSION_KEY].deep_dup
+      Users::ImpersonationsController.define_method(action) do
+        head :forbidden
+        super()
+      end
+
+      delete(action == :destroy ? "/users/impersonations" : "/users/impersonations/all")
+
+      expect(response).to have_http_status(:forbidden)
+      expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to eq(previous_stack)
+    ensure
+      Users::ImpersonationsController.remove_method(action)
+    end
   end
 
   %i[destroy destroy_all].each do |action|

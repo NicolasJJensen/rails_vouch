@@ -7,6 +7,8 @@ class Vouch::PasswordResetsController < ::ApplicationController
   def new; end
 
   def create
+    return if performed?
+
     result = issue_password_reset
     yield result if block_given?
     return if performed?
@@ -21,6 +23,8 @@ class Vouch::PasswordResetsController < ::ApplicationController
   end
 
   def update
+    return if performed?
+
     result = replace_password
     run_hooks(:password_change, @account) if result.ok?
     yield result if block_given?

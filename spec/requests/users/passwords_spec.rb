@@ -6,6 +6,27 @@ RSpec.describe "Users::Passwords", type: :request do
   let(:account) { create(:account, email_address: "reset@example.com") }
   let!(:user) { create(:user, account: account) }
 
+  %i[create update].each do |action|
+    it "does not mutate reset credentials after the host denies #{action} before super" do
+      token = account.generate_password_reset_token!.value
+      previous_attributes = account.reload.attributes
+      Users::PasswordResetsController.define_method(action) do
+        head :forbidden
+        super()
+      end
+      if action == :create
+        post "/users/password_reset", params: { email_address: account.email_address }
+      else
+        patch "/users/password_reset", params: { token: token,
+          account: { password: "replacement123", password_confirmation: "replacement123" } }
+      end
+      expect(response).to have_http_status(:forbidden)
+      expect(account.reload.attributes).to eq(previous_attributes)
+    ensure
+      Users::PasswordResetsController.remove_method(action)
+    end
+  end
+
   describe "GET /users/password_reset/new" do
     it "renders the forgot password form" do
       get "/users/password_reset/new"

@@ -7,6 +7,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
   before_action :set_identity, only: :create
 
   def create(&response_handler)
+    return if performed?
+
     target = @identity
     original = current_impersonator
     return_path = local_referer_path
@@ -29,6 +31,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   def destroy(&response_handler)
+    return if performed?
+
     original = Vouch::ImpersonationStack.restoration_identity(session)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
@@ -52,6 +56,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   def destroy_all(&response_handler)
+    return if performed?
+
     original = Vouch::ImpersonationStack.restoration_identity(session, all: true)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
