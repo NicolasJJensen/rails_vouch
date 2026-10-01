@@ -21,7 +21,11 @@ RSpec.describe 'Account-level MFA policy', type: :request do
     account = create(:account)
 
     expect { account.enable_two_factor! }
-      .to raise_error(Vouch::ConfigurationError, /usable credential/)
+      .to raise_error(Vouch::OperationFailed) do |error|
+        expect(error.result).to be_invalid
+        expect(error.result.metadata[:record]).to equal(account)
+        expect(account.errors.full_messages).to include("Cannot enable two-factor without a usable credential")
+      end
     expect(account.reload).not_to be_two_factor_enabled
   end
 
