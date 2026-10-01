@@ -34,6 +34,55 @@ RSpec.describe Vouch::ModelMetadata do
     expect($LOADED_FEATURES).not_to include(path)
   end
 
+  it "reads literal custom table and composite key declarations without autoloading" do
+    directory = Dir.mktmpdir("vouch-metadata-source")
+    (@metadata_directories ||= []) << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/unloaded_member.rb"), <<~RUBY)
+      class UnloadedMember < ApplicationRecord
+        self.table_name = "membership_rows"
+        self.primary_key = [:region, :number]
+      end
+    RUBY
+    metadata = described_class.new("UnloadedMember", root: directory)
+    expect(metadata.table_name).to eq("membership_rows")
+    expect(metadata.primary_keys).to eq(%w[region number])
+    expect(metadata.foreign_keys).to eq(%w[unloaded_member_region unloaded_member_number])
+  end
+
+  it "does not use metadata assignments in a sibling class or instance method" do
+    directory = Dir.mktmpdir("vouch-metadata-source")
+    (@metadata_directories ||= []) << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models/metadata_area"))
+    File.write(File.join(directory, "app/models/metadata_area/member.rb"), <<~RUBY)
+      module MetadataArea
+        class Other < ApplicationRecord
+          self.table_name = "unrelated"
+        end
+        class Member < ApplicationRecord
+          self.table_name = "actual_members"
+          def change_table
+            self.table_name = "ignored"
+          end
+        end
+      end
+    RUBY
+    expect(described_class.new("MetadataArea::Member", root: directory).table_name).to eq("actual_members")
+  end
+
+  it "rejects dynamic unloaded metadata rather than guessing a conventional table" do
+    directory = Dir.mktmpdir("vouch-metadata-source")
+    (@metadata_directories ||= []) << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/dynamic_member.rb"), <<~RUBY)
+      class DynamicMember < ApplicationRecord
+        self.table_name = ENV.fetch("MEMBER_TABLE")
+      end
+    RUBY
+    expect { described_class.new("DynamicMember", root: directory).table_name }
+      .to raise_error(ArgumentError, /Load DynamicMember/)
+  end
+
   it "keeps class identity separate from a custom Active Model name" do
     model = Class.new do
       def self.model_name
@@ -173,6 +222,32 @@ RSpec.describe "feature generators with namespaced models" do
     contents = File.read(controller)
     expect(contents).to include("class Users::InvitationsController")
     expect(contents).not_to include("auth_scope :user")
+  end
+
+  it "infers invitation credentials from the normal nested declaration" do
+    directory = Dir.mktmpdir("vouch-nested-invitation")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "config"))
+    File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope model: "Person" do
+            auth.sessions
+            auth.membership identity: "Member", tenant: "Organisation" do
+              auth.sessions
+            end
+          end
+        end
+      end
+    RUBY
+    Dir.chdir(directory) do
+      generator = Vouch::Generators::InvitationsGenerator.new(["Member"])
+      generator.destination_root = directory
+      generator.invoke_all
+    end
+    _, migration = generated_migration(directory, "add_registration_required_to_people")
+    expect(migration).to include("change_table :people")
+    expect(File.read(File.join(directory, "config/routes.rb"))).to include("auth.invitations")
   end
 
   it "uses metadata from an already-loaded model with a custom table name" do

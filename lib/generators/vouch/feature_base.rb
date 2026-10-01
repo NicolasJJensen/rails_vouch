@@ -81,7 +81,7 @@ module Vouch
       end
 
       def model_metadata
-        @model_metadata ||= Vouch::ModelMetadata.new(scope)
+        @model_metadata ||= Vouch::ModelMetadata.new(scope, root: destination_root)
       end
 
       def migration_class_name

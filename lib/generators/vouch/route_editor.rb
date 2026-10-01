@@ -150,6 +150,35 @@ module Vouch
         nil
       end
 
+      def declarations(source)
+        return [] unless (tree = Ripper.sexp(source))
+        wrapper = matching_block(source, statement_matches(source, WRAPPER), WRAPPER_LINE)
+        return [] unless wrapper
+        variable = wrapper.fetch(:variable)
+        tree = Ripper.sexp(source.lines[wrapper[:start_line]..wrapper[:end_line]].join)
+        result = []
+        visit = lambda do |node, parent|
+          next unless node.is_a?(Array)
+          call = node[0] == :method_add_block ? node[1] : node
+          if call&.first == :command_call && scope_call?(call, variable)
+            arguments = call[4]
+            values = arguments&.first == :args_add_block ? arguments[1] : []
+            pairs = values.find { |value| value.first == :bare_assoc_hash }&.[](1) || []
+            options = pairs.filter_map do |pair|
+              next unless pair[0] == :assoc_new && pair.dig(1, 0) == :@label
+              [pair[1][1].delete_suffix(":"), literal_name(pair[2])]
+            end.to_h
+            entry = options.merge("name" => scope_name(arguments), "parent" => parent)
+            result << entry
+            visit.call(node[2], entry) if node[0] == :method_add_block
+          else
+            node.each { |child| visit.call(child, parent) if child.is_a?(Array) }
+          end
+        end
+        visit.call(tree, nil)
+        result
+      end
+
       def scope_names(node, variable)
         return [] unless node.is_a?(Array)
 

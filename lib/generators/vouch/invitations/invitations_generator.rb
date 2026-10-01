@@ -97,7 +97,7 @@ module Vouch
       private
 
       def registration_table_name
-        options[:single_model] ? table_name : Vouch::ModelMetadata.new(account_class).table_name
+        options[:single_model] ? table_name : Vouch::ModelMetadata.new(invitation_account_class, root: destination_root).table_name
       end
 
       def migration_class_name
@@ -131,22 +131,27 @@ module Vouch
       end
 
       def auth_scope_name
-        options[:auth_scope].presence || model_metadata.class_name.demodulize.underscore.singularize
+        options[:auth_scope].presence || inferred_auth_scope(identity_class_name)
       end
 
       def inferred_account_class
         routes = File.join(destination_root, "config/routes.rb")
         return unless File.file?(routes)
 
-        source = File.read(routes)
-        declaration = source.lines.find { |line| line.match?(/\.scope\s+:#{Regexp.escape(auth_scope_name.to_s)}\b/) }
+        declarations = RouteEditor.declarations(File.read(routes))
+        matches = declarations.select do |entry|
+          entry["name"] == auth_scope_name.to_s ||
+            (options[:auth_scope].blank? && [entry["model"], entry["identity"]].include?(identity_class_name))
+        end
+        raise Thor::Error, "Several authentication scopes use #{identity_class_name}; pass --auth-scope" if matches.length > 1
+        declaration = matches.first
         return unless declaration
-        return Regexp.last_match(1) if declaration.match(/\baccount:\s*["']([^"']+)["']/)
+        return declaration["account"] if declaration["account"]
+        return declaration["model"] if declaration["model"]
 
-        parent = declaration[/\baccount_scope:\s*:(\w+)/, 1]
-        return unless parent
-        parent_line = source.lines.find { |line| line.match?(/\.scope\s+:#{Regexp.escape(parent)}\b/) }
-        parent_line&.match(/\bmodel:\s*["']([^"']+)["']/)&.captures&.first
+        parent = declaration["parent"] || declarations.find { |entry| entry["name"] == declaration["account_scope"] }
+        parent&.fetch("model", nil)
+
       end
     end
   end
