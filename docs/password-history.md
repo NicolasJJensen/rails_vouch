@@ -174,7 +174,9 @@ class User < ApplicationRecord
 end
 ```
 
-The participating models must use compatible owner-key types. Polymorphic storage has no ordinary foreign key spanning its owner tables. The generator does not support composite keys in shared polymorphic storage; use concrete storage for those owners. Concrete custom and composite owner keys use corresponding foreign-key columns.
+Shared polymorphic storage requires a single-column primary key on every owner, with compatible database types. For example, two models using bigint IDs can share `owner_id`; a bigint ID and a UUID cannot use that same column. Polymorphic storage has no ordinary foreign key spanning its owner tables.
+
+> `--polymorphic` rejects every composite-key owner, even when all participating models have the same composite-key shape. Use concrete storage for composite owners. Vouch generates the corresponding owner columns and foreign key; it does not serialize composite keys into a shared `owner_id`.
 
 ## Existing models and generator reruns
 

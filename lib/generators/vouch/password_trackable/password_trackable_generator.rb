@@ -16,7 +16,7 @@ module Vouch
 
       def validate_archive_storage
         if polymorphic? && model_metadata.composite_primary_key?
-          raise Thor::Error, "Polymorphic archive generation needs a single-column owner key; configure composite shared storage explicitly."
+          raise Thor::Error, "Composite password archive owners need concrete storage; omit --polymorphic"
         end
 
         owner_path = File.join(destination_root, model_metadata.model_path)

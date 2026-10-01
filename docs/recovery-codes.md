@@ -125,7 +125,12 @@ class Phone < ApplicationRecord
 end
 ```
 
-For an existing custom code model, select its direct Rails association with `recovery_codes_from`. The code table must have `code_digest` and `used_at`, and its foreign keys must identify that owner. Concrete associations support custom and composite owner keys. Shared polymorphic generation supports scalar owner keys of a compatible type; use concrete tables for composite owners.
+For an existing custom code model, select its direct Rails association with `recovery_codes_from`. The code table must have `code_digest` and `used_at`, and its owner columns must identify that owner.
+
+- Concrete storage supports custom and composite owner keys, with corresponding columns and a database foreign key.
+- Shared polymorphic storage requires single-column owner keys with compatible database types. A bigint owner and a UUID owner cannot share the same `recoverable_id` column.
+
+> `--polymorphic` rejects every composite-key owner, including owners with matching composite-key shapes. Use concrete tables for those owners; Vouch does not supply a serialized-key storage adapter.
 
 ## Code format and results
 
@@ -216,7 +221,22 @@ The generated credential-management page lets the person enroll and verify a rep
 | `GET /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#show` |
 | `POST /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#create` |
 
-These routes are included by `auth.two_factor`. Edit the generated views for presentation. Recovery completes through the ordinary sign-in lifecycle, so the same [redirects](controllers.md#redirects) and [sign-in hooks](sessions-and-hooks.md#lifecycle-hooks) apply.
+`auth.two_factor_challenges` supplies the recovery challenge and code-submission routes. `auth.recovery_codes` supplies the settings page and set-generation route. The recovery-code generator adds both declarations when they are missing:
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  Vouch.routes(self) do |auth|
+    auth.scope model: "User" do
+      auth.sessions
+      auth.two_factor_challenges
+      auth.recovery_codes
+    end
+  end
+end
+```
+
+Edit the generated views for presentation. Recovery completes through the ordinary sign-in lifecycle, so the same [redirects](controllers.md#redirects) and [sign-in hooks](sessions-and-hooks.md#lifecycle-hooks) apply.
 
 ## Organisation requirements
 
