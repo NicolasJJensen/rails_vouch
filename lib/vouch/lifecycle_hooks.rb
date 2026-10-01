@@ -12,12 +12,14 @@ module Vouch
             "Authentication lifecycle hooks cannot run inside an existing joinable transaction"
         end
 
-        core_ran = false
-        result = run_hooks(:"commit_of_#{kind}", *args, **kwargs) do |env|
-          core_ran = true
-          operation.call(env)
+        operation_completed = false
+        operation_result = nil
+        run_hooks(:"commit_of_#{kind}", *args, **kwargs) do |env|
+          operation_result = operation.call(env)
+          operation_completed = true
+          operation_result
         end
-        core_ran ? result : false
+        operation_completed ? operation_result : false
       end
     end
 

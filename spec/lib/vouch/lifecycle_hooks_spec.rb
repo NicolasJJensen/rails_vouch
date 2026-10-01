@@ -89,6 +89,29 @@ RSpec.describe Vouch::LifecycleHooks do
     expect(controller_class.new.run_authenticated_save).to be(false)
   end
 
+  it "does not misreport committed work when an after-commit callback aborts" do
+    controller_class.set_hook(:commit_of_save, :after, ->(env) { env.abort! }, with_env: :positional)
+    account = Account.new(email_address: "committed-hook-#{SecureRandom.hex(6)}@example.com",
+      password: "password123", password_confirmation: "password123")
+
+    expect(controller_class.new.persist_authenticated_save { account.save! }).to be(true)
+    expect(account.reload).to be_persisted
+  ensure
+    account&.destroy
+  end
+
+  it "preserves the operation outcome when an outer callback returns false after yielding" do
+    controller_class.set_hook(:commit_of_save, :around, ->(operation) { operation.call; false })
+
+    expect(controller_class.new.run_authenticated_save).to be(true)
+  end
+
+  it "still propagates unexpected failures after the operation completes" do
+    controller_class.set_hook(:commit_of_save, :after, -> { raise "after-commit failure" })
+
+    expect { controller_class.new.run_authenticated_save }.to raise_error("after-commit failure")
+  end
+
   context "with a separate authentication connection" do
     before do
       stub_const("LifecycleAuthRecord", Class.new(ActiveRecord::Base) do
