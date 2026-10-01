@@ -15,7 +15,11 @@ module Vouch
 
       value
     rescue Cancelled
-      record.reload if record.persisted?
+      if record.persisted?
+        errors = record.errors.dup
+        record.reload
+        record.errors.copy!(errors)
+      end
       raise
     end
 

@@ -17,12 +17,16 @@ RSpec.describe Vouch::Persistence do
   end
 
   it "rejects a root transaction rolled back by a before-commit callback" do
-    @record_class.before_commit { raise ActiveRecord::Rollback }
+    @record_class.before_commit do
+      errors.add(:base, "Security update was cancelled")
+      raise ActiveRecord::Rollback
+    end
 
     expect {
       described_class.transaction(@record) { @record.update!(email_address: "changed@example.com") }
     }.to raise_error(Vouch::Persistence::Cancelled)
 
+    expect(@record.errors.full_messages).to eq(["Security update was cancelled"])
     expect(@record.reload.email_address).not_to eq("changed@example.com")
   end
 
