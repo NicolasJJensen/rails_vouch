@@ -5,15 +5,15 @@ module Vouch
     class Cancelled < ActiveRecord::RecordNotSaved; end
 
     def self.transaction(record)
-      completed = false
+      completed = Object.new
+      value = nil
       result = record.class.transaction(requires_new: true) do
         value = yield
-        completed = true
-        value
+        completed
       end
-      raise Cancelled.new('Authentication persistence was cancelled', record) unless completed
+      raise Cancelled.new('Authentication persistence was cancelled', record) unless result.equal?(completed)
 
-      result
+      value
     rescue Cancelled
       record.reload if record.persisted?
       raise
