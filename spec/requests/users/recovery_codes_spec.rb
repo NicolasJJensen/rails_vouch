@@ -16,8 +16,8 @@ RSpec.describe "Users::RecoveryCodes", type: :request do
 
     expect(response).to have_http_status(:created)
     expect(account.reload.recovery_codes_remaining).to eq(10)
-    expect(other.reload.consume_recovery_code!(other_codes.first)).to be_ok
-    expect(account.consume_recovery_code!(old.first)).not_to be_ok
+    expect(other.reload.consume_recovery_code(other_codes.first)).to be_ok
+    expect(account.consume_recovery_code(old.first)).not_to be_ok
   end
 
   it "replaces only the selected credential's recovery-code set" do
@@ -32,8 +32,8 @@ RSpec.describe "Users::RecoveryCodes", type: :request do
     post "/users/recovery_codes", params: {recovery_owner_type: "credential", recovery_owner_id: credential.id}
 
     expect(response).to have_http_status(:created)
-    expect(credential.consume_recovery_code!(old.first)).not_to be_ok
-    expect(sibling.consume_recovery_code!(sibling_codes.first)).to be_ok
+    expect(credential.consume_recovery_code(old.first)).not_to be_ok
+    expect(sibling.consume_recovery_code(sibling_codes.first)).to be_ok
   end
 
   it "does not expose another account's credential recovery set" do

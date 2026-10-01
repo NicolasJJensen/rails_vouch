@@ -244,7 +244,7 @@ RSpec.describe "single-use authentication concurrency" do
     code = credential.regenerate_backup_codes!(count: 1).value.first
 
     results = concurrently_after_lock_precheck(TwoFactorCredential, credential.id) do |candidate|
-      candidate.consume_backup_code!(code)
+      candidate.consume_recovery_code(code)
     end
 
     expect(results.count(&:ok?)).to eq(1)
@@ -260,7 +260,7 @@ RSpec.describe "single-use authentication concurrency" do
     account.update!(recovery_attempts: threshold - 1)
 
     results = concurrently_after_lock_precheck(Account, account.id) do |candidate|
-      candidate.consume_recovery_code!("WRONG-CODE")
+      candidate.consume_recovery_code("WRONG-CODE")
     end
 
     expect(results.count(&:invalid?)).to eq(1)

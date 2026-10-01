@@ -70,14 +70,14 @@ RSpec.describe 'Authentication persistence failures' do
         credential = create(:account).two_factor_credentials.create!(
           verified_at: Time.current, two_factor_enabled_at: Time.current
         )
-        row = credential.backup_codes.create!(code_digest: BCrypt::Password.create('backup-proof'))
+        row = credential.backup_codes.create!(code_digest: BCrypt::Password.create(Vouch::RecoveryCodes.normalize('backup-proof')))
         cancelling(BackupCode, :update, timing) do
           2.times do
-            expect(credential.consume_backup_code!('backup-proof')).to be_cancelled
+            expect(credential.consume_recovery_code('backup-proof')).to be_cancelled
             expect(row.reload.used_at).to be_nil
           end
         end
-        expect(credential.consume_backup_code!('backup-proof')).to be_ok
+        expect(credential.consume_recovery_code('backup-proof')).to be_ok
       end
 
       it 'does not reset a password or clear its token' do
@@ -95,7 +95,7 @@ RSpec.describe 'Authentication persistence failures' do
       it 'does not deliver an OTP whose nonce was not saved' do
         phone = create(:phone_verification)
         cancelling(PhoneVerification, :update, timing) do
-          expect { phone.start_verification! }.to raise_error(ActiveRecord::RecordNotSaved)
+          expect(phone.start_verification).to be_cancelled
           expect(phone.last_delivered_code).to be_nil
           expect(phone.reload.verification_nonce).to be_nil
         end
@@ -113,7 +113,7 @@ RSpec.describe 'Authentication persistence failures' do
         credential = create(:account).two_factor_credentials.create!
         old = credential.backup_codes.create!(code_digest: BCrypt::Password.create('old-backup'))
         cancelling(BackupCode, :create, timing) do
-          expect { credential.regenerate_backup_codes!(count: 2) }.to raise_error(ActiveRecord::RecordNotSaved)
+          expect { credential.regenerate_backup_codes!(count: 2) }.to raise_error(Vouch::OperationFailed)
           expect(credential.backup_codes.reload.ids).to eq([old.id])
         end
       end
@@ -124,7 +124,7 @@ RSpec.describe 'Authentication persistence failures' do
         allow(account).to receive(:recoverable_value).and_call_original
         allow(account).to receive(:recoverable_value).with(:code_count).and_return(2)
         cancelling(Vouch::RecoveryCode, :create, timing) do
-          expect { account.generate_recovery_codes! }.to raise_error(ActiveRecord::RecordNotSaved)
+          expect { account.generate_recovery_codes! }.to raise_error(Vouch::OperationFailed)
           expect(account.vouch_recovery_codes.reload.ids).to eq([old.id])
         end
       end
@@ -134,11 +134,11 @@ RSpec.describe 'Authentication persistence failures' do
           account = create(:account, recovery_attempts: 2)
           row = account.vouch_recovery_codes.create!(code_digest: BCrypt::Password.create('RECOVERY'))
           cancelling(model, :update, timing) do
-          expect(account.consume_recovery_code!('RECOVERY')).to be_cancelled
+          expect(account.consume_recovery_code('RECOVERY')).to be_cancelled
             expect(row.reload.used_at).to be_nil
             expect(account.reload.recovery_attempts).to eq(2)
           end
-        expect(account.consume_recovery_code!('RECOVERY')).to be_ok
+        expect(account.consume_recovery_code('RECOVERY')).to be_ok
         end
       end
     end
@@ -148,9 +148,9 @@ RSpec.describe 'Authentication persistence failures' do
     credential = create(:account).two_factor_credentials.create!(
       verified_at: Time.current, two_factor_enabled_at: Time.current
     )
-    credential.backup_codes.create!(code_digest: BCrypt::Password.create('backup-proof'))
+    credential.backup_codes.create!(code_digest: BCrypt::Password.create(Vouch::RecoveryCodes.normalize('backup-proof')))
     allow_any_instance_of(BackupCode).to receive(:update!).and_raise(ActiveRecord::StatementInvalid, 'database error')
-    expect { credential.consume_backup_code!('backup-proof') }.to raise_error(ActiveRecord::StatementInvalid)
+    expect { credential.consume_recovery_code('backup-proof') }.to raise_error(ActiveRecord::StatementInvalid)
   end
 
   it 'preserves the explicit exception from an aborting callback' do

@@ -17,7 +17,7 @@ class Vouch::RecoveryCodesController < ::ApplicationController
     @recovery_owner = recovery_owner
     return head(:not_found) unless @recovery_owner
 
-    result = @recovery_owner.generate_recovery_codes!
+    result = @recovery_owner.generate_recovery_codes
     if result.ok?
       @recovery_codes = result.value
       @remaining_recovery_codes = @recovery_codes.length

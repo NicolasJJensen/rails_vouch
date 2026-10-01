@@ -49,11 +49,10 @@ RSpec.describe 'Credential review regressions' do
   end
 
   it 'R7 uses cryptographic randomness even if host code seeds Ruby random' do
-    account = Account.new
     srand(123)
-    first = account.send(:generate_recovery_plaintext)
+    first = Vouch::RecoveryCodes.generate
     srand(123)
-    expect(account.send(:generate_recovery_plaintext)).not_to eq(first)
+    expect(Vouch::RecoveryCodes.generate).not_to eq(first)
   ensure
     srand
   end
@@ -62,12 +61,12 @@ RSpec.describe 'Credential review regressions' do
     account = create(:account)
     code = account.generate_recovery_codes!.value.first
     Account.find(account.id).update!(recovery_locked_at: Time.current)
-    expect(account.consume_recovery_code!(code)).to be_locked
+    expect(account.consume_recovery_code(code)).to be_locked
   end
 
   it 'R21 applies model recovery limits' do
     account = create(:account)
-    allow(Account).to receive(:auth_options).and_return(recoverable: {code_count: 2})
+    allow(Account).to receive(:auth_options).and_return(recovery_codes: {code_count: 2})
     expect(account.generate_recovery_codes!.value.size).to eq(2)
   end
 

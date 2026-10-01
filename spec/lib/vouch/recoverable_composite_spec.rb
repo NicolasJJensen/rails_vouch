@@ -41,12 +41,12 @@ RSpec.describe "Recoverable with composite primary keys" do
 
     generated = first.generate_recovery_codes!
     code = generated.value.first
-    expect(first.vouch_recovery_codes.count).to eq(Vouch.configuration.recoverable.code_count)
+    expect(first.vouch_recovery_codes.count).to eq(Vouch.configuration.recovery_codes.code_count)
     expect(first.vouch_recovery_codes.first.recoverable).to eq(first)
     expect(second.vouch_recovery_codes).to be_empty
 
-    expect(second.consume_recovery_code!(code)).to be_invalid
-    expect(first.consume_recovery_code!(code)).to be_ok
+    expect(second.consume_recovery_code(code)).to be_invalid
+    expect(first.consume_recovery_code(code)).to be_ok
 
     first.destroy!
     expect(Vouch::RecoveryCode.where(recoverable_key: Vouch::RecordKey.dump(first))).to be_empty

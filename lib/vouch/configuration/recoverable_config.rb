@@ -8,15 +8,12 @@ module Vouch
     # successful consume or explicit `generate_recovery_codes!`.
     #
     class RecoverableConfig
-      attr_accessor :code_count, :code_length, :max_attempts, :lockout_duration, :low_threshold
+      attr_accessor :max_attempts, :lockout_duration
 
       def initialize(root_configuration = nil)
         @root_configuration = root_configuration
-        @code_count       = 10
-        @code_length      = 8
         @max_attempts     = 10
         @lockout_duration = nil
-        @low_threshold    = 3
       end
 
       def lockout_duration

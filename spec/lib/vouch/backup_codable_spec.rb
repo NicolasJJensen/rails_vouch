@@ -48,7 +48,7 @@ RSpec.describe Vouch::BackupCodable do
 
   describe "#regenerate_backup_codes!" do
     it "creates the configured number of codes and returns them in plaintext" do
-      count = Vouch.configuration.backup_codable.code_count
+      count = Vouch.configuration.recovery_codes.code_count
       codes = credential.regenerate_backup_codes!.value
 
       expect(codes.length).to eq(count)
@@ -87,36 +87,36 @@ RSpec.describe Vouch::BackupCodable do
     it "returns true on a valid code and marks exactly one row used" do
       code = codes.first
 
-      expect(credential.consume_backup_code!(code)).to be_ok
+      expect(credential.consume_recovery_code(code)).to be_ok
       expect(credential.backup_codes.where.not(used_at: nil).count).to eq(1)
     end
 
     it "returns false on a wrong code and doesn't mark anything used" do
-      expect(credential.consume_backup_code!("00000000")).to be_invalid
+      expect(credential.consume_recovery_code("00000000")).to be_invalid
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
     it "returns false on blank input without raising" do
-      expect(credential.consume_backup_code!("")).to be_invalid
-      expect(credential.consume_backup_code!(nil)).to be_invalid
+      expect(credential.consume_recovery_code("")).to be_invalid
+      expect(credential.consume_recovery_code(nil)).to be_invalid
     end
 
     it "strips surrounding whitespace from the submitted code" do
       code = codes.first
-      expect(credential.consume_backup_code!("  #{code}  ")).to be_ok
+      expect(credential.consume_recovery_code("  #{code}  ")).to be_ok
     end
 
     it "won't reuse an already-used code" do
       code = codes.first
-      credential.consume_backup_code!(code)
-      expect(credential.consume_backup_code!(code)).to be_invalid
+      credential.consume_recovery_code(code)
+      expect(credential.consume_recovery_code(code)).to be_invalid
     end
 
     it "rolls back code consumption when recording factor success is cancelled" do
       callback = proc { raise ActiveRecord::Rollback }
       TwoFactorCredential.set_callback(:update, :before, callback)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_cancelled
+      expect(credential.consume_recovery_code(codes.first)).to be_cancelled
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     ensure
       TwoFactorCredential.skip_callback(:update, :before, callback) if callback
@@ -125,21 +125,21 @@ RSpec.describe Vouch::BackupCodable do
     it "does not consume a code while the factor is locked" do
       credential.update!(two_factor_locked_at: 1.minute.ago)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_locked
+      expect(credential.consume_recovery_code(codes.first)).to be_locked
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
     it "does not consume a code while the factor is disabled" do
       credential.update!(two_factor_enabled_at: nil)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_locked
+      expect(credential.consume_recovery_code(codes.first)).to be_locked
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
     it "does not consume a code while the factor is unverified" do
       credential.update!(verified_at: nil)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_locked
+      expect(credential.consume_recovery_code(codes.first)).to be_locked
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
@@ -153,7 +153,7 @@ RSpec.describe Vouch::BackupCodable do
         original.call(*args, **kwargs)
       end
 
-      expect(credential.consume_backup_code!(codes.first)).to be_locked
+      expect(credential.consume_recovery_code(codes.first)).to be_locked
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
@@ -161,7 +161,7 @@ RSpec.describe Vouch::BackupCodable do
       credential.singleton_class.send(:undef_method, :verified?)
       credential.update!(two_factor_locked_at: 1.minute.ago)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_locked
+      expect(credential.consume_recovery_code(codes.first)).to be_locked
       expect(credential.backup_codes.where.not(used_at: nil)).to be_empty
     end
 
@@ -170,7 +170,7 @@ RSpec.describe Vouch::BackupCodable do
       credential.singleton_class.send(:undef_method, :two_factor_enabled?)
       credential.singleton_class.send(:undef_method, :verified?)
 
-      expect(credential.consume_backup_code!(codes.first)).to be_ok
+      expect(credential.consume_recovery_code(codes.first)).to be_ok
     end
   end
 
@@ -211,30 +211,30 @@ RSpec.describe Vouch::BackupCodable do
       count = codes.length
 
       expect(credential.backup_codes_remaining).to eq(count)
-      credential.consume_backup_code!(codes.first)
+      credential.consume_recovery_code(codes.first)
       expect(credential.backup_codes_remaining).to eq(count - 1)
     end
   end
 
   describe "#backup_codes_low?" do
     it "returns true when remaining < warn_at_remaining" do
-      original = Vouch.configuration.backup_codable.warn_at_remaining
-      Vouch.configuration.backup_codable.warn_at_remaining = 5
+      original = Vouch.configuration.recovery_codes.low_threshold
+      Vouch.configuration.recovery_codes.low_threshold = 5
 
       codes = credential.regenerate_backup_codes!(count: 4).value
       expect(credential.backup_codes_low?).to be true
     ensure
-      Vouch.configuration.backup_codable.warn_at_remaining = original
+      Vouch.configuration.recovery_codes.low_threshold = original
     end
 
     it "returns false when at or above the threshold" do
-      original = Vouch.configuration.backup_codable.warn_at_remaining
-      Vouch.configuration.backup_codable.warn_at_remaining = 3
+      original = Vouch.configuration.recovery_codes.low_threshold
+      Vouch.configuration.recovery_codes.low_threshold = 3
 
       credential.regenerate_backup_codes!(count: 3)
       expect(credential.backup_codes_low?).to be false
     ensure
-      Vouch.configuration.backup_codable.warn_at_remaining = original
+      Vouch.configuration.recovery_codes.low_threshold = original
     end
   end
 end

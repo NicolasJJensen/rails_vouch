@@ -190,8 +190,8 @@ RSpec.describe "Users::Impersonations", type: :request do
     post "/users/impersonations/#{target_user.id}"
     post "/users/recovery_codes", params: {recovery_owner_type: "account"}
     expect(response).to have_http_status(:created)
-    expect(admin_account.consume_recovery_code!(original_codes.first)).not_to be_ok
-    expect(target_account.consume_recovery_code!(target_codes.first)).to be_ok
+    expect(admin_account.consume_recovery_code(original_codes.first)).not_to be_ok
+    expect(target_account.consume_recovery_code(target_codes.first)).to be_ok
   end
 
 end

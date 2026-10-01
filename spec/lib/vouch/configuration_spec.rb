@@ -110,11 +110,11 @@ RSpec.describe Vouch::Configuration do
 
   describe "recoverable defaults" do
     it "sets code_count to 10" do
-      expect(config.recoverable.code_count).to eq(10)
+      expect(config.recovery_codes.code_count).to eq(10)
     end
 
     it "sets code_length to 8" do
-      expect(config.recoverable.code_length).to eq(8)
+      expect(config.recovery_codes.code_length).to eq(8)
     end
 
     it "sets max_attempts to 10" do
@@ -122,7 +122,7 @@ RSpec.describe Vouch::Configuration do
     end
 
     it "sets low_threshold to 3" do
-      expect(config.recoverable.low_threshold).to eq(3)
+      expect(config.recovery_codes.low_threshold).to eq(3)
     end
   end
 

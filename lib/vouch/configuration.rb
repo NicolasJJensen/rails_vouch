@@ -74,8 +74,8 @@ module Vouch
       @magic_linkable ||= MagicLinkableConfig.new(self)
     end
 
-    def backup_codable
-      @backup_codable ||= BackupCodableConfig.new(self)
+    def recovery_codes
+      @recovery_codes ||= RecoveryCodesConfig.new
     end
 
     def recoverable

@@ -62,7 +62,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
 
   def consume_recovery(&response_handler)
     owner = recovery_owner_from_params
-    result = owner ? owner.consume_recovery_code!(params[:recovery_code]) : Vouch::Result.invalid
+    result = owner ? owner.consume_recovery_code(params[:recovery_code]) : Vouch::Result.invalid
     if result.ok?
       return complete_additional_authentication(:recovery_code, nil, owner, &response_handler) if additional_authentication?
       return finish_sign_in(:recovery_code, nil, owner, &response_handler)

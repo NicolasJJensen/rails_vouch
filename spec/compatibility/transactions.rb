@@ -1,4 +1,4 @@
-gem 'activerecord', ENV.fetch('AUTH_AR_VERSION', '>= 8.0')
+gem 'activerecord', ENV.fetch('AUTH_AR_VERSION', '>= 8.1')
 require 'logger'
 require 'active_record'
 require 'bcrypt'
@@ -16,11 +16,11 @@ class CompatBackup < ActiveRecord::Base
  self.table_name = 'compat_backups'
 end
 host = CompatHost.create!
-row = host.backup_codes.create!(code_digest: BCrypt::Password.create('abc123'))
+row = host.backup_codes.create!(code_digest: BCrypt::Password.create(Vouch::RecoveryCodes.normalize('abc123')))
 puts "Rails #{ActiveRecord::VERSION::STRING}"
-raise 'first consumption failed' unless host.consume_backup_code!('abc123').ok?
+raise 'first consumption failed' unless host.consume_recovery_code('abc123').ok?
 raise 'consumption did not persist' unless row.reload.used_at
-raise 'backup code replay accepted' if host.consume_backup_code!('abc123').ok?
+raise 'backup code replay accepted' if host.consume_recovery_code('abc123').ok?
 
 
 require_relative '../../lib/vouch/lockout_counter'
@@ -34,7 +34,7 @@ class CompatRecoverable < ActiveRecord::Base
  end
 end
 host = CompatRecoverable.create!
-3.times { raise 'blank recovery code accepted' if host.consume_recovery_code!('').ok? }
+3.times { raise 'blank recovery code accepted' if host.consume_recovery_code('').ok? }
 raise 'recovery attempts did not persist' unless host.reload.recovery_attempts == 3
 raise 'recovery lock did not persist' unless host.recovery_locked_at
 puts 'Backup replay and recovery lockout regressions passed'

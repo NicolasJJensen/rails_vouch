@@ -15,6 +15,7 @@ Both use the same hashed-storage and single-use implementation. Replacing a set 
 
 - [Account-owned codes](#account-owned-codes)
 - [Credential-owned codes](#credential-owned-codes)
+- [Code format and results](#code-format-and-results)
 - [Generate and replace a set](#generate-and-replace-a-set)
 - [Sign in with a code](#sign-in-with-a-code)
 - [Routes and customization](#routes-and-customization)
@@ -79,6 +80,25 @@ end
 The internal association is named `backup_codes`; the public feature and its model methods use recovery-code terminology. The same setup works for other `TwoFactorable` credentials, including email and authenticator models.
 
 Vouch verifies that the selected credential belongs to the pending or signed-in account. A credential-specific code cannot restore a credential that has been disabled, locked or had its verification cleared. Account-owned recovery codes remain independent of a device's state.
+
+## Code format and results
+
+Account and credential recovery codes use the same format, such as `ABCD-EFGH`. Spaces, hyphens and letter case do not affect entry: `abcd efgh` matches that code. Every failed submission counts once, including a blank value. Trying an ordinary MFA code does not spend a second attempt on its recovery-code lookup.
+
+Configure generation and the low-count reminder together:
+
+```ruby
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.recovery_codes.code_count = 10
+  config.recovery_codes.code_length = 8
+  config.recovery_codes.low_threshold = 3
+end
+```
+
+`recovery_codes_low?` returns true when fewer than `low_threshold` unused codes remain. Use it to display a reminder; it does not generate replacements.
+
+Both owners expose normal methods that return a `Vouch::Result`, and bang methods that raise `Vouch::OperationFailed` for an unsuccessful result. The exception's `result` contains the same failure information. Unexpected delivery or database exceptions propagate.
 
 ## Generate and replace a set
 

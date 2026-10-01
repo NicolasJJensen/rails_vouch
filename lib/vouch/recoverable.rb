@@ -2,41 +2,12 @@
 
 require_relative "persistence"
 
-# Recoverable concern — one-time recovery codes for account recovery when
-# the user has lost access to their primary 2FA method.
-#
-# Attached to the host's user-equivalent model (probably Account). One set
-# per user across all 2FA methods. BCrypt-hashed at rest, single-use,
-# regenerable. Codes never expire — only `used_at` invalidates one.
-#
-# Required columns on the host (added by `bin/rails g vouch:recoverable`):
-#   - recovery_attempts:bigint default: 0, null: false
-#   - recovery_locked_at:datetime
-#
-# Required table: vouch_recovery_codes (also created by the
-# generator). See Vouch::RecoveryCode.
-#
-# Public surface:
-#   - #generate_recovery_codes!     => Result(Array<String>) (plaintext, ONCE)
-#   - #consume_recovery_code!(code) => Result
-#   - #recovery_codes_remaining     => Integer
-#   - #recovery_codes_low?          => Boolean
-#   - #recovery_locked?             => Boolean
-#
-# Concurrency: both generate and consume `lock!` the host row at the top of
-# their transaction. Nothing else in the gem touches the recovery-code
-# table directly, so deadlock risk is nil under normal operation.
-# `ActiveRecord::Deadlocked` propagates if a host deadlocks against
-# concurrent writers; the host owns retry policy.
-#
+# Account-owned recovery codes share generation and consumption with
+# credential-owned sets. Row locking serializes replacement and consumption.
 module Vouch
   module Recoverable
     extend ActiveSupport::Concern
     include Vouch::LockoutCounter
-
-    # Crockford alphabet (no I, L, O, U, 0, 1) — matches otp_courier's
-    # alphanumeric charset.
-    CROCKFORD_CHARS = "ABCDEFGHJKMNPQRSTVWXYZ23456789".chars.freeze
 
     included do
       dependent = respond_to?(:composite_primary_key?) && composite_primary_key? ? nil : :destroy
@@ -65,14 +36,14 @@ module Vouch
     end
 
     def recovery_codes_low?
-      recovery_codes_remaining < recoverable_value(:low_threshold)
+      recovery_codes_remaining < recovery_code_setting(:low_threshold)
     end
 
     # Generate a fresh set of recovery codes. Deletes any existing rows
     # (used or unused). Returns the plaintext set — caller MUST display
     # them immediately; the gem never reproduces them.
-    def generate_recovery_codes!
-      plaintexts = Array.new(recoverable_value(:code_count)) { generate_recovery_plaintext }
+    def generate_recovery_codes(count: recovery_code_setting(:code_count), length: recovery_code_setting(:code_length))
+      plaintexts = Vouch::RecoveryCodes.generate(count: count, length: length)
       attributes = {}
       if composite_recovery_key?
         attributes = {recoverable_type: recoverable_polymorphic_name, recoverable_key: Vouch::RecordKey.dump(self)}
@@ -81,7 +52,9 @@ module Vouch
         plaintexts: plaintexts, attributes: attributes,
         after_replace: -> { Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil) })
       return result unless result.ok?
-      Vouch::Result.ok(plaintexts.map { |code| format_recovery_code(code) })
+      Vouch::Result.ok(plaintexts)
+    rescue Vouch::Persistence::Cancelled => error
+      Vouch::Result.cancelled(record: self, error: error)
     end
 
     # Consume a single recovery code. Returns Result.ok on success (marks
@@ -91,22 +64,31 @@ module Vouch
     # `code` is normalized: ALL whitespace stripped (handles "ab cd-ef 12"
     # pasted from a wrapped email), then hyphens dropped,
     # then upcase. Blank input returns Result.invalid.
-    def consume_recovery_code!(code)
-      return Vouch::Result.locked if recovery_locked?
+    def consume_recovery_code(code)
+      return Vouch::Result.locked(record: self) if recovery_locked?
 
-      normalized = code.to_s.gsub(/\s/, "").delete("-").upcase
-      if normalized.empty?
-        Vouch::Persistence.transaction(self) { lock!; bump_failed_recovery_attempt! }
-        return Vouch::Result.invalid
-      end
-
-      Vouch::RecoveryCodes.consume!(self, relation: recovery_codes_relation, submitted: normalized,
-        normalize: ->(value) { value }, eligible: -> { !recovery_locked? },
+      Vouch::RecoveryCodes.consume!(self, relation: -> { recovery_codes_relation }, submitted: code, eligible: -> { !recovery_locked? },
         on_success: ->(_) { Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil) },
         on_failure: -> { bump_failed_recovery_attempt! })
     end
 
+    def generate_recovery_codes!(**options)
+      result = generate_recovery_codes(**options)
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
+    end
+
+    def consume_recovery_code!(code)
+      result = consume_recovery_code(code)
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
+    end
+
     private
+
+    def recovery_code_setting(attribute)
+      respond_to?(:auth_config) ? auth_config(:recovery_codes, attribute) : Vouch.configuration.recovery_codes.public_send(attribute)
+    end
 
     def composite_recovery_key?
       self.class.respond_to?(:composite_primary_key?) && self.class.composite_primary_key?
@@ -150,17 +132,5 @@ module Vouch
       Vouch::Persistence.update!(self, attributes)
     end
 
-    def generate_recovery_plaintext
-      Array.new(recoverable_value(:code_length)) do
-        CROCKFORD_CHARS.fetch(SecureRandom.random_number(CROCKFORD_CHARS.length))
-      end.join
-    end
-
-    # Display format: split into two halves with a hyphen, e.g. "AB12-CD34".
-    # Storage compares against the dehyphenated form (see consume_recovery_code!).
-    def format_recovery_code(plaintext)
-      mid = plaintext.length / 2
-      "#{plaintext[0, mid]}-#{plaintext[mid..]}"
-    end
   end
 end

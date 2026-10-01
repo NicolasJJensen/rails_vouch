@@ -38,7 +38,7 @@ RSpec.describe Vouch::Recoverable do
   describe "#generate_recovery_codes!" do
     it "returns the configured number of plaintext codes" do
       codes = account.generate_recovery_codes!.value
-      expect(codes.length).to eq(Vouch.configuration.recoverable.code_count)
+      expect(codes.length).to eq(Vouch.configuration.recovery_codes.code_count)
     end
 
     it "formats codes with a hyphen in the middle" do
@@ -60,7 +60,7 @@ RSpec.describe Vouch::Recoverable do
     it "persists one row per code, BCrypt-hashed" do
       account.generate_recovery_codes!
       stored = account.vouch_recovery_codes
-      expect(stored.length).to eq(Vouch.configuration.recoverable.code_count)
+      expect(stored.length).to eq(Vouch.configuration.recovery_codes.code_count)
       stored.each do |row|
         expect(row.code_digest).to match(/\A\$2[ab]\$/) # BCrypt prefix
         expect(row.used_at).to be_nil
@@ -90,7 +90,7 @@ RSpec.describe Vouch::Recoverable do
 
     it "returns true on a correct code and marks the row used" do
       code = codes.first
-      expect(account.consume_recovery_code!(code)).to be_ok
+      expect(account.consume_recovery_code(code)).to be_ok
 
       digest_match = account.vouch_recovery_codes
                             .where.not(used_at: nil)
@@ -99,62 +99,62 @@ RSpec.describe Vouch::Recoverable do
     end
 
     it "decreases recovery_codes_remaining by 1 on success" do
-      expect { account.consume_recovery_code!(codes.first) }
+      expect { account.consume_recovery_code(codes.first) }
         .to change { account.recovery_codes_remaining }.by(-1)
     end
 
     it "returns false on the second use of the same code" do
       code = codes.first
-      account.consume_recovery_code!(code)
-      expect(account.consume_recovery_code!(code)).to be_invalid
+      account.consume_recovery_code(code)
+      expect(account.consume_recovery_code(code)).to be_invalid
     end
 
     it "returns false on a code that was never issued" do
-      expect(account.consume_recovery_code!("XXXX-XXXX")).to be_invalid
+      expect(account.consume_recovery_code("XXXX-XXXX")).to be_invalid
     end
 
     it "returns false on blank input without raising" do
-      expect(account.consume_recovery_code!("")).to be_invalid
-      expect(account.consume_recovery_code!(nil)).to be_invalid
-      expect(account.consume_recovery_code!("   ")).to be_invalid
+      expect(account.consume_recovery_code("")).to be_invalid
+      expect(account.consume_recovery_code(nil)).to be_invalid
+      expect(account.consume_recovery_code("   ")).to be_invalid
     end
 
     it "accepts codes with arbitrary whitespace (handles wrapped mail)" do
       code = codes.first
       noisy = "  #{code[0, 2]} #{code[2, 2]}-#{code[5, 2]} #{code[7, 2]}  "
-      expect(account.consume_recovery_code!(noisy)).to be_ok
+      expect(account.consume_recovery_code(noisy)).to be_ok
     end
 
     it "accepts lowercase input" do
       code = codes.first
-      expect(account.consume_recovery_code!(code.downcase)).to be_ok
+      expect(account.consume_recovery_code(code.downcase)).to be_ok
     end
 
     it "accepts a code without hyphens" do
       code = codes.first
-      expect(account.consume_recovery_code!(code.delete("-"))).to be_ok
+      expect(account.consume_recovery_code(code.delete("-"))).to be_ok
     end
 
     it "resets recovery_attempts on success" do
       account.update!(recovery_attempts: 3)
-      account.consume_recovery_code!(codes.first)
+      account.consume_recovery_code(codes.first)
       expect(account.reload.recovery_attempts).to eq(0)
     end
 
     it "increments recovery_attempts on failure" do
-      expect { account.consume_recovery_code!("WRONG-CODE") }
+      expect { account.consume_recovery_code("WRONG-CODE") }
         .to change { account.reload.recovery_attempts }.by(1)
     end
 
     it "locks the host after max_attempts failed codes" do
       max = Vouch.configuration.recoverable.max_attempts
-      max.times { account.consume_recovery_code!("WRONG-CODE") }
+      max.times { account.consume_recovery_code("WRONG-CODE") }
       expect(account.reload.recovery_locked_at).to be_present
     end
 
     it "returns false when recovery_locked?" do
       account.update!(recovery_locked_at: 1.minute.ago)
-      expect(account.consume_recovery_code!(codes.first)).to be_locked
+      expect(account.consume_recovery_code(codes.first)).to be_locked
     end
   end
 
@@ -166,13 +166,13 @@ RSpec.describe Vouch::Recoverable do
     it "matches the count of unused codes" do
       account.generate_recovery_codes!
       expect(account.recovery_codes_remaining).to eq(
-        Vouch.configuration.recoverable.code_count
+        Vouch.configuration.recovery_codes.code_count
       )
     end
   end
 
   describe "#recovery_codes_low?" do
-    let(:low_threshold) { Vouch.configuration.recoverable.low_threshold }
+    let(:low_threshold) { Vouch.configuration.recovery_codes.low_threshold }
 
     it "is true when no codes exist" do
       expect(account.recovery_codes_low?).to be true
@@ -187,7 +187,7 @@ RSpec.describe Vouch::Recoverable do
       codes = account.generate_recovery_codes!.value
       # Consume until we're below the threshold.
       to_use = codes.length - low_threshold + 1
-      codes.first(to_use).each { |c| account.consume_recovery_code!(c) }
+      codes.first(to_use).each { |c| account.consume_recovery_code(c) }
       expect(account.recovery_codes_low?).to be true
     end
   end
