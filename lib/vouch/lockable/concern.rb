@@ -34,11 +34,22 @@ module Vouch
         locked_at.present? && locked_at > current_lockout_duration.ago
       end
 
-      def lock_account!
+      def lock_account
         Vouch::Persistence.transaction(self) do
           lock!
           Vouch::Persistence.update!(self, locked_at: Time.current, consecutive_locks: consecutive_locks + 1)
         end
+        Vouch::Result.ok(self)
+      rescue ActiveRecord::RecordInvalid => error
+        Vouch::Result.invalid(record: self, error: error)
+      rescue ActiveRecord::RecordNotSaved => error
+        Vouch::Result.cancelled(record: self, error: error)
+      end
+
+      def lock_account!
+        result = lock_account
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
       end
 
       def successful_login!

@@ -2,8 +2,6 @@
 
 Password history prevents reuse of the current password and a configurable number of previous passwords. A `PasswordArchive` row stores a previous password digest and when it was replaced; it never stores the plaintext password.
 
-> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
-
 ## Contents
 
 - [Add password history](#add-password-history)
@@ -124,6 +122,7 @@ end
 
 - Five archives means up to five **previous** passwords, in addition to the current password.
 - `history_count: 0` retains no archives, but still rejects the current password.
+- Counts must be nonnegative integers; windows must be nonnegative durations. Invalid global or model settings raise `Vouch::ConfigurationError` when configured.
 - Archive time is when the password was replaced, not when it was originally chosen.
 - Expired and excess rows are pruned on password replacement, not by a background timer.
 - The first password has no previous digest to archive.
@@ -175,9 +174,11 @@ class User < ApplicationRecord
 end
 ```
 
-The participating models must use compatible owner-key types. Polymorphic storage has no ordinary foreign key spanning its owner tables. Composite-key shared storage requires an explicit custom mapping; the generator does not invent one. Concrete custom and composite owner keys use corresponding foreign-key columns.
+The participating models must use compatible owner-key types. Polymorphic storage has no ordinary foreign key spanning its owner tables. The generator does not support composite keys in shared polymorphic storage; use concrete storage for those owners. Concrete custom and composite owner keys use corresponding foreign-key columns.
 
 ## Existing models and generator reruns
+
+> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
 
 Existing files are preserved. A repeated compatible command does not add duplicate associations or migrations. An incompatible archive owner/model or pending migration causes an error rather than silently wiring another model to the wrong table.
 

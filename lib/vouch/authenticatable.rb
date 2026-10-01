@@ -45,14 +45,26 @@ module Vouch
       false
     end
 
-    def invalidate_authentication_sessions!
+    def invalidate_authentication_sessions
       unless has_attribute?(:auth_session_version)
         raise Vouch::ConfigurationError, "Add an auth_session_version integer column with default: 0, null: false to #{self.class.table_name}"
       end
 
-      with_lock do
+      Vouch::Persistence.transaction(self) do
+        lock!
         Vouch::Persistence.update!(self, auth_session_version: auth_session_version.to_i + 1)
       end
+      Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    end
+
+    def invalidate_authentication_sessions!
+      result = invalidate_authentication_sessions
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
     end
 
     class_methods do
@@ -82,6 +94,10 @@ module Vouch
           raise ArgumentError, "Unknown auth feature: #{feature}" unless feature_concerns.key?(feature)
 
           feature_concerns.fetch(feature)
+        end
+
+        options.fetch(:password_trackable, {}).each do |name, value|
+          Vouch::Configuration::PasswordTrackableConfig.validate!(name, value) unless value.nil?
         end
 
         self.auth_features = (auth_features + features).uniq.freeze

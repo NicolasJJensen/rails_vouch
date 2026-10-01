@@ -89,6 +89,8 @@ Repeated lockouts double the duration until a sign-in completes. With the defaul
 
 The multiplier is capped at 256 times the configured base duration. Expiry restores the attempt allowance by default, but does not clear this escalation history. A completed sign-in clears the failed-attempt count, lock timestamp and escalation history. Passing the password step alone while MFA remains pending does not clear them.
 
+`lock_account` manually locks the account and returns a `Vouch::Result`; `lock_account!` returns the same successful result or raises `Vouch::OperationFailed`. A cancelled write does not report a successful lock.
+
 `locked?` and `lockout_time_remaining` report the current state. Ordinary password requests during an active lock do not extend it. `strategy: :none` disables automatic threshold locking; it does not disable failure counting or explicit `lock_account!` calls.
 
 ## Existing sessions
