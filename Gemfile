@@ -10,7 +10,7 @@ gem "json", "< 3"
 
 if ENV["VOUCH_RELEASE_DEPS"] == "1"
   gem "active_hooks"
-  gem "otp_courier", "~> 0.2"
+  gem "otp_courier", "~> 0.1"
 else
   gem "active_hooks", path: "../active_hooks"
   gem "otp_courier", path: "../otp_courier"
