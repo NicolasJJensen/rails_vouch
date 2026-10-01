@@ -659,6 +659,30 @@ RSpec.describe "generated host smoke test", :generated_host do
           end
           invitee = #{model_name}.find_by(email_address: "single-invite@example.test")
           abort "single-model invitation did not persist an invited account" unless invitee&.registration_required? && invitee.invitation_token.present?
+          invitation_token = invitee.invitation_token
+          recipient = ActionDispatch::Integration::Session.new(Rails.application)
+          recipient.get("/#{path_name}/invitation/accept", params: { token: invitation_token, format: :html })
+          abort "generated invitation choice page status: \#{recipient.response.status}" unless recipient.response.successful?
+          ["Sign in to an existing account", "Register a new account", "Reject invitation"].each do |label|
+            abort "generated invitation choice page missing \#{label}" unless recipient.response.body.include?(label)
+          end
+          abort "opening invitation mutated the pending account" unless invitee.reload.registration_required? && invitee.invitation_accepted_at.nil? && invitee.invitation_token == invitation_token
+          recipient.post("/#{path_name}/invitation/accept", params: { token: invitation_token, choice: "new" })
+          abort "generated new-invitee choice did not redirect" unless recipient.response.redirect?
+          recipient.follow_redirect!
+          abort "generated invited registration form status: \#{recipient.response.status}" unless recipient.response.successful?
+          form = recipient.response.body[/<form\\b.*?<\\/form>/m]
+          abort "generated invited registration form missing" unless form
+          abort "invited email was editable" if form.include?('type="email"')
+          action = form[/\\baction="([^"]+)"/, 1]
+          recipient.post(action, params: {
+            #{model_name}.model_name.param_key => { password: "invited-secret123", password_confirmation: "invited-secret123" }
+          })
+          abort "generated invited registration submission status: \#{recipient.response.status}; body=\#{recipient.response.body.to_s[0, 500]}" unless recipient.response.redirect?
+          abort "generated invited registration did not complete the pending account" unless !invitee.reload.registration_required? && invitee.invitation_accepted_at.present? && invitee.authenticate("invited-secret123")
+          abort "generated invited registration duplicated the account" unless #{model_name}.where(email_address: "single-invite@example.test").count == 1
+          recipient.get("/")
+          abort "generated invited registration did not retain authentication" unless recipient.response.successful? && recipient.response.body.include?(invitee.email_address)
         end
         if #{variant == :namespaced}
           raw_reset_token = account.generate_password_reset_token!.value
