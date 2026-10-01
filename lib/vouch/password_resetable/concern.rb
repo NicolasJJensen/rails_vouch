@@ -20,7 +20,7 @@ module Vouch
             attributes[:password_reset_nonce] = SecureRandom.urlsafe_base64(32)
             Vouch::Persistence.update!(self, attributes)
             token = self.class.password_reset_verifier.generate(
-              { "key" => Vouch::RecordKey.attributes_for(self).stringify_keys,
+              { "key" => Vouch::RecordKey.serialize(self),
                 "nonce" => password_reset_nonce, "password" => password_reset_fingerprint },
               expires_in: auth_config(:password_resetable, :expiry), purpose: "password_reset"
             )
@@ -109,8 +109,12 @@ module Vouch
           record = if password_reset_strategy == :signed
             payload = password_reset_verifier.verified(token, purpose: "password_reset")
             key = payload["key"] if payload.is_a?(Hash)
-            return unless key.is_a?(Hash) && key.keys.sort == Array(primary_key).map(&:to_s).sort
-            find_by(key)
+            return unless key.is_a?(String)
+            begin
+              Vouch::RecordKey.find(all, key)
+            rescue ActiveRecord::RecordNotFound
+              nil
+            end
           else
             find_by(password_reset_token_digest: digest_password_reset_token(token))
           end
@@ -149,7 +153,9 @@ module Vouch
         if self.class.password_reset_strategy == :signed
           payload = self.class.password_reset_verifier.verified(token, purpose: "password_reset")
           return false unless payload.is_a?(Hash) && password_reset_nonce.present?
-          payload["key"] == Vouch::RecordKey.attributes_for(self).stringify_keys &&
+          return false unless payload["key"].is_a?(String)
+          key = Vouch::RecordKey.from_param(self.class, payload["key"])
+          key && Vouch::RecordKey.same?(self, key, model: self.class) &&
             ActiveSupport::SecurityUtils.secure_compare(payload["nonce"].to_s, password_reset_nonce) &&
             ActiveSupport::SecurityUtils.secure_compare(payload["password"].to_s, password_reset_fingerprint)
         else

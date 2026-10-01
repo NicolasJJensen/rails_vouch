@@ -155,7 +155,7 @@ class User < ApplicationRecord
 end
 ```
 
-The key can be an integer, UUID, or string. For a composite key:
+Keys can use Rails scalar types, including integers, UUIDs, strings, dates, timestamps and decimals. For a composite key:
 
 ```ruby
 class User < ApplicationRecord
@@ -177,7 +177,7 @@ For composite keys, use Vouch's route encoding in custom links and forms:
 <%= button_to "View as this user", user_impersonate_path(Vouch::RecordKey.to_param(user)), method: :post %>
 ```
 
-`Vouch::RecordKey.to_param` encodes every component, preserving its type. The receiving Vouch controller decodes that value and looks up the complete key. Generated forms already handle this.
+`Vouch::RecordKey.to_param` encodes every component, preserving its type, timestamp precision and decimal value. The receiving Vouch controller decodes that value and looks up the complete key. Generated forms already handle this.
 
 ## Custom association names
 

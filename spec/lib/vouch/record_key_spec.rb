@@ -105,4 +105,37 @@ RSpec.describe Vouch::RecordKey do
 
     expect(described_class.from_param(model, described_class.dump(["invalid", 7]))).to be_nil
   end
+  it "preserves date, decimal and subsecond time components" do
+    values = [Date.new(2026, 10, 1), BigDecimal("123456789.000000001"), Time.iso8601("2026-10-01T12:34:56.123456789+10:00")]
+    expect(described_class.load(described_class.dump(values))).to eq(values)
+    expect(described_class.load(described_class.dump([Time.zone.parse("2026-10-01 12:34:56")]))).to eq(Time.zone.parse("2026-10-01 12:34:56"))
+  end
+
+  it "casts JSON date and decimal components through Active Record types" do
+    types = {"on" => ActiveRecord::Type::Date.new, "amount" => ActiveRecord::Type::Decimal.new}
+    model = Class.new do
+      define_singleton_method(:primary_key) { types.keys }
+      define_singleton_method(:type_for_attribute) { |name| types.fetch(name.to_s) }
+    end
+    parameter = described_class.dump(["2026-10-01", "123.456"])
+    expect(described_class.from_param(model, parameter)).to eq([Date.new(2026, 10, 1), BigDecimal("123.456")])
+    expect(described_class.from_param(model, described_class.dump(["invalid-date", "123.456"]))).to be_nil
+    expect(described_class.from_param(model, described_class.dump(["2026-10-01", "12junk"]))).to be_nil
+    expect(described_class.from_param(model, described_class.dump(["2026-10-01", "NaN"]))).to be_nil
+  end
+
+  it "retains subsecond precision in scalar time route keys" do
+    model = Class.new do
+      attr_reader :occurred_at
+      def initialize(value) = @occurred_at = value
+      def persisted? = true
+      def self.primary_key = "occurred_at"
+      def self.type_for_attribute(*) = ActiveRecord::Type::DateTime.new
+    end
+    record = model.new(Time.iso8601("2026-10-01T12:34:56.123456Z"))
+    expect(described_class.from_param(model, described_class.to_param(record))).to eq(record.occurred_at)
+    serialized = ActiveSupport::JSON.decode(ActiveSupport::JSON.encode(described_class.value(record)))
+    expect(described_class.from_param(model, serialized)).to eq(record.occurred_at)
+  end
+
 end

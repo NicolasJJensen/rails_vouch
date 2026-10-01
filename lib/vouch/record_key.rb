@@ -2,6 +2,9 @@
 
 require "base64"
 require "json"
+require "date"
+require "time"
+require "bigdecimal"
 
 module Vouch
   # Transports Active Record primary keys without relying on Array#to_s.
@@ -13,7 +16,7 @@ module Vouch
   # and therefore never needs constantization while loading.
   module RecordKey
     PREFIX = "vouch-rk1_".freeze
-    SUPPORTED_TYPES = %w[boolean float integer nil string].freeze
+    SUPPORTED_TYPES = %w[boolean float integer nil string date datetime time decimal].freeze
 
     class << self
       # Encode a record's declared primary key, or an explicit key value.
@@ -54,7 +57,12 @@ module Vouch
         primary_key = record.class.primary_key
         return dump(record) if primary_key.is_a?(Array)
 
-        read_key(record, primary_key).to_s
+        key = read_key(record, primary_key)
+        case key
+        when Time, DateTime then key.iso8601(9)
+        when BigDecimal then key.to_s("F")
+        else key.to_s
+        end
       end
 
       # Decode a route value into a key suitable for querying a model. Scalar
@@ -72,13 +80,7 @@ module Vouch
           return nil
         end
 
-        return value unless integer_type?(model, primary_key)
-
-        type = model.type_for_attribute(primary_key.to_s) if model.respond_to?(:type_for_attribute)
-        return nil unless value.to_s.match?(/\A[+-]?\d+\z/)
-
-          casted = type ? type.cast(value) : value.to_i
-          casted.nil? ? nil : casted
+        cast_key(model, [primary_key], [value])&.first
       rescue ArgumentError, NoMethodError
         nil
       end
@@ -123,13 +125,16 @@ module Vouch
       end
 
       # Storage value for signed payloads that historically carried a native
-      # scalar ID. Composite keys use the structured transport; scalar values
-      # keep their native Ruby type for compatibility with existing payloads.
+      # scalar ID. Composite keys use the structured transport; date, time and
+      # decimal scalars use lossless strings across JSON session serialization.
       def value(record)
         return record.id unless record.class.respond_to?(:primary_key)
 
         primary_key = record.class.primary_key
-        primary_key.is_a?(Array) ? dump(record) : read_key(record, primary_key)
+        return dump(record) if primary_key.is_a?(Array)
+
+        key = read_key(record, primary_key)
+        key.is_a?(Date) || key.is_a?(Time) || key.is_a?(BigDecimal) ? to_param(record) : key
       end
 
       def attributes_for(record)
@@ -168,12 +173,6 @@ module Vouch
         value.is_a?(Array) ? value.map(&:to_s) : value
       end
 
-      def integer_type?(model, primary_key)
-        return false unless model.respond_to?(:type_for_attribute)
-
-        model.type_for_attribute(primary_key.to_s).type == :integer
-      end
-
       def cast_key(model, primary_key, values)
         primary_key.zip(values).map do |attribute, value|
           return nil if value.nil? || value.is_a?(Array) || value.is_a?(Hash)
@@ -183,9 +182,15 @@ module Vouch
             return nil unless value.is_a?(Integer) || value.to_s.match?(/\A[+-]?\d+\z/)
           elsif type&.type == :string || type&.type == :uuid
             return nil unless value.is_a?(String)
+          elsif [:decimal, :float].include?(type&.type)
+            return nil unless value.to_s.match?(/\A[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?\z/)
+          elsif type&.type == :date && value.is_a?(String)
+            Date.iso8601(value)
+          elsif type&.type == :datetime && value.is_a?(String)
+            Time.iso8601(value)
           end
           casted = type ? type.cast(value) : value
-          return nil if casted.nil?
+          return nil if casted.nil? || (casted.respond_to?(:finite?) && !casted.finite?)
 
           casted
         end
@@ -213,10 +218,20 @@ module Vouch
                when Integer then "integer"
                when Float then "float"
                when String then "string"
+               when DateTime then "datetime"
+               when Date then "date"
+               when Time then "time"
+               when BigDecimal then "decimal"
                else
                  raise ArgumentError, "unsupported primary-key value type: #{value.class}"
                end
-        { "t" => type, "v" => value }
+        serialized = case type
+                     when "date" then value.iso8601
+                     when "datetime", "time" then value.iso8601(9)
+                     when "decimal" then value.to_s("F")
+                     else value
+                     end
+        { "t" => type, "v" => serialized }
       end
 
       def decode_value(value)
@@ -228,6 +243,10 @@ module Vouch
         when "integer" then value["v"].is_a?(Integer) ? value["v"] : INVALID
         when "float" then value["v"].is_a?(Numeric) ? value["v"] : INVALID
         when "string" then value["v"].is_a?(String) ? value["v"] : INVALID
+        when "date" then value["v"].is_a?(String) ? Date.iso8601(value["v"]) : INVALID
+        when "datetime" then value["v"].is_a?(String) ? DateTime.iso8601(value["v"]) : INVALID
+        when "time" then value["v"].is_a?(String) ? Time.iso8601(value["v"]) : INVALID
+        when "decimal" then value["v"].is_a?(String) ? BigDecimal(value["v"]) : INVALID
         else INVALID
         end
       end
