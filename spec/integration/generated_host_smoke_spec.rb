@@ -122,7 +122,7 @@ RSpec.describe "generated host smoke test", :generated_host do
 
         module GeneratedHost
           class Application < Rails::Application
-            config.load_defaults 8.0
+            config.load_defaults 8.1
             config.root = File.expand_path("..", __dir__)
             config.secret_key_base = "generated-host-smoke-test-secret"
             config.api_only = false
@@ -308,7 +308,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         RUBY
         credential_migration = ActiveRecord::Generators::Base.next_migration_number(File.join(directory, "db/migrate"))
         write_file(directory, "db/migrate/#{credential_migration}_create_#{credential_table}.rb", <<~RUBY)
-          class Create#{credential_table.camelize} < ActiveRecord::Migration[8.0]
+          class Create#{credential_table.camelize} < ActiveRecord::Migration[8.1]
             def change
               create_table :#{credential_table} do |t|
                 t.references :owner, null: false, foreign_key: { to_table: :#{owner_table} }
@@ -321,7 +321,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         RUBY
         mfa_account_migration = ActiveRecord::Generators::Base.next_migration_number(File.join(directory, "db/migrate"))
         write_file(directory, "db/migrate/#{mfa_account_migration}_add_two_factor_enabled_to_#{owner_table}.rb", <<~RUBY)
-          class AddTwoFactorEnabledTo#{owner_table.camelize} < ActiveRecord::Migration[8.0]
+          class AddTwoFactorEnabledTo#{owner_table.camelize} < ActiveRecord::Migration[8.1]
             def change
               add_column :#{owner_table}, :two_factor_enabled, :boolean, default: false, null: false
             end
