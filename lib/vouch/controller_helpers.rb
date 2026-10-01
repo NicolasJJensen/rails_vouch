@@ -387,7 +387,7 @@ module Vouch
     def serialize_oauth(auth_hash)
       hash = auth_hash.to_h.stringify_keys
       info = hash.fetch('info', {}).to_h.stringify_keys.slice('email', 'name', 'image')
-      {'provider' => hash['provider'], 'uid' => hash['uid'], 'info' => info}
+      {'provider' => hash['provider'].to_s, 'uid' => hash['uid'].to_s, 'info' => info}
     end
 
     def parse_oauth(payload)
@@ -404,6 +404,10 @@ module Vouch
 
     def pending_oauth_providers
       authentication_session.oauth_registration_providers
+    end
+
+    def oauth_registration_byte_limit
+      2.kilobytes
     end
 
     def remove_pending_oauth_identity(provider:, uid:)

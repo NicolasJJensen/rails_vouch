@@ -7,6 +7,38 @@ module Vouch
       invitation && invitation_requires_registration?(invitation) ? true : false
     end
 
+    def persist_oauth_registration!(account, oauth_hashes)
+      invitation = pending_invited_identity
+      if session[invited_user_session_key].present? && (!invitation || !invitation_requires_registration?(invitation))
+        raise Vouch::Invitable::InvitationExpiredError
+      end
+      if invitation
+        changed_attributes = account.changes.transform_values(&:last)
+        account.reload(lock: true)
+        invitation.lock! unless invitation.equal?(account)
+        unless valid_pending_invitation?(invitation) && invitation_requires_registration?(invitation)
+          raise Vouch::Invitable::InvitationExpiredError
+        end
+        account.assign_attributes(changed_attributes)
+      end
+      Vouch::Persistence.save!(account)
+      oauth_hashes.each do |oauth|
+        Vouch::Persistence.create!(
+          account.public_send(auth_mapping.oauth_identity_association.name),
+          auth_mapping.oauth_identity_class.oauth_attributes(oauth)
+            .merge(authentication_session.oauth_registration_identity_attributes(oauth))
+        )
+      end
+      validate_registration_authentication!(account, oauth: oauth_hashes.first)
+      if invitation
+        account.complete_registration!
+        accept_pending_invitation_in_transaction(account, invitation)
+        invitation
+      else
+        create_registration_identity!(account)
+      end
+    end
+
     def validate_submitted_registration_password!(account, attributes)
       return unless attributes.key?(:password) && attributes[:password].blank?
 

@@ -45,15 +45,19 @@ Configure OAuth callback registration with `:form` (the default) when a new prov
 auth.oauth_callbacks registration: :form
 ```
 
-After the provider callback is verified, Vouch retains selected provider data in the session and redirects to `RegistrationsController#new`. It builds an unsaved account mapped from that data, pre-fills the form, and writes no account or identity row yet. The generated registration form uses `oauth_registration?` to omit password fields during that pending OAuth continuation.
+After an explicit OAuth registration request is verified, Vouch applies the provider data to the unsaved account and retains its attributes and provider proof in the session. `RegistrationsController#new` restores those values and pre-fills the form without applying the mapping again. No new account or provider link is saved yet. The generated form uses `oauth_registration?` to omit password fields while a valid provider proof supplies the sign-in method.
 
 On submit, Vouch combines the mapped account fields with permitted form fields and creates the account and OAuth link in one transaction. In a multi-tenant setup, that transaction also includes the organisation and membership. It then continues through MFA and membership selection before redirecting. Validation failures re-render the form. Provider/UID data comes from protected session state, never submitted fields.
 
 The default mapping uses the provider email when supplied and leaves the password absent. Add another mapped form value through the account model:
 
 ```ruby
-def self.oauth_attributes_for_creation(auth_hash)
-  super.merge(name: auth_hash.info.name)
+# app/models/account.rb
+class Account < ApplicationRecord
+  def apply_oauth_registration(oauth_identity, auth_hash:)
+    super
+    self.name = auth_hash.info.name if name.blank?
+  end
 end
 ```
 
@@ -125,24 +129,29 @@ The registration form owns the tenant input. Keep it separate from account param
 <% end %>
 ```
 
-For form OAuth registration, `RegistrationsController#create` rebuilds the mapped unsaved account, assigns only `account_params`, and then creates the account, OAuth identity, tenant, and membership in that transaction. A validation failure renders `app/views/accounts/registrations/new.html.erb` again with errors and no persisted account/link. Provider and UID never come from form fields.
+For form OAuth registration, `RegistrationsController#create` restores the account attributes, assigns only permitted form fields, and then creates the account, OAuth identities, tenant, and membership in that transaction. A validation failure renders `app/views/accounts/registrations/new.html.erb` again with errors and no new persisted account/link. Provider and UID never come from form fields. See [multiple providers](oauth.md#connect-several-providers-during-registration) for separate proof expiry and reconnection.
 
 ## Invitation registration
 
 A new invitee completes the pending account and accepts the existing membership. Vouch reuses the invitation's organisation and does not call `build_tenant` or `build_identity`. The generated form shows the invited email as text, since registration cannot change the invitation recipient.
 
-Use `invitation_registration?` to hide your tenant-creation fields, as shown above. Put work needed for both ordinary registration and new-invitee registration in a sign-up hook:
+Use `invitation_registration?` to hide your tenant-creation fields, as shown above. Put work needed for both ordinary registration and new-invitee registration in a registration hook. Register the same callback for OAuth account creation when you offer OAuth:
 
 ```ruby
 # app/controllers/accounts/registrations_controller.rb
 class Accounts::RegistrationsController < Vouch::RegistrationsController
-  after_sign_up do |account, identity|
+  after_sign_up :create_preferences
+  after_oauth_account_creation :create_preferences
+
+  private
+
+  def create_preferences(account, *)
     Preferences.create!(account: account)
   end
 end
 ```
 
-> `Preferences` is an example application model. This hook runs inside the registration transaction; a failed write rolls back the account completion and invitation acceptance together. An existing account accepting another membership does not register again; use an invitation-acceptance hook for work needed on every accepted invitation.
+> `Preferences` is an example application model. For automatic OAuth registration, add the same declarations and method to the OAuth controller or share them in a concern. Each callback runs inside the registration transaction; a failed write rolls back the account completion and invitation acceptance together. An existing account accepting another membership does not register again; use an invitation-acceptance hook for work needed on every accepted invitation.
 
 ## Registration responses
 

@@ -2,19 +2,19 @@
 
 # OAuth account linking.
 #
-# Hosts include this on the Account model alongside Authenticatable. Provides
-# `new_from_omniauth` (build a new account from an OmniAuth callback) and
-# `update_from_oauth!` (update an existing account after OAuth sign-in).
-#
-# The default attribute mapping only sets `email_address` when the column
-# exists. Override `oauth_attributes_for_creation` or
-# `oauth_attributes_for_update` to capture provider-specific fields
-# (e.g. avatar_url, name).
+# Registration mapping runs once per newly verified provider, on the restored
+# account instance. Sign-in profile updates use a separate mapping.
 #
 module Vouch
   module Omniauthable
     module Concern
       extend ActiveSupport::Concern
+
+      def apply_oauth_registration(_oauth_identity, auth_hash:)
+        if respond_to?(:email_address=) && email_address.blank? && auth_hash.info.email.present?
+          self.email_address = auth_hash.info.email
+        end
+      end
 
       def update_from_oauth!(auth_hash)
         attrs = oauth_attributes_for_update(auth_hash)
@@ -30,22 +30,6 @@ module Vouch
         { email_address: auth_hash.info.email }
       end
 
-      class_methods do
-        # Build an unsaved account; the verified provider supplies its sign-in method.
-        def new_from_omniauth(auth_hash)
-          new(oauth_attributes_for_creation(auth_hash))
-        end
-
-        # Override-tag: host-facing — attributes for a new account from
-        # OAuth. Default captures email when the column exists.
-        def oauth_attributes_for_creation(auth_hash)
-          attrs = {}
-          if column_names.include?("email_address") && auth_hash.info.email.present?
-            attrs[:email_address] = auth_hash.info.email
-          end
-          attrs
-        end
-      end
     end
   end
 end

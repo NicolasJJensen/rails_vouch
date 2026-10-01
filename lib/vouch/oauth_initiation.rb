@@ -68,6 +68,8 @@ module Vouch
       nonce = SecureRandom.hex(24)
       contexts[nonce] = {
         "purpose" => purpose,
+        "reconnect_uid" => request.params["reconnect_uid"].presence&.to_s,
+        "invitation" => request.session[Vouch::Session.key_for(mapping.scope_name, :invited_user)]&.deep_dup,
         "provider" => request.path.split("/").last,
         "scope" => mapping.scope_name.to_s,
         "account_scope" => mapping.evidence_scope_name.to_s,

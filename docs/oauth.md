@@ -6,6 +6,9 @@
 - [Choose registration behavior](#choose-registration-behavior)
 - [Connect a provider to an existing account](#connect-a-provider-to-an-existing-account)
 - [Prefill and extend the registration form](#prefill-and-extend-the-registration-form)
+- [Connect several providers during registration](#connect-several-providers-during-registration)
+- [Expired providers and reconnection](#expired-providers-and-reconnection)
+- [OAuth for an invitation](#oauth-for-an-invitation)
 - [Retain additional provider data](#retain-additional-provider-data)
 - [Handle automatic registration failures](#handle-automatic-registration-failures)
 - [Routes and custom controllers](#routes-and-custom-controllers)
@@ -134,15 +137,16 @@ Vouch binds this request to the account, scope and signed-in session that starte
 
 ## Prefill and extend the registration form
 
-With `:form`, the callback stores selected provider data in the Rails session. `RegistrationsController#new` builds an **unsaved** record from that data. The generated model-bound form displays its values and omits password fields. Neither the account nor its OAuth link exists in the database yet.
+With `:form`, the callback builds an unsaved account and OAuth identity, applies the provider information, and stores the resulting account attributes and provider proof in the Rails session. `RegistrationsController#new` restores the account without applying the mapping again. The generated model-bound form displays its values and omits password fields. Neither the new account nor its OAuth link exists in the database yet.
 
 The default mapping prefills `email_address` when the provider supplies it. OAuth-only accounts have a null password digest and sign in through their linked provider. To also prefill an existing `name` attribute:
 
 ```ruby
 # app/models/user.rb
 class User < ApplicationRecord
-  def self.oauth_attributes_for_creation(auth_hash)
-    super.merge(name: auth_hash.info.name)
+  def apply_oauth_registration(oauth_identity, auth_hash:)
+    super
+    self.name = auth_hash.info.name if name.blank?
   end
 end
 ```
@@ -168,19 +172,88 @@ class Users::RegistrationsController < Vouch::RegistrationsController
 end
 ```
 
-On submission, Vouch builds from the retained provider data again and applies permitted form values. Validation errors re-render that record with its errors. A successful submission saves the account and OAuth link in the same transaction. The provider and UID come from the retained callback, never from editable form fields.
+On submission, Vouch restores the retained attributes and applies permitted form values. Validation errors re-render that record with its errors. A successful submission saves the account and OAuth links in the same transaction. Mapping does not run again during rendering or submission, so later edits are preserved. The provider and UID come from the retained callback, never from editable form fields.
 
 For multi-tenant registration, that transaction also saves the organisation and membership constructed by your registration methods. See [registration construction](registration.md#construct-records-transactionally) for the organisation name input and shared construction methods. After registration and required authentication steps, [the sign-up redirect](registration.md#send-people-to-onboarding) can send the person to onboarding.
 
-The continuation expires after `pending_authentication_ttl`, configurable as shown in [pending sign-in timeout](authentication-policy.md#pending-sign-in-timeout).
+## Connect several providers during registration
+
+With form registration, another `purpose: :register` provider button returns to the same pending registration. Each new provider identity is verified separately and passed to `apply_oauth_registration` on the restored account. The default mapping fills an empty email; your override can fill, replace or combine other attributes. All connected providers become sign-in methods after the final submission. Vouch does not choose a primary provider.
+
+Connect providers before entering the remaining form details. A provider button does not submit unsaved browser inputs to the registration controller. Custom multistep forms must retain their own edited fields before leaving for a provider; Vouch does not supply a wizard or infer permitted fields from that POST.
+
+`pending_oauth_providers` returns entries such as:
+
+```ruby
+[{ provider: "github", uid: "123", expired: false }]
+```
+
+Up to five pending provider identities are retained. A conflict with another account leaves previous successful connections intact. The final transaction saves one account and all its provider links, or rolls everything back if a link has become unavailable.
+
+The pending registration is tied to its authentication session and invitation. Changing either prevents those provider proofs from being applied to another registration.
+
+Vouch limits the serialized pending registration to 2 KiB. Exceeding that limit returns `:registration_too_large` and preserves the previous state. For server-backed sessions, a controller can increase this budget:
+
+```ruby
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
+  private
+
+  def oauth_registration_byte_limit
+    8.kilobytes
+  end
+end
+```
+
+Apply the same override in the registrations controller when its form retains additional fields.
+
+> This budget covers Vouch's registration data. Other session values and cookie encryption also consume space when using Rails' cookie session store.
+
+## Expired providers and reconnection
+
+Each proof expires independently after `pending_authentication_ttl`; [configure that timeout here](authentication-policy.md#pending-sign-in-timeout). Adding another provider does not extend an earlier proof. Expired entries remain visible through `pending_oauth_providers`, and registration returns an invalid result with `metadata[:reason] == :expired_providers` and the affected entries in `metadata[:providers]`.
+
+Reconnect the same provider identity explicitly:
+
+```erb
+<%# app/views/users/registrations/new.html.erb %>
+<%= button_to "Reconnect GitHub", "/users/auth/github",
+  params: { purpose: :register, reconnect_uid: "123" }, data: { turbo: false } %>
+```
+
+If the provider returns another UID, Vouch reports `:identity_mismatch` and keeps the original entry. A successful reconnect refreshes that proof without reapplying profile attributes. Adding another UID is a separate registration provider request without `reconnect_uid`.
+
+You can provide a removal action using the normal controller helper:
+
+```ruby
+# config/routes.rb — inside Rails.application.routes.draw
+delete "registration/providers", to: "users/registration_providers#destroy", as: :registration_provider
+
+# app/controllers/users/registration_providers_controller.rb
+class Users::RegistrationProvidersController < Vouch::RegistrationsController
+  def destroy
+    result = remove_pending_oauth_identity(provider: params.require(:provider), uid: params.require(:uid))
+    redirect_to new_user_registration_path, status: :see_other,
+      alert: ("Provider was not found." unless result.ok?)
+  end
+end
+```
+
+This removes only the matching pending identity, not a saved account's provider link. Removing the final provider preserves form attributes but requires a real alternative, such as entering a password or reconnecting a provider, before registration can finish. The host chooses the messages and layout for these controls.
+
+## OAuth for an invitation
+
+A new invitee may connect one or more providers before submitting the registration form. Vouch completes the existing pending account, saves those provider links, and accepts the invited membership in one transaction. It keeps the invitation's organisation and does not construct another tenant or membership. Automatic registration follows the same ownership rules.
+
+An existing account uses the invitation's sign-in/acceptance path. Connecting additional providers afterward uses `purpose: :link`. A provider already connected to another account cannot silently merge that account with an invited placeholder.
 
 ## Retain additional provider data
 
 Vouch retains the provider, UID, and the `email`, `name`, and `image` profile fields during the form step. For another value, extend serialization before the callback redirects to registration. This example assumes `User` already has a `provider_nickname` column:
 
 ```ruby
-# app/controllers/concerns/retains_provider_nickname.rb
-module RetainsProviderNickname
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
   private
 
   def serialize_oauth(auth_hash)
@@ -191,25 +264,33 @@ module RetainsProviderNickname
 end
 ```
 
-```ruby
-# app/controllers/users/omni_auths_controller.rb
-class Users::OmniAuthsController < Vouch::OmniAuthsController
-  include RetainsProviderNickname
-end
-```
-
 The default parser reconstructs the retained hash. Map it onto the unsaved record:
 
 ```ruby
 # app/models/user.rb
 class User < ApplicationRecord
-  def self.oauth_attributes_for_creation(auth_hash)
-    super.merge(provider_nickname: auth_hash.info.nickname)
+  def apply_oauth_registration(oauth_identity, auth_hash:)
+    super
+    self.provider_nickname = auth_hash.info.nickname if provider_nickname.blank?
   end
 end
 ```
 
 To let the person change it, add `form.text_field :provider_nickname` inside the generated form and permit it in `account_params`, following the `name` example above. Without that input, the mapped value is saved unchanged after successful registration.
+
+You can also set custom attributes on the unsaved OAuth identity supplied to the mapping method. For example, if `OauthIdentity` has a `provider_nickname` column:
+
+```ruby
+# app/models/user.rb
+class User < ApplicationRecord
+  def apply_oauth_registration(oauth_identity, auth_hash:)
+    super
+    oauth_identity.provider_nickname = auth_hash.info.nickname
+  end
+end
+```
+
+Vouch retains those custom identity attributes and saves them with the link after successful registration. Provider, UID, ownership and token fields are taken from the verified flow rather than these edits. The serialization override above is still needed if `nickname` must remain available in later lifecycle callbacks.
 
 Keep retained session data small. Provider access tokens are not retained by the default serializer; an application that needs later provider API access should store them in its own encrypted storage.
 

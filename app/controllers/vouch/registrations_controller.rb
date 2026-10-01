@@ -4,10 +4,13 @@ class Vouch::RegistrationsController < ::ApplicationController
   only_allow_unauthenticated_access
 
   def new
+    if oauth_registration_context? && !authentication_session.valid_oauth_registration_context?
+      clear_oauth_registration
+      return redirect_to new_session_path, alert: I18n.t('vouch.oauth.context_changed')
+    end
     invitation = pending_invited_identity
-    oauth = pending_oauth_registration
-    @account = if oauth
-      auth_mapping.account_class.new_from_omniauth(oauth)
+    @account = if oauth_registration_context?
+      authentication_session.oauth_registration_account
     elsif invitation && invitation_requires_registration?(invitation)
       invitation_account_for(invitation)
     else
@@ -76,41 +79,55 @@ class Vouch::RegistrationsController < ::ApplicationController
 
   def create_oauth_registration
     saved = false
-    oauth = pending_oauth_registration
-    unless oauth
-      authentication_session.clear_oauth_initiation_return_to
-      return Vouch::Result.invalid(reason: :expired_oauth)
+    unless authentication_session.valid_oauth_registration_context?
+      clear_oauth_registration
+      return Vouch::Result.invalid(reason: :context_changed)
     end
-
-    @account = auth_mapping.account_class.new_from_omniauth(oauth)
-    @account.assign_attributes(account_params)
-    validate_submitted_registration_password!(@account, account_params)
+    @account = authentication_session.oauth_registration_account
+    attributes = invitation_registration? ? invited_account_params : account_params
+    @account.assign_attributes(attributes)
+    retained = authentication_session.retain_oauth_registration_attributes!(@account)
+    unless retained.ok?
+      @account.errors.add(:base, I18n.t("vouch.oauth.registration_too_large"))
+      return Vouch::Result.invalid(record: @account, reason: :registration_too_large)
+    end
+    validate_submitted_registration_password!(@account, attributes)
+    expired = pending_oauth_providers.select { |provider| provider[:expired] }
+    if expired.any?
+      @account.errors.add(:base, I18n.t("vouch.oauth.expired_providers"))
+      return Vouch::Result.invalid(record: @account, reason: :expired_providers, providers: expired)
+    end
+    oauth_hashes = authentication_session.oauth_registration_hashes
+    oauth = oauth_hashes.first
+    lifecycle = oauth ? :oauth_account_creation : :sign_up
     identity = nil
     outcome = nil
-    committed = run_authentication_hooks(:oauth_account_creation, auth_hash: oauth) do |env|
-      completed = run_commit_hooks(:oauth_account_creation, *env.args, **env.kwargs) do |commit_env|
-        Vouch::Persistence.save!(@account)
-        Vouch::Persistence.create!(
-          @account.public_send(auth_mapping.oauth_identity_association.name),
-          auth_mapping.oauth_identity_class.oauth_attributes(oauth)
-        )
-        validate_registration_authentication!(@account, oauth: oauth)
-        identity = create_registration_identity!(@account)
-        commit_env.add(@account, identity)
+    committed = run_authentication_hooks_with_invitation(lifecycle, @account, auth_hash: oauth) do |env|
+      completed = run_commit_hooks(lifecycle, *env.args, **env.kwargs) do |commit_env|
+        identity = persist_oauth_registration!(@account, oauth_hashes)
+        commit_env.add(identity)
         true
       end
       env.abort! unless completed
       saved = true
       clear_oauth_registration
+      if @completed_invitation_acceptance
+        authentication_session.clear_invitation
+        publish_invitation_acceptance
+      end
       authentication_session.clear_oauth_initiation_return_to
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
-      outcome = complete_sign_in(@account, hook: :sign_in, method: :oauth, auth_hash: oauth)
-      env.add(@account, identity)
+      outcome = complete_sign_in(@account, hook: :sign_in, method: oauth ? :oauth : :registration,
+        auth_hash: oauth, auth_hashes: oauth_hashes)
+      env.add(identity)
       true
     end
     registration_result(committed, saved, outcome)
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
     Vouch::Result.invalid(record: @account, error: error, committed: saved)
+  rescue Vouch::Invitable::InvitationExpiredError
+    authentication_session.clear_invitation
+    Vouch::Result.invalid(reason: :invalid_invitation)
   end
 
   def registration_result(completed, saved, outcome)
@@ -134,6 +151,8 @@ class Vouch::RegistrationsController < ::ApplicationController
       redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
     elsif result.metadata[:reason] == :expired_oauth
       redirect_to new_session_path, alert: I18n.t('vouch.oauth.failed')
+    elsif result.metadata[:reason] == :context_changed
+      redirect_to new_session_path, alert: I18n.t('vouch.oauth.context_changed')
     else
       @account.errors.add(:base, I18n.t('vouch.registrations.failed')) if @account.errors.empty?
       render :new, status: :unprocessable_entity
@@ -149,6 +168,6 @@ class Vouch::RegistrationsController < ::ApplicationController
   end
 
   def invited_account_params
-    params.require(auth_mapping.account_param_key).permit(:password, :password_confirmation)
+    params.fetch(auth_mapping.account_param_key, ActionController::Parameters.new).permit(:password, :password_confirmation)
   end
 end

@@ -56,6 +56,9 @@ module Vouch
       oauth = context['oauth'] && parse_oauth(context['oauth'])
       hook_options = {authentication_method: context.fetch('method').to_sym}
       hook_options[:auth_hash] = oauth if oauth
+      if context['oauth_providers']
+        hook_options[:auth_hashes] = context['oauth_providers'].map { |provider| parse_oauth(provider) }
+      end
       completed = run_authentication_hooks_with_invitation(hook, account, identity, **hook_options) do |env|
         committed = run_commit_hooks(hook, account, identity, **hook_options) do |commit_env|
           account.lock!
@@ -116,6 +119,9 @@ module Vouch
       oauth = hook_opts[:auth_hash] && serialize_oauth(hook_opts[:auth_hash])
       context = Vouch::PendingAuthentication.build(account, identities: candidates,
         method: method, hook: hook, provider: oauth&.dig('provider'), oauth: oauth)
+      if hook_opts[:auth_hashes]
+        context['oauth_providers'] = hook_opts[:auth_hashes].map { |provider| serialize_oauth(provider) }
+      end
       context['refresh_oauth'] = true if refresh_oauth
       context
     end

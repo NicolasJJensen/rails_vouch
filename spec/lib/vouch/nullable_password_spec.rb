@@ -36,7 +36,8 @@ RSpec.describe "Nullable credentials passwords" do
 
   it "builds an OAuth account without generating a password" do
     oauth = OmniAuth::AuthHash.new(provider: "example", uid: "123", info: { email: "oauth-only@example.test" })
-    account = Account.new_from_omniauth(oauth)
+    account = Account.new
+    account.apply_oauth_registration(OmniAuthIdentity.new(provider: oauth.provider, uid: oauth.uid), auth_hash: oauth)
     expect(account.password).to be_nil
     expect(account.password_digest).to be_nil
     expect(account).to be_valid

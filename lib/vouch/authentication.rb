@@ -7,7 +7,7 @@ module Vouch
     included do
       include Vouch::ControllerHelpers
 
-      helper_method :current_identity, :current_account, :auth_scope_name, :oauth_registration?, :invitation_registration?, :vouch_route_path
+      helper_method :current_identity, :current_account, :auth_scope_name, :oauth_registration?, :invitation_registration?, :pending_oauth_providers, :vouch_route_path
       before_action :authenticate_auth_scope!
     end
 

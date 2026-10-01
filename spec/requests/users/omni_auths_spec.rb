@@ -118,14 +118,10 @@ RSpec.describe "Users::OmniAuths", type: :request do
           expect(response).to redirect_to("/users/sign_up")
           expect([Account.count, User.count, OmniAuthIdentity.count]).to eq(counts)
 
-          observed = nil
-          allow(Account).to receive(:new_from_omniauth).and_wrap_original do |method, auth|
-            observed = auth
-            method.call(auth)
-          end
+          expect_any_instance_of(Account).not_to receive(:apply_oauth_registration)
           get "/users/sign_up"
           expect(response).to have_http_status(:ok)
-          expect(observed.info.email).to eq("oauth@example.com")
+          expect(controller.view_assigns.fetch("account").email_address).to eq("oauth@example.com")
         end
       end
 
@@ -188,7 +184,8 @@ RSpec.describe "Users::OmniAuths", type: :request do
           post "/users/sign_up", params: {account: {email_address: "restart@example.com", password: "password123", password_confirmation: "password123"}, provider: "google_oauth2", uid: "12345"}
         end
 
-        expect(response).to redirect_to("/users/sign_in")
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(controller.view_assigns.fetch("account").errors[:base]).to include(I18n.t("vouch.oauth.expired_providers"))
         expect(OmniAuthIdentity.find_by(provider: "google_oauth2", uid: "12345")).to be_nil
       end
 
@@ -240,7 +237,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
       end
 
       it "lets unexpected automatic registration failures propagate" do
-        allow(Account).to receive(:new_from_omniauth).and_raise(RuntimeError, "unexpected OAuth failure")
+        allow_any_instance_of(Account).to receive(:apply_oauth_registration).and_raise(RuntimeError, "unexpected OAuth failure")
 
         expect {
           oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
