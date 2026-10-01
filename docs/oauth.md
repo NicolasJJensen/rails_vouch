@@ -11,6 +11,7 @@
 - [OAuth for an invitation](#oauth-for-an-invitation)
 - [Retain additional provider data](#retain-additional-provider-data)
 - [Handle automatic registration failures](#handle-automatic-registration-failures)
+- [Customize callback responses](#customize-callback-responses)
 - [Routes and custom controllers](#routes-and-custom-controllers)
 - [Existing OAuth storage](#existing-oauth-storage)
 
@@ -316,6 +317,36 @@ end
 ```
 
 Reasons are `:validation`, `:conflict`, `:cancelled`, or `:aborted`. If registration commits but subsequent sign-in fails, Vouch keeps the account and redirects to sign-in with a creation notice and failure alert. This is separate from a failed registration form submission, which redisplays validation errors. Expected failures are not automatically sent to an error reporter. Unexpected exceptions propagate through Rails error handling. Provider authentication failure itself uses the `failure` action and returns to sign-in.
+
+## Customize callback responses
+
+Override `callback` and pass a block to `super` to handle an outcome. The operation has already run when the block receives its `Vouch::Result`:
+
+```ruby
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
+  def callback
+    super do |result|
+      if result.metadata[:reason] == :not_registered
+        redirect_to new_user_registration_path, alert: "Create an account to connect this provider."
+      end
+    end
+  end
+end
+```
+
+Rendering or redirecting in the block replaces Vouch's response. Doing neither keeps the normal redirect. `failure` accepts the same block for provider authentication failures. Errors raised by your response block propagate to Rails; Vouch does not treat them as failed registration attempts.
+
+| Outcome | Result |
+| --- | --- |
+| Signed in, linked, or completed automatic registration | `ok?`; `value` is the account or linked OAuth identity |
+| Continue to registration | `pending?`, `metadata[:next_step] == :registration` |
+| Complete MFA or select a membership | `pending?`, with `:two_factor` or `:selection` as the next step |
+| Invalid request, conflicting provider or failed validation | `invalid?`; inspect `metadata[:reason]` and `error` |
+| A lifecycle callback cancels the operation | `cancelled?` |
+| Account saved but subsequent sign-in failed | A failed result with `metadata[:committed] == true`; do not create another account |
+
+`metadata[:operation]` distinguishes `:sign_in`, `:link` and `:registration` after request validation. Request failures occur before an operation starts. Expected persistence failures retain their original exception in `error`.
 
 ## Routes and custom controllers
 
