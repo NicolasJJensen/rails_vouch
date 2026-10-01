@@ -16,4 +16,4 @@
   <p><%%= link_to "Use a recovery code", <%= route_helper_prefix %>_recovery_two_factor_challenge_path %></p>
 <%% end %>
 
-<%%= button_to "Cancel", cancel_<%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>
+<%%= button_to "Cancel", <%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>

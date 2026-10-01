@@ -171,7 +171,7 @@ module Vouch
                          controller: challenge_ctrl do
           router.post :send_code, on: :member
         end
-        router.delete "two_factor_challenges", to: "#{challenge_ctrl}#destroy", as: :cancel_two_factor_challenges
+        router.delete "two_factor_challenges", to: "#{challenge_ctrl}#destroy"
         router.resources :two_factor_credentials, only: [:index, :new, :create, :update, :destroy],
                          controller: creds_ctrl
         router.get "recovery", to: "#{challenge_ctrl}#recovery", as: :recovery_two_factor_challenge
