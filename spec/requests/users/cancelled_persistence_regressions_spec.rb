@@ -161,7 +161,8 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     post "/users/invitation", params: { email_address: "cancelled-invite@example.com" }
 
     expect(response).to redirect_to("/")
-    expect(flash[:notice]).to eq(I18n.t("vouch.invitations.sent"))
+    expect(flash[:notice]).to be_nil
+    expect(flash[:alert]).to eq(I18n.t("vouch.invitations.failed"))
     expect([Account.count, User.count]).to eq(counts)
     expect(published).not_to include(:invitation_token_generation)
   ensure

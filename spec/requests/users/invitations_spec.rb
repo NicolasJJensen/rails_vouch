@@ -92,13 +92,26 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(invitee.organisation).to eq(organisation)
     end
 
-    it "shows the same success message even when invitation fails" do
+    it "shows an error instead of success when invitation fails" do
       sign_in(user)
       allow(User).to receive(:invite!).and_raise(ActiveRecord::RecordInvalid)
 
       post "/users/invitation", params: { email_address: "bad@example.com" }
       expect(response).to redirect_to("/")
-      expect(flash[:notice]).to eq(I18n.t("vouch.invitations.sent"))
+      expect(flash[:notice]).to be_nil
+      expect(flash[:alert]).to eq(I18n.t("vouch.invitations.failed"))
+    end
+
+    it "shows validation errors from failed invitation creation" do
+      sign_in(user)
+      invalid = User.new
+      invalid.errors.add(:base, "Required profile details are missing")
+      allow(User).to receive(:invite!).and_raise(ActiveRecord::RecordInvalid.new(invalid))
+
+      post "/users/invitation", params: { email_address: "bad@example.com" }
+
+      expect(flash[:notice]).to be_nil
+      expect(flash[:alert]).to eq("Required profile details are missing")
     end
 
     it "does not create a second membership when the account already belongs to the organisation" do

@@ -1,4 +1,4 @@
-class VouchInvitationMailer < ApplicationMailer
+class <%= scope_module %>::InvitationMailer < ApplicationMailer
   def invitation(identifier, invitation)
     @invitee = invitation
     mail(to: identifier, subject: "You are invited")

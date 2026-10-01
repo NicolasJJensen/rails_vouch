@@ -24,6 +24,7 @@ en:
       removed: "2FA method removed."
       not_found: "2FA method not found."
     invitations:
+      failed: "The invitation could not be created. Please try again."
       sent: "If the recipient is valid, an invitation will be sent."
       could_not_send: "Could not send invitation."
       revoked: "Invitation revoked."

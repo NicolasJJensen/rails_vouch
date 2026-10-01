@@ -514,4 +514,20 @@ RSpec.describe "Vouch generators" do
     expect(Dir[File.join(@generator_directory, "db/migrate/*add_registration_required_to_accounts.rb")].length).to eq(1)
   end
 
+  it "generates separate invitation mailers and acceptance links for each scope" do
+    @generator_directory = run_generator(Vouch::Generators::InvitationsGenerator, ["users", "Account"])
+    generator = Vouch::Generators::InvitationsGenerator.new(["members", "Account"])
+    generator.destination_root = @generator_directory
+    generator.invoke_all
+
+    %w[users members].each do |namespace|
+      mailer = File.read(File.join(@generator_directory, "app/mailers/#{namespace}/invitation_mailer.rb"))
+      controller = File.read(File.join(@generator_directory, "app/controllers/#{namespace}/invitations_controller.rb"))
+      view = File.read(File.join(@generator_directory, "app/views/#{namespace}/invitation_mailer/invitation.text.erb"))
+      expect(mailer).to include("class #{namespace.camelize}::InvitationMailer < ApplicationMailer")
+      expect(controller).to include("#{namespace.camelize}::InvitationMailer.invitation")
+      expect(view).to include("accept_#{namespace.singularize}_invitation_url")
+    end
+  end
+
 end

@@ -7,7 +7,7 @@ class <%= scope_module %>::InvitationsController < Vouch::InvitationsController
 <% end -%>
 
   on_invitation_token_generation do |identifier, invitation|
-    VouchInvitationMailer.invitation(identifier, invitation).deliver_later
+    <%= scope_module %>::InvitationMailer.invitation(identifier, invitation).deliver_later
   end
 
   private

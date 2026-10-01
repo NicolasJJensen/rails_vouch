@@ -34,9 +34,11 @@ class Vouch::InvitationsController < ::ApplicationController
     end
     run_hooks(:invitation_token_generation, identifier, invitee) { |env| env.add(invitee) } if invitee
     redirect_to root_path, notice: I18n.t('vouch.invitations.sent')
-  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique,
-         Vouch::Persistence::Cancelled
-    redirect_to root_path, notice: I18n.t('vouch.invitations.sent')
+  rescue ActiveRecord::RecordInvalid => error
+    message = error.record&.errors&.full_messages&.to_sentence.presence
+    redirect_to root_path, alert: message || I18n.t("vouch.invitations.failed")
+  rescue ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled
+    redirect_to root_path, alert: I18n.t("vouch.invitations.failed")
   end
 
   def destroy

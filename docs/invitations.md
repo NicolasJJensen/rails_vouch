@@ -71,15 +71,15 @@ The generated controller connects the invitation event to the mailer:
 ```ruby
 # In Users::InvitationsController
  on_invitation_token_generation do |identifier, invitation|
-   VouchInvitationMailer.invitation(identifier, invitation).deliver_later
+   Users::InvitationMailer.invitation(identifier, invitation).deliver_later
  end
 ```
 
 Edit the generated mailer and template to change the message:
 
 ```ruby
-# app/mailers/vouch_invitation_mailer.rb
-class VouchInvitationMailer < ApplicationMailer
+# app/mailers/users/invitation_mailer.rb
+class Users::InvitationMailer < ApplicationMailer
   def invitation(identifier, invitation)
     @invitee = invitation
     mail(to: identifier, subject: "Join our application")
@@ -88,11 +88,13 @@ end
 ```
 
 ```erb
-<%# app/views/vouch_invitation_mailer/invitation.text.erb %>
+<%# app/views/users/invitation_mailer/invitation.text.erb %>
 Accept your invitation: <%= accept_user_invitation_url(token: @invitee.invitation_token) %>
 ```
 
-The link uses your Action Mailer URL configuration.
+Each generated controller namespace has its own invitation mailer and template, so separate authentication scopes use their own acceptance links. The link uses your Action Mailer URL configuration.
+
+If invitation creation fails, the controller redirects with an error alert instead of a success notice. Validation errors are shown when available; conflicts and cancelled writes use a general failure message.
 
 ### Offer the invitation form
 

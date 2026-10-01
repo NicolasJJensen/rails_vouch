@@ -86,9 +86,9 @@ module Vouch
 
       def create_delivery
         return if options[:model_only]
-        mailer_path = File.join(destination_root, "app/mailers/vouch_invitation_mailer.rb")
+        mailer_path = File.join(destination_root, "app/mailers/#{controller_scope_path}/invitation_mailer.rb")
         template "invitation_mailer.rb.tt", mailer_path unless File.file?(mailer_path)
-        view_path = File.join(destination_root, "app/views/vouch_invitation_mailer/invitation.text.erb")
+        view_path = File.join(destination_root, "app/views/#{scope_module.underscore}/invitation_mailer/invitation.text.erb")
         template "invitation_mailer.text.erb.tt", view_path unless File.file?(view_path)
       end
 
