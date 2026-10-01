@@ -26,8 +26,12 @@ end
 
 ```ruby
 # config/application.rb
-config.middleware.use Warden::Manager do |manager|
-  Vouch.configure_warden(manager)
+module YourApplication
+  class Application < Rails::Application
+    config.middleware.use Warden::Manager do |manager|
+      Vouch.configure_warden(manager)
+    end
+  end
 end
 ```
 
@@ -61,4 +65,4 @@ a non-overlapping name and keep its serializer independent.
 
 ## Account and membership sessions
 
-An account login and its membership selections are separate Warden scopes. Vouch restores a membership only when its owning account is authenticated and its authentication requirements remain satisfied. The [scope reference](model-mapping.md#shared-account-scopes) describes how to declare these relationships.
+An account login and its membership selections are separate Warden scopes. Vouch restores an ordinary membership only when its owning account is authenticated. Membership-only impersonation is an explicitly restricted exception: it authorizes the selected target membership without signing in as that membership’s account. Full account impersonation may select memberships of the target account; see [impersonation](impersonation.md) for the permission and restoration rules. The [scope reference](model-mapping.md#shared-account-scopes) describes how to declare these relationships.

@@ -1,8 +1,15 @@
 # Agreed authentication fixes
 
-> Historical engineering record. For the current API and setup, start with the [README](../README.md).
+> Historical engineering record, retained for provenance. These statements and examples describe an earlier development snapshot and may be superseded. Use the [README](../../README.md) and current feature guides for supported APIs; this is not an upgrade procedure for a released gem.
 
 The implementation covers the 14 findings and the accepted design improvements. Session storage remains the host's responsibility. The compatibility suite does not test Devise coexistence.
+
+## Contents
+
+- [Regression scoreboard](#regression-scoreboard)
+- [Design contracts](#design-contracts)
+- [Validation](#validation)
+- [Host upgrade notes](#host-upgrade-notes)
 
 ## Regression scoreboard
 
@@ -67,4 +74,4 @@ Outstanding OTP challenges without nonces become invalid. Existing sessions usin
 
 Persisted proofs have database replay protection. Unsaved credential drafts retain in-memory state and require host session protection. Hosts that wrap authentication in an additional outer transaction must coordinate response/session publication with that outer transaction. Lifecycle after hooks are transactional, not after-commit delivery hooks.
 
-Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](model-mapping.md).
+Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](../../docs/model-mapping.md).

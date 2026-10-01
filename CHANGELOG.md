@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Rails 8.1+ and PostgreSQL support, with case-insensitive email columns.
+- Shared password/OAuth sign-in callbacks and customizable action outcomes.
+- Mapped writing-connection transactions with rollback detection and preserved errors.
+- Selectable signed or opaque password-reset tokens with explicit revocation.
+- Account and membership impersonation modes, stable original helpers, and continued-access checks for revoked or expired grants.
+
 - Independent URL segments and named helpers for session and registration routes.
 - OAuth registration forms by default, with prefilled provider data and controlled automatic-signup failure redirects.
 - Inline migration references and indexes with repeatable feature generation.
@@ -15,7 +21,7 @@
 - Custom scalar and composite primary keys in authentication, tokens, and generated associations.
 - Verification subjects composed of one or several attributes.
 - Account and credential recovery codes with generated management and sign-in pages.
-- Organisation-specific MFA policies with recorded authentication evidence.
+- An MFA evidence collection for application-owned authentication requirements.
 - Nested impersonation with original-operator helpers and cross-scope restoration.
 - One-argument scope generation, nested membership routes, and controller ejection that preserves overrides.
 - Password history, lockout, reset-token revocation, and explicit session invalidation.

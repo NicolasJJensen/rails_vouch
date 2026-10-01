@@ -1,165 +1,81 @@
 # Advanced custom authentication
 
+Use `complete_sign_in` only when your application implements a first-factor sign-in method that Vouch does not supply. It connects an already verified credentials record to Vouch's MFA, membership selection and session lifecycle. It does not verify a password, code or provider response itself.
+
+For ordinary integrations, use the supplied [password sign-in](../README.md), [OAuth](oauth.md) or [passwordless credential APIs](passwordless.md) instead.
+
 ## Contents
 
-- [When to use this API](#when-to-use-this-api)
-- [Complete a verified proof](#complete-a-verified-proof)
-- [Handle outcomes](#handle-outcomes)
+- [Verify proof before completing sign-in](#verify-proof-before-completing-sign-in)
+- [Handle completion outcomes](#handle-completion-outcomes)
+- [Preserve the authentication boundary](#preserve-the-authentication-boundary)
 
-## When to use this API
+## Verify proof before completing sign-in
 
-Use this only after a host endpoint has independently verified a first-factor proof, such as a passwordless code or hardware credential. Generated password, OAuth, registration, and MFA endpoints already verify their proof and complete authentication.
+For a custom hardware sign-in method, your verifier must check the challenge, signature, expiry and replay protection and return the verified credentials record. The browser must not be allowed to select that record just by submitting its ID.
 
-## Complete a verified proof
-
-After verification, call the controller completion API with the credentials account. Never trust an account ID from a browser as the proof. This unauthenticated example looks up a persisted phone by the submitted contact value, issues and delivers its code through the model, and keeps only the credential reference and opaque OTP token in the Rails session. `SmsService` is host application code.
-
-Start by adding the concern and its required schema to a persisted credential model:
-
-```sh
-bin/rails generate vouch:magic_linkable Phone
-bin/rails db:migrate
-```
-
-The migration adds:
+The following integration assumes you implement `HardwareSignIn.verify` in your application. Its return value is a `User` whose proof it accepted, or `nil`. It is not a Vouch class or a complete hardware-verification implementation.
 
 ```ruby
-change_table :phones do |t|
-  t.string :sign_in_nonce
-  t.bigint :sign_in_attempts, default: 0, null: false
-  t.datetime :sign_in_locked_at
-end
-``` The credential needs a concrete owner association, normalized contact data, and an index/validation appropriate to the application’s uniqueness rule. A phone used as a unique login identifier normally has a unique index:
-
-```ruby
-change_table :phones do |t|
-  t.index :e164, unique: true
-end
-```
-
-```ruby
-# app/controllers/users/passwordless_sessions_controller.rb
-class Users::PasswordlessSessionsController < ApplicationController
-  include Vouch::Authentication
-  auth_scope :user
-
-  def new
-  end
-
-  def create_code
-    phone = Phone.find_by(e164: params.require(:e164).to_s.strip)
-    return render(:new, status: :unprocessable_entity) unless phone
-
-    result = phone.issue_sign_in_code!
-
-    if result.ok?
-      session[:passwordless_phone_id] = phone.id
-      session[:passwordless_code_token] = result.token
-      redirect_to verify_users_passwordless_sessions_path
-    else
-      render :new, status: :unprocessable_entity
-    end
-  end
-
-  def verify
-  end
-
+# app/controllers/users/hardware_sessions_controller.rb
+class Users::HardwareSessionsController < Vouch::SessionsController
   def create
-    phone = Phone.find_by(id: session[:passwordless_phone_id])
-    result = phone&.verify_sign_in_code(
-      params.require(:code), token: session[:passwordless_code_token]
+    user = HardwareSignIn.verify(
+      challenge: session.delete(:hardware_sign_in_challenge),
+      assertion: params.require(:assertion)
     )
-    return render(:verify, status: :unprocessable_entity) unless result&.ok?
+    return redirect_to(new_session_path, alert: "Unable to sign in") unless user
 
-    # Resolve the account through the verified record, not params[:user_id].
-    account = phone.user
-    session.delete(:passwordless_phone_id)
-    session.delete(:passwordless_code_token)
-    complete_verified_passwordless_sign_in(account, phone)
-  end
-
-  private
-
-  def complete_verified_passwordless_sign_in(account, phone)
-    outcome = complete_sign_in(account, method: :passwordless,
-      hook: :sign_in, signed_in_via: phone)
-
-    case outcome
+    case complete_sign_in(user, method: :hardware, hook: :sign_in)
     when :signed_in
       redirect_after_authentication
     when :needs_two_factor
       redirect_to two_factor_challenges_path
     when :needs_selection
       redirect_to select_path
-    when :no_identity, :denied
-      redirect_to new_user_session_path, alert: "Unable to sign in"
+    else
+      redirect_to new_session_path, alert: "Unable to sign in"
     end
   end
 end
 ```
 
-The `Phone` model supplies delivery; do not deliver a second code in the controller:
+Add the endpoint beside your existing Vouch routes:
 
 ```ruby
-class Phone < ApplicationRecord
-  include Vouch::MagicLinkable
-  belongs_to :user
-
-  normalizes :e164, with: ->(value) { value.to_s.strip }
-  validates :e164, presence: true, uniqueness: true
-
-  def deliver_sign_in_code(code)
-    SmsService.deliver(e164, "Your sign-in code is #{code}")
-  end
-end
-```
-
-Add host routes for the request, issuance, and verification pages:
-
-```ruby
-namespace :users do
-  resources :passwordless_sessions, only: [:new, :create] do
-    collection do
-      post :create_code
-      get :verify
+# config/routes.rb
+Rails.application.routes.draw do
+  Vouch.routes(self) do |auth|
+    auth.scope model: "User" do
+      auth.sessions
+      auth.registrations
     end
   end
+
+  post "users/hardware_sign_in", to: "users/hardware_sessions#create"
 end
 ```
 
-The proof verification must happen before `complete_sign_in`. That method applies policy, MFA, session rotation, Warden publication, membership selection, and lifecycle hooks; it does not verify a raw password, code, or provider response for you.
+Your application supplies the challenge-issuance endpoint and browser integration for its hardware verifier. For a complete phone-code example, follow [passwordless sign-in](passwordless.md); its credential model supplies issuance and proof consumption.
 
-`issue_sign_in_code!` delivers the code and returns `Result.ok(token)`. `verify_sign_in_code` consumes that token under a credential lock and clears the nonce after success, so replaying the same code/token returns an invalid result. A new issue also replaces the nonce, invalidating the prior challenge.
+In a multi-tenant application, pass the model containing credentials, such as `Account`. Membership selection follows account authentication; a submitted membership ID is not first-factor proof.
 
-The request form submits the contact value. It does not submit a user ID:
+## Handle completion outcomes
 
-```erb
-<%# app/views/users/passwordless_sessions/new.html.erb %>
-<%= form_with url: create_code_users_passwordless_sessions_path do |form| %>
-  <%= form.label :e164, "Mobile number" %>
-  <%= form.telephone_field :e164, autocomplete: "tel", required: true %>
-  <%= form.submit "Send code" %>
-<% end %>
-```
-
-The verification form posts only the code; the Rails session holds the short-lived verification token and credential reference:
-
-```erb
-<%# app/views/users/passwordless_sessions/verify.html.erb %>
-<%= form_with url: users_passwordless_sessions_path do |form| %>
-  <%= form.label :code, "Code" %>
-  <%= form.text_field :code, autocomplete: "one-time-code", required: true %>
-  <%= form.submit "Sign in" %>
-<% end %>
-```
-
-## Handle outcomes
-
-| Outcome | Host endpoint action |
+| Outcome | What your endpoint does |
 | --- | --- |
-| `:signed_in` | Redirect through `redirect_after_authentication`. |
-| `:needs_two_factor` | Redirect to the supplied MFA challenge. |
-| `:needs_selection` | Redirect to membership selection. |
-| `:no_identity` or `:denied` | Clear pending references and show a safe failure response. |
+| `:signed_in` | Redirect with `redirect_after_authentication`. |
+| `:needs_two_factor` | Redirect to `two_factor_challenges_path`. The session is not fully authenticated yet. |
+| `:needs_selection` | Redirect to `select_path` to choose a membership. |
+| Other outcomes, including `:no_identity` and `:denied` | Show a failure response; do not publish a Warden identity yourself. |
 
-For a full custom controller, eject the nearest supplied endpoint first so its scope, route helpers, and failure handling remain visible. A custom Warden strategy needs a name other than Vouch’s reserved `:password` strategy.
+The completion method runs the normal `sign_in` lifecycle with `authentication_method: :hardware` in this example. Put callbacks shared with other sign-in methods in your [application parent controller](sessions-and-hooks.md#share-sign-in-callbacks).
+
+## Preserve the authentication boundary
+
+- Verify and consume first-factor proof before calling completion. Never convert an ordinary contact verification into MFA evidence.
+- Start completion outside an existing transaction on the credentials model's writing connection. Add related database work through lifecycle callbacks.
+- Keep the exact primary credential reference when your flow supports it, so the same credential cannot satisfy both passwordless sign-in and its required MFA challenge.
+- Treat a pending outcome as a continuation, not a completed login. Let the supplied MFA and membership controllers finish it.
+
+Use [controller ejection](controllers.md#eject-a-controller) when you need to own a supplied endpoint's implementation. Ejection retains the shared Vouch runtime; it does not turn an unchecked account ID into authenticated proof.

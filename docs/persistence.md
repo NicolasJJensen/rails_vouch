@@ -1,73 +1,74 @@
-# Advanced integration: results and cancelled writes
+# Results and cancelled authentication writes
 
-This guide explains the model-level results and exceptions used when writing custom authentication services or credential adapters.
-
-A Rails callback can prevent a reset token, password, or verification state from being saved. Your code must not treat that operation as successful or deliver a token whose state was rolled back.
+The generated controllers handle expected authentication failures and display useful errors. Read this guide when writing a custom credential adapter or calling a model operation directly. Ordinary application records still use normal Rails persistence.
 
 ## Contents
 
-- [Generate, then deliver](#generate-then-deliver)
-- [Result conventions](#result-conventions)
-- [Group custom database changes](#group-custom-database-changes)
-- [External effects and callbacks](#external-effects-and-callbacks)
+- [Choose a result or an exception](#choose-a-result-or-an-exception)
+- [Why Vouch checks required writes](#why-vouch-checks-required-writes)
+- [Transaction boundaries](#transaction-boundaries)
+- [Delivery and other external effects](#delivery-and-other-external-effects)
 
-## Generate, then deliver
+## Choose a result or an exception
 
-For a custom password-reset service:
+Password-reset operations offer normal and bang methods. For example, `reset_password_with_token` returns an unsuccessful result for an invalid or expired token; `reset_password_with_token!` raises `Vouch::OperationFailed` with that same result. Both return a successful `Vouch::Result` when the password changes.
 
-```ruby
-result = user.generate_password_reset_token!
-user.deliver_password_reset_token(result.value) if result.ok?
-```
-
-If a callback cancels token persistence, generation raises `Vouch::Persistence::Cancelled` instead of returning a usable token. Handle it at your endpoint boundary:
+A custom service can let its caller handle the result:
 
 ```ruby
-begin
-  result = user.generate_password_reset_token!
-  user.deliver_password_reset_token(result.value) if result.ok?
-rescue Vouch::Persistence::Cancelled
-  render :new, status: :unprocessable_entity
+# app/services/password_replacement.rb
+class PasswordReplacement
+  def self.call(user, token:, password:, password_confirmation:)
+    user.reset_password_with_token(
+      token,
+      password: password,
+      password_confirmation: password_confirmation
+    )
+  end
 end
 ```
 
-Delivery errors also propagate. Handle those separately if your application needs a delivery retry.
+| Result | Meaning |
+| --- | --- |
+| `ok?` | The operation succeeded; `value` holds its return value. |
+| `invalid?` | The proof or submitted attributes were rejected. |
+| `locked?` | Attempt protection prevents another attempt now. |
+| `cancelled?` | A required write or lifecycle callback cancelled the operation. |
+| `pending?` | A controller flow needs another step, such as MFA; sign-in is not complete. |
 
-## Result conventions
+For a bang operation, rescue `Vouch::OperationFailed` at the boundary where you handle that expected failure. Its `result` retains the status and metadata. Where available, `result.metadata[:record].errors` contains field errors and `result.error` is the underlying expected exception. Unexpected exceptions, including an unavailable database, retain their original types.
 
-| Operation | Success | Invalid proof | Cancelled write |
-| --- | --- | --- | --- |
-| `generate_password_reset_token!` | Result carrying the raw token | Not applicable | Raises `Vouch::Persistence::Cancelled` |
-| `reset_password_with_token!` | `Result.ok` | Unsuccessful result | `Result.cancelled` |
-| `start_verification!` | Result carrying a challenge token | Not applicable | Raises `Vouch::Persistence::Cancelled` |
-| `complete_verification!` | `Result.ok` | `Result.invalid` | `Result.cancelled` |
-| `challenge!` | Result carrying an MFA token | Not applicable | Raises `Vouch::Persistence::Cancelled` |
-| `verify_challenge` | `Result.ok` | `Result.invalid` | `Result.cancelled` |
-| `issue_sign_in_code!` | Result carrying a sign-in token | Not applicable | Raises `Vouch::Persistence::Cancelled` |
-| `verify_sign_in_code` | `Result.ok` | `Result.invalid` | `Result.cancelled` |
+> An exclamation mark does not make a failed proof successful. Choose the method that fits your control flow, and check the result or handle its exception. Individual feature guides list their supported operations.
 
-Methods with lockout protection can return `Result.locked`. A cancelled proof-consumption write leaves the proof available for retry after the cancellation condition is removed. Unexpected database errors retain their normal exception types.
+For controller customization, use [the action result block](controllers.md#customize-action-responses) instead of rebuilding a supplied endpoint.
 
-## Group custom database changes
+## Why Vouch checks required writes
 
-`Vouch::Persistence` is a utility module, not an Active Record model. It wraps writes and raises `Vouch::Persistence::Cancelled` when a callback silently rolls back a bang write. Custom credential adapters can use it when several writes must succeed together:
+Rails deliberately catches `ActiveRecord::Rollback` at a transaction boundary. A model callback that raises it can make a bang write return `nil`, rather than raise to its caller. Ordinary validation failures and `throw :abort` normally produce Active Record exceptions from bang writes; this safeguard addresses the narrower swallowed-rollback case.
 
-```ruby
-Vouch::Persistence.transaction(user) do
-  user.lock!
-  Vouch::Persistence.update!(user, last_login_at: Time.current)
-  AuditLog.create!(user: user, event: "sign_in")
-end
-```
+Authentication cannot continue if consuming its proof was cancelled: the code would otherwise remain usable. Vouch therefore checks required writes and transaction completion before reporting success.
 
-This example assumes your `last_login_at` column and `AuditLog` model on the same writing connection as `user`. `transaction(record)` uses the record's connection and opens a transaction or, inside an existing transaction, a savepoint. A successful savepoint does not commit its outer transaction. A cancelled operation raises `Vouch::Persistence::Cancelled` and reloads the supplied persisted record. That exception inherits from `ActiveRecord::RecordNotSaved`.
+| Mechanism | Responsibility |
+| --- | --- |
+| Record lock | Prevent competing changes while checking and consuming a proof. |
+| Rails transaction | Commit or roll back related database writes together. |
+| Checked write | Detect a required write cancelled by a callback. |
+| Transaction completion check | Detect cancellation before the transaction completes. |
 
-Authentication lifecycle transactions use the mapped credentials model's writing connection. Registration records that must be saved atomically must share that connection; this also applies when changing a recovery address and revoking its outstanding reset token together. Vouch does not provide transactions across separate database connections.
+`Vouch::Persistence` is the small internal module implementing those checks on top of Active Record. It is not a model or a replacement persistence framework for your application. Its internal `Cancelled` exception inherits from `ActiveRecord::RecordNotSaved`; public operation methods translate expected failures into their result/exception contract.
 
-`save!(record)`, `update!(record, attributes)`, `create!(model_or_relation, attributes)`, and `destroy!(record)` check that the write succeeded. Validation and uniqueness failures remain ordinary Active Record errors.
+## Transaction boundaries
 
-## External effects and callbacks
+Vouch opens authentication lifecycle transactions on the mapped credentials model's writing connection. Associated records and callback writes that must be atomic must use that same connection. Separate connection pools are separate transaction boundaries, even if they point to the same database.
 
-A database rollback cannot undo an email or SMS that was already sent. For authentication controller customizations, put database work in ordinary lifecycle callbacks and post-completion work in `after_commit_of_*`. The [lifecycle timing table](sessions-and-hooks.md#lifecycle-hooks) explains when each runs, including registrations that still require MFA.
+A custom adapter using Vouch's internal checked transaction gets a savepoint when already inside a transaction. Releasing that savepoint does not commit the enclosing transaction. It must not publish authentication or send a message on the assumption that the outer transaction has committed.
 
-Custom credential implementations can run the [adapter shared examples](credential-adapter-contract.md) to check cancellation, expiry, lockout, and single-use behavior.
+Vouch rejects authentication lifecycles started inside an existing joinable transaction on the mapped writing connection. Add related database work through the [transactional lifecycle callbacks](sessions-and-hooks.md#lifecycle-hooks) instead.
+
+## Delivery and other external effects
+
+A rollback cannot undo an email, SMS or external API call. The supplied controllers publish successful events after their required database work succeeds. Customize their existing delivery method rather than registering a second delivery callback.
+
+For your own lifecycle work, use transactional callbacks for database writes and `after_commit_of_*` for external effects. An exception after commit cannot undo already committed changes; handle delivery retries separately from database rollback.
+
+Custom two-factor adapters can run the [credential adapter contract](credential-adapter-contract.md) to test cancellation, expiry, lockout and single use.

@@ -1,6 +1,15 @@
 # Updating existing schemas
 
-These notes apply to applications using development versions or partially generated schemas. They do not describe a published version-to-version upgrade. Start with the [README](../README.md), then use the feature guides for the relevant contract.
+> Historical engineering record, retained for provenance. These statements and examples describe an earlier development snapshot and may be superseded. Use the [README](../../README.md) and current feature guides for supported APIs; this is not an upgrade procedure for a released gem.
+
+These notes apply to applications using development versions or partially generated schemas. They do not describe a published version-to-version upgrade. Start with the [README](../../README.md), then use the feature guides for the relevant contract.
+
+## Contents
+
+- [Authentication proof columns](#authentication-proof-columns)
+- [Rollout effects](#rollout-effects)
+- [Compatibility boundaries](#compatibility-boundaries)
+- [Account-first scopes](#account-first-scopes)
 
 ## Authentication proof columns
 
@@ -17,7 +26,7 @@ class AddAuthenticationProofState < ActiveRecord::Migration[8.0]
 end
 ```
 
-Also add account `registration_required` for invitations as described in [invitations](invitations.md), and add `two_factor_enabled` before enabling account MFA. Existing accounts with a previously enabled credential require a backfill, including now-unverified records.
+Also add account `registration_required` for invitations as described in [invitations](../../docs/invitations.md), and add `two_factor_enabled` before enabling account MFA. Existing accounts with a previously enabled credential require a backfill, including now-unverified records.
 
 ## Rollout effects
 
@@ -31,6 +40,6 @@ Ruby >= 3.2 and Rails >= 8, < 9 are required, with per-version Ruby minimums. Po
 
 ## Account-first scopes
 
-Separate the credentials scope from each membership scope using `account_scope:` as shown in [model mapping](model-mapping.md). Existing scope names and session meanings change when migrating a combined mapping; plan for existing users to sign in again. Do not infer current tenant from the account when several memberships exist.
+Separate the credentials scope from each membership scope using `account_scope:` as shown in [model mapping](../../docs/model-mapping.md). Existing scope names and session meanings change when migrating a combined mapping; plan for existing users to sign in again. Do not infer current tenant from the account when several memberships exist.
 
 Application pages should inherit an application-defined protected base. Gem endpoints now inherit `ApplicationController` and include `Vouch::Authentication`; remove `parent_controller` and `authentication_callbacks` configuration. Keep authentication requirements out of `ApplicationController`. Single-model scopes expose only their primary current-record helper.

@@ -66,8 +66,8 @@ typical use. Each supports the phases in the preceding table.
 | `oauth_account_creation` | `auth_hash:` initially; account and identity are added after creation | Provision an OAuth signup. |
 | `invitation_acceptance` | Invitation identity, credentials account | Create records for the accepted membership. |
 | `invitation_revocation` | Invitation identity, credentials account | Audit an invitation withdrawal. |
-| `impersonation_start` | Original operator, target | Record who began impersonation. |
-| `impersonation_end` | Current identity, original operator | Record restoration. |
+| `impersonation_start` | Actor authorizing the switch, target | Record who began impersonation. |
+| `impersonation_end` | Current identity, record being restored | Record restoration. |
 
 ## Share sign-in callbacks
 
@@ -107,25 +107,27 @@ Event hooks use `on_*` for password reset token generation, password changes, in
 Password reset already has a delivery callback: Vouch calls the model’s `deliver_password_reset_token` method, which the generator supplies. Change that method to customize delivery:
 
 ```ruby
-class Account < ApplicationRecord
-  def deliver_password_reset_token(token)
-    AccountPasswordResetMailer.reset(self, token).deliver_later
+# app/models/user.rb
+class User < ApplicationRecord
+  def deliver_password_reset_token(token, recipient:)
+    UserPasswordResetMailer.reset(self, token, recipient: recipient).deliver_later
   end
 end
 ```
 
 The generated application password-reset controller registers
 `on_password_reset_token_generation` and calls
-`account.deliver_password_reset_token(token)`. The generated model method
+`account.deliver_password_reset_token(token, recipient: recipient)`. The generated model method
 then calls its generated mailer. To use a different mailer or delivery
-service, override the model method as shown above. Do not add a second
-password-reset token-generation hook for delivery: it would run alongside the
-generated hook and can send the reset message twice.
+service, override the model method as shown above. The recipient was captured when the token was issued; pass it through rather than re-reading a possibly changed address.
+
+> Registering another token-generation callback adds behavior alongside the generated callback. It does not replace delivery and could send a second message.
 
 Use an event hook for additional event-specific work that is not the supplied
 delivery path:
 
 ```ruby
+# app/controllers/users/password_resets_controller.rb
 class Users::PasswordResetsController < Vouch::PasswordResetsController
   on_password_change do |account|
     AuditLog.create!(account:, event: "password_changed")
@@ -135,7 +137,7 @@ end
 
 | Event hook | Arguments |
 | --- | --- |
-| `on_password_reset_token_generation` | Credentials record, raw reset token |
+| `on_password_reset_token_generation` | Credentials record, raw reset token, captured recipient |
 | `on_password_change` | Credentials record |
 | `on_invitation_token_generation` | Submitted identifier, invitation identity |
 | `on_two_factor_verification` | Credentials record, selected identity, verified credential |
@@ -152,9 +154,11 @@ also cancels the lifecycle. Cancellation in a transactional callback rolls back 
 For example, reject a login before writing its audit entry:
 
 ```ruby
-# In Users::SessionsController
-before_sign_in do |user, _identity|
-  throw(:abort) if user.suspended?
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::SessionsController
+  before_sign_in do |user, _identity|
+    throw(:abort) if user.suspended?
+  end
 end
 ```
 
@@ -184,13 +188,11 @@ impersonation, signing out clears the participating sessions and the restoration
 stack. To return to the operator's session instead, use the
 [stop impersonation action](impersonation.md#start-and-stop).
 
-Membership impersonation preserves the operator's account authentication while
-making only the authorized target membership current. The target's account is
-not signed in. Ordinary membership selection is blocked until impersonation ends.
+Membership impersonation keeps the account authorized before that switch; it does not sign in as the target membership's owner. Full account impersonation can select that account's memberships. See [impersonation modes](impersonation.md) for current and original helpers, nested restoration and permission checks.
 
 
 ## Authentication evidence
 
-MFA completion records the method used and when it was verified. Recovery codes are recorded as `recovery_code`, not as the credential's ordinary method. [Organisation MFA policies](authentication-policy.md#mfa-required-by-an-organisation) use that evidence when deciding whether another challenge is required.
+MFA completion records the method used and when it was verified. Recovery codes are recorded as `recovery_code`, not as the credential's ordinary method. Your application can inspect the [current MFA evidence collection](authentication-policy.md#mfa-evidence-and-application-permissions) when applying its access rules.
 
 OAuth field retention is described in [retained provider data](oauth.md#retain-additional-provider-data).

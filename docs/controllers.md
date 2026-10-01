@@ -165,10 +165,25 @@ The standard declarations accept route options. `paths:` changes URL segments.
 change the controller action. `as:` changes the normal scope helper prefix:
 
 ```ruby
-auth.scope model: "User", path: "accounts", as: "account" do
-  auth.sessions paths: {new: "login", create: "login", destroy: "logout"},
-    path_names: {new: :sign_in, create: :create_session, destroy: :sign_out}
-  auth.registrations
+# config/routes.rb
+Rails.application.routes.draw do
+  Vouch.routes(self) do |auth|
+    auth.scope model: "User", path: "accounts", as: "account" do
+      auth.sessions(
+        paths: {
+          new: "login",
+          create: "login",
+          destroy: "logout"
+        },
+        path_names: {
+          new: :sign_in,
+          create: :create_session,
+          destroy: :sign_out
+        }
+      )
+      auth.registrations
+    end
+  end
 end
 ```
 
@@ -227,6 +242,7 @@ Use `bin/rails routes` to inspect your enabled routes. [Custom prefixes](model-m
 Override record construction when signup creates an organisation and membership. `build_tenant(account)` and `build_identity(account, tenant:)` return unsaved records; Vouch saves them in the registration transaction.
 
 ```ruby
+# app/controllers/accounts/registrations_controller.rb
 class Accounts::RegistrationsController < Vouch::RegistrationsController
   private
 
@@ -243,6 +259,7 @@ end
 Add accompanying database records with a transactional hook:
 
 ```ruby
+# app/controllers/accounts/registrations_controller.rb
 class Accounts::RegistrationsController < Vouch::RegistrationsController
   after_sign_up do |account, identity|
     Preferences.create!(account: account)
@@ -250,7 +267,9 @@ class Accounts::RegistrationsController < Vouch::RegistrationsController
 end
 ```
 
-`Preferences` is an example model you supply. Invited registration uses the existing membership, then runs registration hooks in the same transaction. Existing accounts accepting another invitation use the invitation-acceptance hooks instead. [Invitations](invitations.md#registration-customization) shows both cases; [Registration](registration.md#construct-records-transactionally) shows sharing construction methods with provider signup.
+> `Preferences` is an example model you supply.
+
+Invited registration uses the existing membership, then runs registration hooks in the same transaction. Existing accounts accepting another invitation use the invitation-acceptance hooks instead. [Invitations](invitations.md#registration-customization) shows both cases; [Registration](registration.md#construct-records-transactionally) shows sharing construction methods with provider signup.
 
 ## Eject a controller
 
@@ -293,7 +312,25 @@ bin/rails generate vouch:eject portal sessions --auth-scope user
 Connect it in the scope's route block:
 
 ```ruby
-auth.sessions controller: "portal/sessions"
+# config/routes.rb
+Rails.application.routes.draw do
+  Vouch.routes(self) do |auth|
+    auth.scope model: "User" do
+      auth.sessions controller: "portal/sessions"
+    end
+  end
+end
 ```
 
 Supported endpoints include `sessions`, `membership_sessions`, `registrations`, `password_resets`, `invitations`, `two_factor_challenge`, `two_factor_credentials`, `recovery_codes`, `omni_auths` and `impersonations`.
+
+Feature generators already place their generated views and mailers in your application, so edit those files directly; they do not need controller ejection. For example, the password-reset generator writes its forms under `app/views/users/password_resets/` and a mailer under `app/mailers/`.
+
+| What you want to change | Where to change it |
+| --- | --- |
+| Generated forms and page markup | The generated files in `app/views/`. |
+| Generated mail content or delivery method | The generated mailer/template or model delivery method shown in that feature's guide. |
+| Endpoint actions, callbacks and prepared records | Your subclass, or its local implementation after ejection. |
+| Mapping, authentication session and credential behavior | The documented runtime extension points; ejection does not copy these modules. |
+
+An existing hand-written controller using nested `module` declarations must be rewritten with a `class Users::SessionsController < ...` declaration before ejection; the generator reports this unsupported source shape rather than overwriting it.

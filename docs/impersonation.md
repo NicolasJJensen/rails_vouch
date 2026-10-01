@@ -17,9 +17,9 @@ In a single-model `:user` setup, `current_user` is the target and `true_user` is
 ## Contents
 
 - [Add impersonation](#add-impersonation)
-- [Choose the operator scope](#choose-the-operator-scope)
 - [Start and stop](#start-and-stop)
 - [Expire or revoke impersonation access](#expire-or-revoke-impersonation-access)
+- [Choose the operator scope](#choose-the-operator-scope)
 - [Composite primary keys](#composite-primary-keys)
 - [Edit the switching actions](#edit-the-switching-actions)
 - [Customize action responses](#customize-action-responses)
@@ -60,51 +60,18 @@ end
 
 An explicitly authorized impersonation does not require the target to complete MFA. If support access needs fresh MFA, add that check to your `create` action before `super` using the host application's own policy or predicate on `impersonator`.
 
-## Choose the operator scope
-
-By default, an impersonation controller accepts the scope it serves. Use `impersonator_scopes` when more than one authenticated scope may begin support access:
-
-```ruby
-class Users::ImpersonationsController < Vouch::ImpersonationsController
-  impersonator_scopes :support_operator, :employee
-
-  def create
-    return head :forbidden unless impersonator.can_support_users?
-
-    super
-  end
-
-  private
-
-  def impersonatable_identities
-    User.where(organisation_id: impersonator.supported_organisation_ids)
-  end
-end
-```
-
-`impersonator` is the actor authorizing this switch. A membership-only chain retains its first authorizing actor; selecting a membership during full account impersonation allows that membership to authorize a subsequent membership switch. `impersonator_scope_name` is the resolved source scope. If exactly one allowed scope is authenticated, Vouch selects it automatically. If several are authenticated, the request must supply `impersonator_scope`:
-
-```erb
-<%= button_to "View as this user",
-  user_impersonate_path(user, impersonator_scope: :support_operator),
-  method: :post %>
-```
-
-A supplied scope must be allowed by `impersonator_scopes` and authenticated. Otherwise Vouch denies the request. `impersonator_scope :support_operator` remains available as the singular form.
-
-Once a membership-only chain starts, nested requests cannot change its authorizing actor or escalate to account impersonation. The `true_*` helpers always retain the original signed-in context.
-
 ## Start and stop
 
 ```erb
 <%= button_to "View as this user", user_impersonate_path(user), method: :post %>
 <%= button_to "Stop impersonating", user_stop_impersonation_path, method: :delete %>
+<%= button_to "Stop all impersonation", user_stop_all_impersonations_path, method: :delete %>
 ```
 
-Vouch supplies `impersonating_user?` in controllers and views.
+Vouch supplies `impersonating_user?` in controllers and views. It identifies participation in the chain. When rendering a scope-specific stop button, check that scope is the current target:
 
 ```erb
-<% if impersonating_user? %>
+<% if impersonation_context&.target_scope == :user %>
   <p>You are viewing <%= current_user.email_address %>.</p>
   <%= button_to "Return to my account", user_stop_impersonation_path, method: :delete %>
 <% end %>
@@ -174,7 +141,42 @@ end
 
 Use the same permission rule when authorizing `create`; this check governs subsequent requests. It defaults to `true` when you do not override it. `context` supplies `mode`, `operator`, `target`, `operator_scope` and `target_scope`; the public `impersonation_context` helper returns the current context, or `nil` outside impersonation. It does not replace `true_*` helpers: the operator for a nested switch can differ from the original signed-in person.
 
-Before an action runs, Vouch checks every step in order. A `false` result removes that step and everything after it, restores the preceding authorized context, and redirects with an explanation. If the original login is no longer valid, its sessions are cleared. A permission-check exception propagates through your normal Rails error handling. Saved MFA proof is restored only for its own account; current proof validation still applies.
+Before an action runs, Vouch checks every step in order. A `false` result removes that step and everything after it, restores the preceding authorized context, and redirects with an explanation. If the original login is no longer valid, its sessions are cleared. A permission-check exception propagates through your normal Rails error handling. Saved MFA proof is restored only for its own account; current proof validation still applies. Explicit sign-out still ends the participating sessions, and stop-all still removes the entire chain, even if a grant expired immediately before that request.
+
+## Choose the operator scope
+
+By default, an impersonation controller accepts the scope it serves. Use `impersonator_scopes` when more than one authenticated scope may begin support access:
+
+```ruby
+# app/controllers/users/impersonations_controller.rb
+class Users::ImpersonationsController < Vouch::ImpersonationsController
+  impersonator_scopes :support_operator, :employee
+
+  def create
+    return head :forbidden unless impersonator.can_support_users?
+
+    super
+  end
+
+  private
+
+  def impersonatable_identities
+    User.where(organisation_id: impersonator.supported_organisation_ids)
+  end
+end
+```
+
+`impersonator` is the actor authorizing this switch. A membership-only chain retains its first authorizing actor; selecting a membership during full account impersonation allows that membership to authorize a subsequent membership switch. `impersonator_scope_name` is the resolved source scope. If exactly one allowed scope is authenticated, Vouch selects it automatically. If several are authenticated, the request must supply `impersonator_scope`:
+
+```erb
+<%= button_to "View as this user",
+  user_impersonate_path(user, impersonator_scope: :support_operator),
+  method: :post %>
+```
+
+A supplied scope must be allowed by `impersonator_scopes` and authenticated. An unknown, disallowed or unauthenticated supplied scope returns `403 Forbidden`. If several allowed scopes are authenticated and none is supplied, the response is `422 Unprocessable Content` with “Choose an impersonator_scope”. `impersonator_scope :support_operator` remains available as the singular form.
+
+Once a membership-only chain starts, nested requests cannot change its authorizing actor or escalate to account impersonation. The `true_*` helpers always retain the original signed-in context.
 
 ## Composite primary keys
 

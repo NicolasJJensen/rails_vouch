@@ -1,8 +1,15 @@
 # Authentication integration fixes
 
-> Historical engineering record. For the current API and setup, start with the [README](../README.md).
+> Historical engineering record, retained for provenance. These statements and examples describe an earlier development snapshot and may be superseded. Use the [README](../../README.md) and current feature guides for supported APIs; this is not an upgrade procedure for a released gem.
 
 This records the implementation following the 7 September 2026 review. New regressions reproduced the gem defects before their fixes.
+
+## Contents
+
+- [Fixes and regression coverage](#fixes-and-regression-coverage)
+- [Integration improvements](#integration-improvements)
+- [Host responsibilities](#host-responsibilities)
+- [Validation](#validation)
 
 ## Fixes and regression coverage
 
@@ -19,7 +26,7 @@ Cancellation checks preserve the distinction between `ActiveRecord::Rollback`, e
 
 ## Integration improvements
 
-- Optional [credential adapter contracts](credential-adapter-contract.md) cover OTP and the dummy host TOTP implementation. Hosts supply provider-specific issuance, clock control, and persistence failure simulation.
+- Optional [credential adapter contracts](../../docs/credential-adapter-contract.md) cover OTP and the dummy host TOTP implementation. Hosts supply provider-specific issuance, clock control, and persistence failure simulation.
 - `spec/lib/vouch/warden_host_interoperability_spec.rb` checks independent serialized Warden scopes across sign-in and subsequent restoration. It also checks host authentication callbacks on public and protected actions.
 - Shared generator metadata respects loaded model table names, customized model names, and namespace paths without triggering application autoloading.
 
@@ -47,4 +54,4 @@ Run the complete suite with:
 bundle exec rspec
 ```
 
-Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](model-mapping.md).
+Core account/membership and tenant/membership reflections do not support polymorphic associations, even with explicit overrides. Polymorphic OAuth ownership is supported separately; see [model mapping](../../docs/model-mapping.md).
