@@ -734,6 +734,18 @@ RSpec.describe "generated host smoke test", :generated_host do
           reset_login_session.get("/")
           abort "Cancel ended the authenticated session" unless reset_login_session.response.successful?
 
+          reset_login_session.get("/#{account_path_name}/two_factor_challenges", params: { format: :html })
+          reset_login_session.get("/#{account_path_name}/two_factor_challenges/\#{credential_param}", params: { format: :html })
+          fresh_code = File.read(Rails.root.join("tmp/two_factor_delivery"))
+          reset_login_session.patch("/#{account_path_name}/two_factor_challenges/\#{credential_param}", params: { code: fresh_code })
+          abort "additional MFA did not complete" unless reset_login_session.response.redirect?
+          evidence_scope = Vouch.mapping_for(:#{route_scope}).evidence_scope_name
+          proof_key = Vouch::Session.key_for(evidence_scope, :evidence)
+          proof_list = reset_login_session.response.request.session[proof_key]
+          current_proofs = Vouch::AuthenticationEvidence.current(proof_list, account: reset_account, mapping: Vouch.mapping_for(evidence_scope))
+          abort "nested-cookie test did not establish a current MFA proof" unless current_proofs.any?
+
+
           abort "custom identifier was not normalized" unless account.reload.login == "generated-login"
           target_account = #{owner_name}.create!(email_address: "impersonated@example.test", login: "impersonated-login", password: "secret123")
           target = #{model_name}.create!(#{owner_name.demodulize.underscore}: target_account)
@@ -753,10 +765,22 @@ RSpec.describe "generated host smoke test", :generated_host do
           abort "authorized impersonation did not redirect" unless reset_login_session.response.redirect?
           reset_login_session.get("/")
           abort "authorized impersonation did not select the target" unless reset_login_session.response.body.include?(target_account.email_address)
+          nested_target = #{model_name}.create!(#{owner_name.demodulize.underscore}: target_account)
+          reset_login_session.post("/#{path_name}/impersonations/\#{nested_target.id}")
+          abort "nested impersonation did not redirect" unless reset_login_session.response.redirect?
           reset_login_session.delete("/#{path_name}/impersonations")
+          abort "stopping nested impersonation failed" unless reset_login_session.response.redirect?
+          reset_login_session.get("/")
+          abort "nested stop did not restore previous target" unless reset_login_session.response.body.include?(target_account.email_address)
+          reset_login_session.post("/#{path_name}/impersonations/\#{nested_target.id}")
+          abort "second nested impersonation did not redirect" unless reset_login_session.response.redirect?
+          reset_login_session.delete("/#{path_name}/impersonations/all")
           abort "stopping impersonation did not redirect" unless reset_login_session.response.redirect?
           reset_login_session.get("/")
           abort "stopping impersonation did not restore the operator" unless reset_login_session.response.body.include?(reset_account.email_address)
+          restored_proofs = Vouch::AuthenticationEvidence.current(reset_login_session.response.request.session[proof_key], account: reset_account, mapping: Vouch.mapping_for(evidence_scope))
+          abort "stop-all lost valid operator MFA evidence" unless restored_proofs == current_proofs
+
           reset_login_session.get("/#{path_name}/invitation/new", params: { format: :html })
           abort "invitation status: \#{reset_login_session.response.status}; location=\#{reset_login_session.response.headers['Location'].inspect}; body=\#{reset_login_session.response.body.to_s[0, 500].inspect}" unless reset_login_session.response.successful?
           abort "invitation form did not use the supported email parameter" unless reset_login_session.response.body.include?('name="email_address"')

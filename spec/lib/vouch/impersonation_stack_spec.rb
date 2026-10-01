@@ -84,7 +84,7 @@ RSpec.describe Vouch::ImpersonationStack do
       target_mapping: mapping, target: first_target)
 
     expect(session[key]).to be_nil
-    expect(session.fetch(described_class::SESSION_KEY).last.fetch("evidence")).not_to have_key(key)
+    expect(described_class.send(:entries, session).last.fetch("evidence")).not_to have_key(key)
   end
 
   it "restores the original first-factor reference separately from MFA evidence" do
@@ -127,12 +127,22 @@ RSpec.describe Vouch::ImpersonationStack do
       target_mapping: mapping, target: first_target)
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: mapping, target: second_target)
+    encoded = session.fetch(described_class::SESSION_KEY)
+    expect(encoded.fetch("r").uniq).to eq(encoded.fetch("r"))
+    expect(JSON.generate(encoded).bytesize).to be < JSON.generate(described_class.send(:entries, session)).bytesize
     restored = JSON.parse(JSON.generate(session))
-    stack = restored.fetch(described_class::SESSION_KEY)
+    stack = described_class.send(:entries, restored)
     expect(stack.first.fetch("contexts").map { |reference| reference.fetch("scope") }).to include("user")
     expect(stack).to all(include("mode" => "membership"))
     expect(described_class.authorized_identity(restored, scope: :user)).to eq(second_target)
     expect(described_class.original(warden: warden, session: restored, scope: :user)).to eq(operator)
+  end
+
+  it "discards a malformed compact reference rather than resolving another pool entry" do
+    session[described_class::SESSION_KEY] = { "v" => 1, "r" => [], "e" => [{}], "f" => [[-1, 0, 1, nil, [], 0]] }
+    described_class.discard_invalid!(warden: warden, session: session)
+    expect(session).not_to have_key(described_class::SESSION_KEY)
+    expect(warden.user(:user)).to be_nil
   end
 
   it "discards malformed impersonation state and its authenticated identities" do

@@ -216,6 +216,9 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
       end
     elsif action_name == "index" && current_account
       @account = current_account
+      evidence_key = Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)
+      proofs = Vouch::AuthenticationEvidence.current(session[evidence_key], account: @account, mapping: auth_mapping)
+      proofs.empty? ? session.delete(evidence_key) : session[evidence_key] = proofs
       @authentication_context = Vouch::PendingAuthentication.build(@account, identities: [current_identity], method: :additional_mfa, hook: :two_factor_verification)
       @authentication_context["additional_mfa"] = true
       @authentication_context["authentication_context"] = authentication_session.context_id

@@ -64,6 +64,18 @@ RSpec.describe "Additional MFA", type: :request do
     expect(response).to have_http_status(:ok)
   end
 
+  it "removes obsolete stored proof before starting another challenge" do
+    start_challenge
+    patch "/users/two_factor_challenges/#{credential.id}", params: { code: ROTP::TOTP.new(credential.otp_secret).now }
+    key = Vouch::Session.key_for(:user, :evidence)
+    expect(request.session[key]).not_to be_empty
+    credential.disable_two_factor!
+    credential.enable_two_factor!
+    get "/users/two_factor_challenges"
+    expect(response).to have_http_status(:ok)
+    expect(request.session[key]).to be_nil
+  end
+
   it "keeps the original expiry when the method selector is refreshed" do
     get "/users/two_factor_challenges", params: { return_to: "/protected_page" }
     context = request.session[Vouch::Session.key_for(:user, :two_factor)].deep_dup

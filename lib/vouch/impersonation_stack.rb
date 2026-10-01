@@ -7,8 +7,8 @@ module Vouch
 
     class << self
       def discard_invalid!(warden:, session:)
-        stored = session[SESSION_KEY]
-        return unless stored
+        return unless session[SESSION_KEY]
+        stored = entries(session)
         valid_reference = ->(reference) do
           reference.is_a?(Hash) && reference["scope"].is_a?(String) &&
             reference["key"].present? && reference["owner"].present? &&
@@ -204,11 +204,41 @@ module Vouch
 
       def entries(session)
         value = session[SESSION_KEY]
-        value.is_a?(Array) ? value.select { |entry| entry.is_a?(Hash) } : []
+        return value.select { |entry| entry.is_a?(Hash) } if value.is_a?(Array)
+        return [] unless value.is_a?(Hash) && value["v"] == 1 &&
+          %w[r e f].all? { |key| value[key].is_a?(Array) }
+        reference = lambda do |index|
+          raise ArgumentError unless index.is_a?(Integer) && index >= 0
+          fields = value.fetch("r").fetch(index)
+          raise ArgumentError unless fields.is_a?(Array) && fields.length == 5
+          %w[scope key owner tenant fingerprint].zip(fields).to_h
+        end
+        value.fetch("f").map do |frame|
+          raise ArgumentError unless frame.is_a?(Array) && frame.length == 6 &&
+            [0, 1].include?(frame[2]) && frame[4].is_a?(Array) && frame[5].is_a?(Integer) && frame[5] >= 0
+          evidence = value.fetch("e").fetch(frame[5])
+          raise ArgumentError unless evidence.is_a?(Hash)
+          { "target" => reference.call(frame[0]), "source" => reference.call(frame[1]),
+            "mode" => frame[2] == 1 ? "membership" : "account", "return_to" => frame[3],
+            "contexts" => frame[4].map { |index| reference.call(index) }, "evidence" => evidence.deep_dup }
+        end
+      rescue ArgumentError, IndexError, TypeError
+        []
       end
 
       def write(session, stack)
-        stack.empty? ? session.delete(SESSION_KEY) : session[SESSION_KEY] = stack
+        return session.delete(SESSION_KEY) if stack.empty?
+        references = []
+        proofs = []
+        intern = ->(pool, value) { pool.index(value) || (pool << value).length - 1 }
+        reference = ->(value) { intern.call(references, value.values_at("scope", "key", "owner", "tenant", "fingerprint")) }
+        frames = stack.map do |entry|
+          [reference.call(entry.fetch("target")), reference.call(entry.fetch("source")),
+            entry.fetch("mode") == "membership" ? 1 : 0, entry["return_to"],
+            entry.fetch("contexts").map { |context| reference.call(context) },
+            intern.call(proofs, entry.fetch("evidence").deep_dup)]
+        end
+        session[SESSION_KEY] = { "v" => 1, "r" => references, "e" => proofs, "f" => frames }
       end
 
       def reference_for(mapping, identity)

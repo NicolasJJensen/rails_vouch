@@ -600,7 +600,7 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(response).to redirect_to("/")
     expect(flash[:alert]).to include("Impersonation access has ended")
     expect(status).to include("account" => account.id, "member" => first.id)
-    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY].size).to eq(1)
+    expect(Vouch::ImpersonationStack.send(:entries, request.session).size).to eq(1)
   end
 
   it "removes every dependent frame when the first grant expires" do
