@@ -3,6 +3,7 @@ require "rails_helper"
 RSpec.describe "Typed primary keys" do
   before do
     ApplicationRecord.connection.create_table(:typed_reset_accounts, id: false, temporary: true) do |table|
+      table.boolean :enabled
       table.datetime :recorded_at, precision: 6
       table.date :registered_on, null: false
       table.decimal :external_number, precision: 20, scale: 8, null: false
@@ -44,6 +45,16 @@ RSpec.describe "Typed primary keys" do
     expect(record.reload.authenticate("replacement-password")).to eq(record)
     expect(TypedResetAccount.find_by_auth_password_reset_token(token)).to be_nil
   end
+  it "consumes signed reset tokens for a false boolean primary key" do
+    TypedResetAccount.primary_key = "enabled"
+    TypedResetAccount.insert_all!([{enabled: false, registered_on: Date.new(2026, 10, 1),
+      external_number: BigDecimal("1"), password_digest: BCrypt::Password.create("initial-password")}])
+    record = TypedResetAccount.find_by!(enabled: false)
+    token = record.generate_password_reset_token!.value
+    expect(TypedResetAccount.find_by_auth_password_reset_token(token).attributes).to eq(record.attributes)
+    expect(record.reset_password_with_token(token, password: "replacement-password")).to be_ok
+  end
+
   it "preserves database timestamp precision in scalar and composite signed-reset keys" do
     ["recorded_at", %w[recorded_at external_number]].each do |primary_key|
       TypedResetAccount.primary_key = primary_key

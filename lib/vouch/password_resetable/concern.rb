@@ -155,7 +155,7 @@ module Vouch
           return false unless payload.is_a?(Hash) && password_reset_nonce.present?
           return false unless payload["key"].is_a?(String)
           key = Vouch::RecordKey.from_param(self.class, payload["key"])
-          key && Vouch::RecordKey.same?(self, key, model: self.class) &&
+          !key.nil? && Vouch::RecordKey.same?(self, key, model: self.class) &&
             ActiveSupport::SecurityUtils.secure_compare(payload["nonce"].to_s, password_reset_nonce) &&
             ActiveSupport::SecurityUtils.secure_compare(payload["password"].to_s, password_reset_fingerprint)
         else
