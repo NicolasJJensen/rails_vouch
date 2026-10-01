@@ -184,7 +184,7 @@ RSpec.describe 'Controller integration policy' do
     expect(called).to be true
   end
 
-  it 'clears the primary credential marker after direct completion' do
+  it 'retains the authenticated primary credential and replaces a stale marker after direct completion' do
     account = create(:account)
     create(:user, account: account)
     credential = account.two_factor_credentials.create!(
@@ -197,7 +197,10 @@ RSpec.describe 'Controller integration policy' do
     session[controller.send(:signed_in_via_session_key)] = { 'type' => 'Stale', 'id' => '1' }
 
     expect(controller.send(:complete_sign_in, account, signed_in_via: credential)).to eq(:signed_in)
-    expect(session).not_to have_key(controller.send(:signed_in_via_session_key))
+    expect(session[controller.send(:signed_in_via_session_key)]).to include(
+      'type' => credential.class.name, 'id' => credential.id.to_s,
+      'account_fingerprint' => Vouch::PendingAuthentication.fingerprint(account))
+    expect(controller.send(:two_factor_credentials_for, account)).not_to include(credential)
   end
 
   it 'carries an account-owned primary credential through an MFA challenge' do
@@ -215,6 +218,32 @@ RSpec.describe 'Controller integration policy' do
       'type' => credential.class.name,
       'id' => credential.id.to_s
     )
+  end
+
+  it 'clears a prior credential reference when a new password authentication completes' do
+    account = create(:account)
+    create(:user, account: account)
+    allow(controller).to receive(:needs_second_factor?).and_return(false)
+    allow(proxy).to receive(:set_user)
+    session[controller.send(:signed_in_via_session_key)] = {
+      'type' => 'Phone', 'id' => '1', 'account_fingerprint' => Vouch::PendingAuthentication.fingerprint(account)
+    }
+    expect(controller.send(:complete_sign_in, account)).to eq(:signed_in)
+    expect(session).not_to have_key(controller.send(:signed_in_via_session_key))
+  end
+
+  it 'retains the first-factor reference after identity selection' do
+    account = create(:account)
+    identities = create_list(:user, 2, account: account)
+    credential = account.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
+      verified_at: Time.current, two_factor_enabled_at: Time.current)
+    allow(controller).to receive(:needs_second_factor?).and_return(false)
+    allow(proxy).to receive(:set_user)
+    expect(controller.send(:complete_sign_in, account, method: :magic_link, signed_in_via: credential)).to eq(:needs_selection)
+    context = session[controller.send(:selection_session_key)]
+    expect(controller.send(:bind_identity, account, identities.first, context)).to eq(:signed_in)
+    expect(controller.send(:two_factor_credentials_for, account)).not_to include(credential)
+    expect(session[Vouch::Session.key_for(:user, :evidence)]).to be_nil
   end
 
   it 'does not let a foreign primary reference hide this account credentials' do

@@ -7,7 +7,7 @@ module Vouch
 
       def begin_second_factor!(context, primary: nil)
         renew!
-        session[key(:signed_in_via)] = primary if primary
+        session[Vouch::Session.key_for(controller.send(:auth_mapping).evidence_scope_name, :signed_in_via)] = primary if primary
         context['factor_required'] = true
         session[key(:two_factor)] = context
       end
@@ -29,7 +29,7 @@ module Vouch
 
       def begin_selection!(account, context, primary: nil)
         renew!
-        session[key(:signed_in_via)] = primary if primary
+        session[Vouch::Session.key_for(controller.send(:auth_mapping).evidence_scope_name, :signed_in_via)] = primary if primary
         session[key(:selection)] = context
         warden.set_user(account, scope: account_scope, store: true)
       end

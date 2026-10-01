@@ -19,6 +19,34 @@ RSpec.describe "Users::Impersonations", type: :request do
     post "/users/sign_in", params: { email_address: "admin@example.com", password: "password123" }
   end
 
+  it "keeps operator MFA during membership impersonation and filters invalid proof after restoration" do
+    credential = admin_account.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
+      verified_at: Time.current, two_factor_enabled_at: Time.current)
+    admin_account.enable_two_factor!
+    Users::ImpersonationsController.define_method(:create) do
+      super() { render json: { evidence: authentication_evidence(scope: :user) } }
+    end
+    Users::ImpersonationsController.define_method(:destroy) do
+      super() { render json: { evidence: authentication_evidence(scope: :user) } }
+    end
+    sign_in_via_login
+    get "/users/two_factor_challenges/#{credential.id}"
+    patch "/users/two_factor_challenges/#{credential.id}", params: { code: ROTP::TOTP.new(credential.otp_secret).now }
+    expect(response).to redirect_to("/")
+
+    post "/users/impersonations/#{target_user.id}"
+    proof = response.parsed_body.fetch("evidence").sole
+    expect(proof).to include("credential_id" => credential.id.to_s,
+      "account_fingerprint" => Vouch::PendingAuthentication.fingerprint(admin_account))
+
+    credential.update!(two_factor_enabled_at: nil)
+    delete "/users/impersonations"
+    expect(response.parsed_body.fetch("evidence")).to eq([])
+  ensure
+    Users::ImpersonationsController.remove_method(:create)
+    Users::ImpersonationsController.remove_method(:destroy)
+  end
+
   it "prepares the actual target before host action authorization and does not switch after denial" do
     target_id = target_user.id
     Users::ImpersonationsController.define_method(:create) do

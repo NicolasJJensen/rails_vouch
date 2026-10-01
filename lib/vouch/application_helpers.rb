@@ -18,7 +18,12 @@ module Vouch
       mapping = Vouch.mapping_for(scope)
       credentials_mapping = Vouch.mapping_for(mapping.evidence_scope_name)
       principal = Vouch.authenticated_identity(request.env.fetch("warden"), credentials_mapping.scope_name, controller: self)
-      account = credentials_mapping.account_for(principal) if principal
+      account = if principal && credentials_mapping.split_model? && !credentials_mapping.membership_scope? &&
+          Vouch::ImpersonationStack.active?(session)
+        Vouch::ImpersonationStack.retained_account(session)
+      elsif principal
+        credentials_mapping.account_for(principal)
+      end
       Vouch::AuthenticationEvidence.current(
         session[Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)],
         account: account, mapping: mapping)

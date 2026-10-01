@@ -197,11 +197,15 @@ module Vouch
     end
 
     def signed_in_via_session_key
-      Vouch::Session.key_for(auth_scope_name, :signed_in_via)
+      Vouch::Session.key_for(auth_mapping.evidence_scope_name, :signed_in_via)
     end
 
-    def signed_in_via
-      session[signed_in_via_session_key]
+    def signed_in_via(account = nil)
+      reference = session[signed_in_via_session_key]
+      return unless account && reference.is_a?(Hash)
+      return unless reference["account_fingerprint"] == Vouch::PendingAuthentication.fingerprint(account)
+
+      reference
     end
 
     def credential_drafts_session_key
@@ -280,8 +284,9 @@ module Vouch
         'used_at' => credential.two_factor_last_used_at&.utc&.iso8601(6)}
     end
 
-    def signed_in_via_reference(credential)
-      { 'type' => credential.class.name, 'id' => Vouch::RecordKey.serialize(credential) }
+    def signed_in_via_reference(credential, account:)
+      { 'type' => credential.class.name, 'id' => Vouch::RecordKey.serialize(credential),
+        'account_fingerprint' => Vouch::PendingAuthentication.fingerprint(account) }
     end
 
     def valid_context_factor?(account, context)
@@ -393,8 +398,16 @@ module Vouch
       auth_mapping.oauth_registration == :form
     end
 
-    def begin_oauth_registration(auth_hash)
-      authentication_session.begin_oauth_registration!(auth_hash)
+    def begin_oauth_registration(auth_hash, **options)
+      authentication_session.begin_oauth_registration!(auth_hash, **options)
+    end
+
+    def pending_oauth_providers
+      authentication_session.oauth_registration_providers
+    end
+
+    def remove_pending_oauth_identity(provider:, uid:)
+      authentication_session.remove_oauth_registration_identity(provider: provider, uid: uid)
     end
 
     def pending_oauth_registration
@@ -441,10 +454,11 @@ module Vouch
       end
 
       set = Vouch::CredentialSet.new(account, assocs)
-      return set unless signed_in_via
+      primary = signed_in_via(account)
+      return set unless primary
 
-      type = signed_in_via["type"] || signed_in_via[:type]
-      id   = signed_in_via["id"] || signed_in_via[:id]
+      type = primary["type"]
+      id = primary["id"]
       set.reject do |cred|
         cred.class.name == type &&
           Vouch::RecordKey.same?(id, Vouch::RecordKey.serialize(cred), model: cred.class)

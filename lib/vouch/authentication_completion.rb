@@ -14,6 +14,7 @@ module Vouch
       end
       context ||= build_pending_authentication_context(account, hook, method, refresh_oauth, hook_opts)
       account.reload
+      context['first_factor'] = signed_in_via_reference(signed_in_via, account: account) if signed_in_via
       return :denied unless Vouch::PendingAuthentication.valid?(context, account)
       return :denied unless authentication_allowed?(account, context)
 
@@ -21,7 +22,7 @@ module Vouch
       return :no_identity if identities.empty?
 
       if needs_second_factor?(account, context) && !credential && !context['factor'] && !evidence_method
-        primary = signed_in_via ? signed_in_via_reference(signed_in_via) : self.signed_in_via
+        primary = context['first_factor']
         authentication_session.begin_second_factor!(context, primary: primary)
         return :needs_two_factor
       end
@@ -36,7 +37,7 @@ module Vouch
       if identities.one?
         bind_identity(account, identities.first, context, oauth_auth_hash: hook_opts[:auth_hash], &block)
       else
-        primary = signed_in_via ? signed_in_via_reference(signed_in_via) : self.signed_in_via
+        primary = context['first_factor']
         authentication_session.begin_selection!(account, context, primary: primary)
         :needs_selection
       end
@@ -84,6 +85,12 @@ module Vouch
 
         # A failed authentication operation must not publish a Warden identity.
         renew_authentication_session
+        primary_key = Vouch::Session.key_for(auth_mapping.evidence_scope_name, :signed_in_via)
+        if context['first_factor']
+          session[primary_key] = context['first_factor']
+        else
+          session.delete(primary_key)
+        end
         authentication_session.store_evidence!(context['evidence'], account: account) if context['evidence']
         if invitation
           publish_invitation_acceptance

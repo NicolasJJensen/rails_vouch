@@ -272,9 +272,12 @@ RSpec.describe Vouch::ControllerHelpers do
       expect(controller.send(:signed_in_via)).to be_nil
     end
 
-    it "returns the stored hash when present" do
-      session_hash["warden.user.signed_in_via"] = { "type" => "Phone", "id" => "7" }
-      expect(controller.send(:signed_in_via)).to eq("type" => "Phone", "id" => "7")
+    it "returns only the reference bound to the supplied account" do
+      account = create(:account)
+      reference = { "type" => "Phone", "id" => "7", "account_fingerprint" => Vouch::PendingAuthentication.fingerprint(account) }
+      session_hash["warden.user.signed_in_via"] = reference
+      expect(controller.send(:signed_in_via, account)).to eq(reference)
+      expect(controller.send(:signed_in_via, create(:account))).to be_nil
     end
   end
 
@@ -290,6 +293,8 @@ RSpec.describe Vouch::ControllerHelpers do
       allow(controller).to receive(:session).and_return(session_hash)
       allow(controller).to receive(:auth_mapping).and_return(mapping)
       allow(mapping).to receive(:two_factor_credential_associations).and_return(assocs)
+      allow(mapping).to receive(:evidence_scope_name).and_return(:user)
+      allow(Vouch::PendingAuthentication).to receive(:fingerprint).with(account).and_return("test-account")
       stub_const("Phone", Class.new)
       set = instance_double(Vouch::CredentialSet)
       allow(Vouch::CredentialSet).to receive(:new).and_return(set)
@@ -302,7 +307,7 @@ RSpec.describe Vouch::ControllerHelpers do
     end
 
     it "applies a reject filter that hides the signed-in credential" do
-      session_hash["warden.user.signed_in_via"] = { "type" => "Phone", "id" => "7" }
+      session_hash["warden.user.signed_in_via"] = { "type" => "Phone", "id" => "7", "account_fingerprint" => "test-account" }
 
       filtered = instance_double(Vouch::CredentialSet)
       captured_block = nil

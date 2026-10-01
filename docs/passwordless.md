@@ -68,4 +68,6 @@ end
 
 After a successful proof, call the [custom authentication completion API](advanced-custom-authentication.md) with `signed_in_via: phone`. Handle `:needs_two_factor`, `:needs_selection`, `:no_identity`, and `:denied` as described there; the completion API applies policy and membership selection after the proof.
 
+Passing `signed_in_via: phone` also identifies the credential used for the first factor. Vouch retains that account-bound reference through MFA, membership selection and the completed session. The same phone record is excluded from subsequent MFA choices; a different record is not considered equivalent merely because it has the same number. The reference is separate from MFA evidence and is replaced when a new authentication completes.
+
 This is a model-level API for a host-defined endpoint. It is separate from verification and MFA token state; issuing a new code invalidates the earlier code for this operation. The supplied password, OAuth, and MFA controllers do not require this custom completion work.
