@@ -3,6 +3,7 @@
 ## Contents
 
 - [Standard registration](#standard-registration)
+- [Custom registration forms](#custom-registration-forms)
 - [Accounts without passwords](#accounts-without-passwords)
 - [Construct records transactionally](#construct-records-transactionally)
 - [OAuth registration continuation](#oauth-registration-continuation)
@@ -19,6 +20,283 @@ After the [standard setup](../README.md#install-and-generate-a-login), Vouch sup
 3. Invalid fields redisplay the form with errors and HTTP 422. Successful creation continues to sign-in or any required MFA.
 
 In this guide, “account” means the model holding sign-in credentials; it can be `User`, `Account`, or another name. Add ordinary fields to the form and `account_params`; see [sign-in customization](sign-in-customization.md#customize-registration-fields).
+
+## Custom registration forms
+
+Declare a form when registration needs associated records or several pages. The generated registration flow remains available without a custom form.
+
+```ruby
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  registration_form SignupForm
+end
+```
+
+This declaration applies to the registration and OAuth controllers through inheritance. A controller can declare another form for its scope. A class name string also works: `registration_form "SignupForm"`.
+
+Vouch passes the credentials record positionally. Use `initialize(user)` for a `User` model or `initialize(account)` for an `Account` model. Vouch supplies the existing pending record during invited registration.
+
+| Form method | Contract |
+| --- | --- |
+| `.new(record)` | Construct the form around the supplied record. |
+| `.deserialize(data, record)` | Restore serialized data around that same record. |
+| `serialize` | Return JSON-compatible session data. |
+| `assign_attributes(attributes)` | Apply permitted input. |
+| `valid?`, `errors` | Validate and expose errors through an Active Model-compatible interface. |
+| `save!` or `save` | Save the supplied record and associated records inside Vouch's transaction. |
+
+Vouch prefers `save!` when available. A bang method may return `nil` on success. Returning `false` cancels registration. A non-bang `save` must return a truthy value on success. Validation exceptions roll back registration and render its errors. Vouch does not require an accessor named `account` or `user`.
+
+### Define the form
+
+This example assumes `User` has one `Profile` with a `timezone` attribute and many `Phone` records. Each phone supports verification and MFA, as described in the [verification](verification.md) and [MFA](mfa.md) guides.
+
+```ruby
+# app/forms/signup_form.rb
+class SignupForm
+  include ActiveModel::Model
+  include ActiveModel::Attributes
+
+  attr_reader :user, :profile, :phones
+  attribute :enable_mfa, :boolean, default: false
+
+  delegate :email_address, :email_address=,
+    :password, :password=,
+    :password_confirmation, :password_confirmation=, to: :user
+  delegate :timezone, :timezone=, to: :profile
+
+  def initialize(user)
+    super()
+    @user = user
+    @profile = user.profile || user.build_profile
+    @phones = []
+  end
+
+  def self.deserialize(data, user)
+    form = new(user)
+    form.email_address = data["email_address"] if data.key?("email_address")
+    form.timezone = data["timezone"]
+    form.enable_mfa = data["enable_mfa"]
+    form.expired_phone = data["expired_phone"]
+
+    data.fetch("phones", []).each do |state|
+      phone = Phone.new
+      result = phone.restore_verification_state(state)
+      if result.ok?
+        form.phones << phone
+      else
+        form.expired_phone = true
+      end
+    end
+    form
+  end
+
+  attr_accessor :expired_phone
+  validate do
+    errors.add(:phones, "must be verified again") if expired_phone
+  end
+
+  def serialize
+    {
+      "email_address" => email_address,
+      "timezone" => timezone,
+      "enable_mfa" => enable_mfa,
+      "expired_phone" => expired_phone,
+      "phones" => phones.map(&:serialize_verification_state)
+    }
+  end
+
+  def save!
+    user.save!
+    profile.save!
+    phones.each do |phone|
+      phone.user = user
+      phone.save!
+      phone.enable_two_factor! if enable_mfa
+    end
+    user.enable_two_factor! if enable_mfa
+  end
+end
+```
+
+The example applies one MFA choice to all included phones. Your form can store a separate selection for each credential. Email records follow the same verification export/restore pattern with your `Email` model.
+
+The form reads provider-mapped fields directly from `user`. OAuth updates therefore appear in the form and its next serialized version. Vouch cannot synchronize an independently cached `@email_address` or another virtual field automatically.
+
+> Keep passwords, submitted codes and plaintext authenticator secrets out of `serialize`. Use `serialize_verification_state` for temporary verified records. Restoring that state checks its model, subject and original expiry. Copying a submitted `verified_at` does not establish verification.
+
+The example retains an expired-phone flag and blocks completion until your form clears it after re-verification or explicit removal. A fuller form can track each expired contact separately. Do not silently accept an expired proof. If deserialization raises `Vouch::OperationFailed`, Vouch displays a verification error and preserves the stored draft.
+
+### Permit input and render errors
+
+The form can use its own parameter root and fields. Override `registration_form_params` in the generated controller:
+
+```ruby
+# app/controllers/users/registrations_controller.rb
+class Users::RegistrationsController < Vouch::RegistrationsController
+  private
+
+  def registration_form_params
+    allowed = [:timezone, :password, :password_confirmation]
+    allowed << :email_address unless invitation_registration?
+    params.fetch(:signup, ActionController::Parameters.new).permit(*allowed)
+  end
+end
+```
+
+Without this override, Vouch uses the normal `account_params` or invitation parameters. Vouch exposes the form as `@registration_form` and through the `registration_form` helper. Update the generated view to use it:
+
+```erb
+<%# app/views/users/registrations/new.html.erb %>
+<% @registration_form.errors.full_messages.each do |message| %>
+  <p><%= message %></p>
+<% end %>
+
+<%= form_with model: @registration_form, scope: :signup,
+      url: vouch_route_path(:registrations, :create) do |form| %>
+  <% unless invitation_registration? %>
+    <%= form.email_field :email_address %>
+  <% end %>
+  <%= form.text_field :timezone %>
+  <% unless oauth_registration? %>
+    <%= form.password_field :password %>
+    <%= form.password_field :password_confirmation %>
+  <% end %>
+  <%= form.submit "Create account" %>
+<% end %>
+```
+
+A failed associated-record save adds its messages to the form's base errors. Your form can instead catch that validation exception and attach errors to particular fields.
+
+### Save intermediate steps
+
+Custom actions access the same form with `registration_form`. `save_registration_form` serializes it without saving database records and returns a `Vouch::Result`.
+
+```ruby
+# app/controllers/users/signup_steps_controller.rb
+class Users::SignupStepsController < Vouch::RegistrationsController
+  def update
+    form = registration_form
+    allowed = [:timezone]
+    allowed << :email_address unless invitation_registration?
+    form.assign_attributes(params.require(:signup).permit(*allowed))
+    result = save_registration_form
+
+    if result.ok?
+      redirect_to new_registration_path
+    else
+      render json: { error: result.metadata[:reason] }, status: :unprocessable_entity
+    end
+  rescue Vouch::RegistrationFormError
+    clear_registration_form
+    redirect_to new_registration_path, alert: "Your registration expired or changed. Please start again."
+  end
+end
+```
+
+```ruby
+# config/routes.rb — alongside Vouch.routes
+Rails.application.routes.draw do
+  namespace :users do
+    resource :signup_step, only: :update
+  end
+end
+```
+
+Submit your intermediate page to `users_signup_step_path`. Save the current fields before leaving the page for an OAuth request. The OAuth callback restores this form before applying the new provider's data.
+
+`save_registration_form!` raises `Vouch::OperationFailed` when the draft cannot be saved. `clear_registration_form` removes the stored draft and the current request's form instance. Use it for an explicit restart.
+
+The draft belongs to one authentication scope, session context and invitation. It expires after `pending_authentication_ttl`, measured from its first save. Saving another step does not extend that expiry. A changed context or expired draft requires a restart.
+
+A scope has one draft per session. Tabs share it. Applications requiring separate drafts per tab must manage that distinction before using this shared registration continuation.
+
+### Attach verified contacts
+
+Keep the preparation and rate-limit callbacks from your [temporary verification controller](verification.md#verify-before-saving). Its success handler can put the verified record into the registration form:
+
+```ruby
+# app/controllers/users/temporary_verifications_controller.rb
+# Relevant override in your configured temporary verification controller.
+class Users::TemporaryVerificationsController < Vouch::TemporaryVerificationsController
+  def update
+    super do |result|
+      next unless result.ok?
+
+      form = registration_form
+      form.phones.reject! { |phone| phone.verification_subject_key == @verifiable.verification_subject_key }
+      form.phones << @verifiable
+      saved = save_registration_form
+
+      if saved.ok?
+        forget_temporary_verification
+        redirect_to new_registration_path
+      else
+        render json: { error: saved.metadata[:reason] }, status: :unprocessable_entity
+      end
+    end
+  rescue Vouch::RegistrationFormError
+    clear_registration_form
+    redirect_to new_registration_path, alert: "Your registration expired or changed. Please start again."
+  end
+end
+```
+
+Only remove temporary verification state after the form retains it successfully. For signed-in contact management, attach the verified record to the authorized owner instead. The host controller chooses that destination.
+
+For TOTP, your enrollment adapter must confirm a code and retain trustworthy enrollment state. The form then saves and enables that credential inside its `save!` method. Vouch's generic temporary verification controller does not implement a TOTP enrollment adapter. Enrollment is not authentication evidence.
+
+### Finish in one transaction
+
+```mermaid
+flowchart TD
+  form[Restore host form] --> fields[Apply permitted final input]
+  fields --> tx[Vouch opens the registration transaction]
+  tx --> validate[Validate form]
+  validate --> save[Form saves the owner, associated records and selected MFA activation]
+  save --> links[Vouch links OAuth providers and completes invitation or membership construction]
+  links --> commit[Commit]
+  commit --> clear[Clear completed registration state]
+  clear --> signin[Continue authentication]
+  save -->|Failure| rollback[Roll back and render errors]
+  links -->|Failure| rollback
+```
+
+Vouch runs form validation and persistence inside its registration transaction. The existing lifecycle hooks still run. All participating records must use the credentials model's writing connection.
+
+For a multi-tenant application, keep `build_tenant` and `build_identity` for Vouch's mapped organisation and membership. The form owns additional records and their input. Those builders can read `registration_form` when they need its fields. Invited registration uses the existing membership and skips both builders.
+
+Form validation failure, an OAuth-link conflict, or a later invitation/MFA failure rolls back the registration writes together. If registration commits but sign-in fails, Vouch keeps the account and redirects to sign-in with the creation and sign-in failure messages.
+
+### Session capacity
+
+The form envelope has a default limit of 2 KB. This is separate from the OAuth context limit. Exceeding it returns `:registration_too_large` and preserves the previous stored draft.
+
+Encrypted verification state can exceed a cookie session's available space even for one credential. Use a suitable server-side session store for larger forms:
+
+```ruby
+# config/initializers/session_store.rb
+Rails.application.config.session_store :cache_store
+```
+
+Configure a shared cache store with the lifetime and availability your application needs. Registration still creates no unfinished business records in the database.
+
+Increase the form limit after selecting the session store:
+
+```ruby
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  registration_form SignupForm
+
+  private
+
+  def registration_form_byte_limit
+    32.kilobytes
+  end
+end
+```
+
+The form controls which permitted attributes it serializes. Vouch rejects live objects and common plaintext secret fields, but cannot identify sensitive values hidden under arbitrary names.
 
 ## Accounts without passwords
 

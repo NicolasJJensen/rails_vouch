@@ -13,15 +13,13 @@ module Vouch
         raise Vouch::Invitable::InvitationExpiredError
       end
       if invitation
-        changed_attributes = account.changes.transform_values(&:last)
-        account.reload(lock: true)
+        lock_registration_record!(account)
         invitation.lock! unless invitation.equal?(account)
         unless valid_pending_invitation?(invitation) && invitation_requires_registration?(invitation)
           raise Vouch::Invitable::InvitationExpiredError
         end
-        account.assign_attributes(changed_attributes)
       end
-      Vouch::Persistence.save!(account)
+      persist_registration_record!(account)
       oauth_hashes.each do |oauth|
         Vouch::Persistence.create!(
           account.public_send(auth_mapping.oauth_identity_association.name),

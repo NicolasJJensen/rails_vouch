@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Host-owned registration forms with positional model construction, session continuations, and atomic OAuth, invitation, and MFA persistence.
+
 - Separate MFA challenge, credential-management and recovery-code route declarations with configurable URLs and helper names.
 - Documented concrete storage for composite-key recovery-code and password-history owners, and compatible scalar keys for shared polymorphic storage.
 - Rails 8.1+ and PostgreSQL support, with case-insensitive email columns.

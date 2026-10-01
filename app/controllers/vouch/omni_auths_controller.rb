@@ -95,9 +95,11 @@ class Vouch::OmniAuthsController < ::ApplicationController
 
   def create_account
     saved = false
-    pending = begin_oauth_registration(@auth_hash, reconnect_uid: @oauth_initiation['reconnect_uid'])
+    registration_form if registration_form_class
+    pending = begin_oauth_registration(@auth_hash, account: @account, reconnect_uid: @oauth_initiation['reconnect_uid'])
     return oauth_request_failed(pending.metadata[:reason]) unless pending.ok?
     @account = account = pending.value
+    prepare_registration_form if registration_form_class
     return Vouch::Result.pending(account, operation: :registration, next_step: :registration) if oauth_registration_required?
     return oauth_request_failed(:expired_providers) if pending_oauth_providers.any? { |provider| provider[:expired] }
 
@@ -113,6 +115,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
       env.abort! unless completed
       saved = true
       clear_oauth_registration
+      clear_registration_form if registration_form_class
       if @completed_invitation_acceptance
         authentication_session.clear_invitation
         publish_invitation_acceptance
@@ -129,7 +132,12 @@ class Vouch::OmniAuthsController < ::ApplicationController
     result = sign_in_result(account, outcome)
     result.metadata.merge!(operation: :registration, committed: saved)
     result
+  rescue Vouch::RegistrationFormError, ActiveModel::ValidationError, Vouch::OperationFailed => error
+    result = registration_form_failure(error)
+    result.metadata.merge!(operation: :registration, committed: saved)
+    result
   rescue ActiveRecord::RecordInvalid => error
+    registration_form_failure(error) if registration_form_class
     Vouch::Result.invalid(operation: :registration, record: account, committed: saved, reason: :validation, error: error)
   rescue ActiveRecord::RecordNotUnique => error
     Vouch::Result.invalid(operation: :registration, record: account, committed: saved, reason: :conflict, error: error)
