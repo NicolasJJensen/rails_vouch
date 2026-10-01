@@ -99,6 +99,8 @@ RSpec.describe "composite-key authentication runtime", type: :model do
     operator = identity_class.create!(tenant_id: "south", local_id: 12,
       account_tenant_id: other_account.tenant_id, account_local_id: other_account.local_id)
     allow(mapping).to receive_messages(split_model?: true, evidence_scope_name: :cpk_warden_account)
+    account_mapping = Vouch::Mapping.new(:cpk_warden_account, model: account_name)
+    allow(Vouch).to receive(:mapping_for).with(:cpk_warden_account).and_return(account_mapping)
     allow(Vouch).to receive(:mapping_for).with(:cpk_warden_membership).and_return(mapping)
     allow(Vouch).to receive(:mapping_for).with("cpk_warden_membership").and_return(mapping)
     allow(Vouch).to receive(:each_mapping) do |&block|

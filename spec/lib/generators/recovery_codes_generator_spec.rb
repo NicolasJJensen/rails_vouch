@@ -108,6 +108,20 @@ RSpec.describe Vouch::Generators::RecoveryCodesGenerator do
     expect(File.read(File.join(directory, "app/models/user.rb"))).not_to include("has_many :recovery_codes")
   end
 
+  it "preserves a custom relation with the default recovery_codes name" do
+    original = <<~RUBY
+      class User < ApplicationRecord
+        include Vouch::Recoverable
+        has_many :recovery_codes, class_name: "EmergencyCode", foreign_key: :member_id
+        recovery_codes_from :recovery_codes
+      end
+    RUBY
+    write "app/models/user.rb", original
+    generate "User"
+    expect(Dir[File.join(directory, "db/migrate/*create*recovery_codes*")]).to be_empty
+    expect(File.read(File.join(directory, "app/models/user.rb"))).to eq(original)
+  end
+
   it "rejects an incompatible existing code model without replacing it" do
     original = "class UserRecoveryCode < ApplicationRecord\n  belongs_to :other\nend\n"
     write "app/models/user_recovery_code.rb", original

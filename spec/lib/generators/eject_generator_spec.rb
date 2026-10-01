@@ -148,13 +148,14 @@ RSpec.describe Vouch::Generators::EjectGenerator do
       relation = double("phones", new: credential)
       allow(controller).to receive(:credential_relation).and_return(relation)
 
+      expect(controller.class._process_action_callbacks.map(&:filter)).to include(:build_credential)
+      controller.send(:build_credential)
       controller.new
       expect(controller.instance_variable_get(:@credential)).to equal(credential)
       expect(controller.method(:update).owner).to eq(EjectedOwners::TwoFactorCredentialsController)
 
       account = Object.new
       allow(controller).to receive(:current_account).and_return(account)
-      allow(controller).to receive(:two_factor_credentials_for).with(account).and_return(relation)
       controller.index
       expect(controller.instance_variable_get(:@credentials)).to equal(relation)
       expect(controller.method(:index).owner).to eq(EjectedOwners::TwoFactorCredentialsImplementationController)

@@ -7,6 +7,26 @@ require "generators/vouch/token_verifiable/token_verifiable_generator"
 RSpec.describe "Composing verification generators" do
   generators = [Vouch::Generators::VerifiableGenerator, Vouch::Generators::TokenVerifiableGenerator]
 
+  it "does not create a repair for feature columns still awaiting their first migration" do
+    connection = ActiveRecord::Base.connection
+    table = "vouch_pending_composition_#{SecureRandom.hex(4)}"
+    connection.create_table(table) { |t| t.string :address }
+    stub_const("PendingContact", Class.new(ApplicationRecord) { self.table_name = table })
+    Dir.mktmpdir("vouch-pending-feature") do |directory|
+      FileUtils.mkdir_p("#{directory}/app/models")
+      File.write("#{directory}/app/models/pending_contact.rb", "class PendingContact < ApplicationRecord\nend\n")
+      2.times do
+        generator = generators.first.new(["PendingContact"])
+        generator.destination_root = directory
+        allow(generator).to receive(:generating_current_host?).and_return(true)
+        generator.invoke_all
+      end
+      expect(Dir["#{directory}/db/migrate/*.rb"].length).to eq(1)
+    end
+  ensure
+    connection.drop_table(table, if_exists: true) if table
+  end
+
   [generators, generators.reverse].each do |order|
     it "adds #{order.map(&:name).join(' then ')} without replacing shared schema or host delivery" do
       connection = ActiveRecord::Base.connection

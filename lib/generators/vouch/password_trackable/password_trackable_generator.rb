@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 require_relative "../feature_base"
+require_relative "../schema_repair"
 
 module Vouch
   module Generators
     class PasswordTrackableGenerator < FeatureBase
+      include SchemaRepair
       source_root File.expand_path("templates", __dir__)
       self.feature_template_name = "password_trackable"
       desc "Create the password_archives table for password history tracking."
@@ -47,9 +49,24 @@ module Vouch
         if schema_table_exists?("password_archives")
           validate_existing_table!("password_archives", archive_columns)
           connection = ActiveRecord::Base.connection
+          columns = connection.columns("password_archives").index_by(&:name)
+          expected = { "password_digest" => :string, "created_at" => :datetime }
+          if polymorphic?
+            expected.merge!("owner_type" => :string, "owner_id" => (primary_key_type || owner_primary_key_types.values.first).to_sym)
+          else
+            owner_primary_keys.zip(model_metadata.foreign_keys(archive_owner_name)).each do |key, foreign|
+              expected[foreign] = (primary_key_type || owner_primary_key_types[key]).to_sym
+            end
+          end
+          expected.each do |name, type|
+            column = columns.fetch(name)
+            actual = column.sql_type == "bigint" ? :bigint : column.type
+            raise Thor::Error, "password_archives.#{name} must use #{type}" unless actual == type
+          end
           unless polymorphic?
             foreign_keys = connection.foreign_keys("password_archives")
-            matching = foreign_keys.any? do |foreign_key|
+            matching = foreign_keys.all? do |foreign_key|
+              next true if (Array(foreign_key.column).map(&:to_s) & model_metadata.foreign_keys(archive_owner_name)).empty?
               foreign_key.to_table == model_metadata.table_name &&
                 Array(foreign_key.column).map(&:to_s) == model_metadata.foreign_keys(archive_owner_name) &&
                 Array(foreign_key.primary_key).map(&:to_s) == owner_primary_keys
@@ -138,6 +155,9 @@ module Vouch
 
       def existing_archive_table!
         validate_existing_table!("password_archives", archive_columns)
+        ownership = polymorphic? ? %w[owner_type owner_id] : model_metadata.foreign_keys(archive_owner_name)
+        foreign = polymorphic? ? [] : [{ to_table: model_metadata.table_name, column: ownership, primary_key: owner_primary_keys }]
+        repair_schema_constraints("password_archives", required: archive_columns, indexes: [ownership + ["created_at"]], foreign_keys: foreign)
         say_status :identical, "password_archives already exists", :blue
       end
 

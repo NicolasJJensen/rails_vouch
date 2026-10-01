@@ -11,6 +11,8 @@ You can attach a set to an account, a particular MFA credential, or both:
 
 Both use the same hashed-storage and single-use implementation. Replacing a set invalidates old codes for that owner only.
 
+> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
+
 ## Contents
 
 - [Account-owned codes](#account-owned-codes)

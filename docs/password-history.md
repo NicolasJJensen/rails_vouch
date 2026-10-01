@@ -2,6 +2,8 @@
 
 Password history prevents reuse of the current password and a configurable number of previous passwords. A `PasswordArchive` row stores a previous password digest and when it was replaced; it never stores the plaintext password.
 
+> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
+
 ## Contents
 
 - [Add password history](#add-password-history)

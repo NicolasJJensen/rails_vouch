@@ -107,7 +107,7 @@ module Vouch
       end
 
       def owner_metadata
-        @owner_metadata ||= Vouch::ModelMetadata.new(scope)
+        @owner_metadata ||= Vouch::ModelMetadata.new(scope, root: destination_root)
       end
 
       def owner_class

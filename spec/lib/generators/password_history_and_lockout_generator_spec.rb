@@ -84,7 +84,7 @@ RSpec.describe "Password history and lockout generation" do
       primary_keys: %w[region number], primary_key_types: { "region" => :string, "number" => :bigint },
       foreign_keys: %w[person_region person_number], association_options: 'foreign_key: ["person_region", "person_number"], primary_key: ["region", "number"]',
       composite_primary_key?: true, table_name: "people", declaration_name: "Person")
-    allow(Vouch::ModelMetadata).to receive(:new).with("Person").and_return(metadata)
+    allow(Vouch::ModelMetadata).to receive(:new).with("Person", root: @directory).and_return(metadata)
     generate(@directory, history_generator)
     source = File.read(migrations.first)
     expect(source).to include("t.string :person_region", "t.bigint :person_number")

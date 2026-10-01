@@ -3,6 +3,7 @@
 require "rails/generators/base"
 require "rails/generators/active_record"
 require "vouch/model_metadata"
+require_relative "schema_repair"
 
 module Vouch
   module Generators
@@ -11,6 +12,7 @@ module Vouch
     # to extend; defaults to "users".
     class FeatureBase < Rails::Generators::Base
       include Rails::Generators::Migration
+      include SchemaRepair
 
       TABLE_HELPER_METHODS = %w[index foreign_key references belongs_to].freeze
 
@@ -25,6 +27,7 @@ module Vouch
       def create_feature_migration
         template_name = self.class.feature_template_name
         if feature_schema_already_declared?(template_name) || existing_feature_schema_complete?(template_name)
+          repair_existing_feature_constraints(template_name)
           say_status :identical, "#{template_name} schema already exists", :blue
           return
         end
@@ -149,6 +152,16 @@ module Vouch
       def generating_current_host?
         Rails.respond_to?(:root) && Rails.root.present? &&
           File.expand_path(destination_root) == File.expand_path(Rails.root)
+      end
+
+      def repair_existing_feature_constraints(template_name)
+        path = File.join(self.class.source_root, "#{template_name}.rb.tt")
+        return unless File.file?(path)
+        source = File.read(path)
+        required = source.scan(/t\.\w+\s+:([a-z_]+)[^\n]*null:\s*false/).flatten
+        indexes = source.scan(/t\.\w+\s+:([a-z_]+)[^\n]*index:\s*true/).flatten +
+          source.scan(/t\.index\s+:([a-z_]+)/).flatten
+        repair_schema_constraints(table_name, required: required.uniq, indexes: indexes.uniq)
       end
 
       def feature_columns(template_name)

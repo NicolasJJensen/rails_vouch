@@ -1,10 +1,12 @@
 # frozen_string_literal: true
 
 require_relative "../backup_codes/backup_codes_generator"
+require_relative "../schema_repair"
 
 module Vouch
   module Generators
     class RecoveryCodeStorageGenerator < BackupCodesGenerator
+      include SchemaRepair
       source_root File.expand_path("templates", __dir__)
       class_option :polymorphic, type: :boolean, default: false
       class_option :credential, type: :boolean, default: false
@@ -24,6 +26,8 @@ module Vouch
         validate_configuration!
         return if custom_association?
         if schema_table_exists?(join_table_name) || pending_table_migration?(join_table_name)
+          foreign = options[:polymorphic] ? [] : [{ to_table: parent_metadata.table_name, column: storage_keys, primary_key: parent_metadata.primary_keys }]
+          repair_schema_constraints(join_table_name, required: storage_keys + %w[code_digest], indexes: [storage_keys, "used_at"], foreign_keys: foreign)
           say_status :identical, "#{join_table_name} already exists", :blue
           return
         end
@@ -68,7 +72,11 @@ module Vouch
         if source.match?(/^\s*recovery_codes_from\b/) && !declaration
           raise Thor::Error, "Use a literal association name in recovery_codes_from before running the generator"
         end
-        declaration && declaration != "recovery_codes"
+        return false unless declaration
+        return true unless declaration == "recovery_codes"
+        association = source[/has_many\s*(?:\(\s*)?:recovery_codes\b([^\n]*)/, 1]
+        custom_class = association&.match(/class_name:\s*["']([^"']+)["']/)&.captures&.first
+        custom_class.present? && custom_class != backup_code_class
       end
 
       def join_table_name
@@ -116,6 +124,14 @@ module Vouch
             actual_type = actual.sql_type == "bigint" ? :bigint : actual.type
             raise Thor::Error, "#{join_table_name}.#{name} must use #{type}" unless actual_type == type
           end
+          unless options[:polymorphic]
+            ActiveRecord::Base.connection.foreign_keys(join_table_name).each do |foreign|
+              next if (Array(foreign.column).map(&:to_s) & storage_keys).empty?
+              unless foreign.to_table == parent_metadata.table_name && Array(foreign.column).map(&:to_s) == storage_keys && Array(foreign.primary_key).map(&:to_s) == parent_metadata.primary_keys
+                raise Thor::Error, "#{join_table_name} has incompatible recovery ownership"
+              end
+            end
+          end
           return
         end
         sources = Dir[File.join(destination_root, "db/migrate/*.rb")].map { |path| File.read(path) }
@@ -135,6 +151,12 @@ module Vouch
           expected_type = (primary_key_type || parent_metadata.primary_key_types.values.first).to_s
           unless actual_type == expected_type
             raise Thor::Error, "Pending #{join_table_name}.recoverable_id uses #{actual_type || 'an unknown type'}; #{parent_class} needs #{expected_type}. Use concrete recovery storage for incompatible owner key types"
+          end
+        end
+        unless options[:polymorphic]
+          targets = source.scan(/(?:to_table:\s*:|(?:add_)?foreign_key\s+[^\n]*?:)([a-z_][a-z0-9_]*)/).flatten
+          if targets.any? { |target| target != parent_metadata.table_name }
+            raise Thor::Error, "Pending #{join_table_name} has incompatible recovery ownership"
           end
         end
         missing = required - columns
