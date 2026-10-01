@@ -80,6 +80,7 @@ module Vouch
           commit_env.add(factor) if factor
           yield commit_env if block_given?
           invitation = accept_pending_invitation(account, publish: false, transactional: true)
+          identity.reload if invitation && Vouch::RecordKey.same?(identity, invitation) && identity.class == invitation.class
           account.successful_login!
           true
         end

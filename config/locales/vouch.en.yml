@@ -29,6 +29,9 @@ en:
     invitations:
       already_invited: "An invitation already exists. Use resend to send another link."
       already_joined: "This person has already joined."
+      update_failed: "The invitation could not be updated. Please try again."
+      joined: "Invitation accepted."
+      rejected: "Invitation rejected."
       not_found: "Invitation not found."
       failed: "The invitation could not be created. Please try again."
       sent: "If the recipient is valid, an invitation will be sent."

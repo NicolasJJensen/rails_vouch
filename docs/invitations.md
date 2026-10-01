@@ -6,6 +6,7 @@ An invitation lets someone join your application through a link. In a multi-tena
 
 - [Add invitations](#add-invitations)
 - [Invite someone to an organisation](#invite-someone-to-an-organisation)
+- [Accept or reject an invitation](#accept-or-reject-an-invitation)
 - [Resend an invitation](#resend-an-invitation)
 - [Revoke an invitation](#revoke-an-invitation)
 - [Routes](#routes)
@@ -21,13 +22,21 @@ bin/rails generate vouch:invitations User
 bin/rails db:migrate
 ```
 
-The generator adds invitation fields and associations to `User`, a controller and form, a mailer and template, and invitation routes. The invitation is stored on the `User` record, not a separate invitations table. The migration adds:
+The generator adds:
+
+- A migration with invitation fields and an inviter association on `User`.
+- `Users::InvitationsController`, a send form and an acceptance choice page.
+- `Users::InvitationMailer` and its email template.
+- Routes for sending, resending, accepting, rejecting and revoking invitations.
+
+The invitation is stored on the `User` record. The migration adds:
 
 ```ruby
 change_table :users do |t|
   t.string :invitation_token, index: { unique: true }
   t.datetime :invitation_sent_at
   t.datetime :invitation_accepted_at
+  t.datetime :invitation_rejected_at
   t.references :inviter, foreign_key: {to_table: :users}
   t.boolean :registration_required, default: false, null: false
 end
@@ -155,6 +164,39 @@ Invitation acceptance and registration have [transactional hooks](#registration-
 
 Tenant assignment is automatic through the configured associations. Override `assign_tenant_to_invitee(identity, inviter)` only when your invitation policy needs different assignment rules.
 
+## Accept or reject an invitation
+
+Opening the email link displays the generated choice page at `app/views/users/invitations/accept.html.erb`. Opening that GET page does not accept the invitation or start registration.
+
+```mermaid
+flowchart TD
+  A[Open invitation link] --> B[Invitation choices]
+  B -->|Already signed in| C[Add to my account]
+  B -->|Existing account| D[Sign in and complete required MFA]
+  B -->|New account| E[Register with password or OAuth]
+  B -->|Reject| F[Record rejection]
+  C --> G[Accept the invited membership]
+  D --> G
+  E --> G
+```
+
+The choices are ordinary POST forms with Rails' request protection. You can edit the generated view without implementing their controllers.
+
+- **Add to my account** appears when an account is signed in.
+- **Sign in to an existing account** appears when signed out. Acceptance resumes after password or OAuth sign-in and any required MFA.
+- **Register a new account** appears for an unfinished invitation while signed out. It completes the pending credentials account and retains the invited organisation. See [OAuth invitations](oauth.md#oauth-for-an-invitation) for provider registration.
+- **Reject invitation** clears the link and records `invitation_rejected_at`. It preserves the account and marks the invited membership as rejected. Rejected memberships are not sign-in choices.
+
+For multi-tenant invitations, choosing an existing account can move the pending membership from its unfinished placeholder to the authenticated account. Vouch does this only during successful acceptance, keeps the invitation's organisation, and refuses to move a membership owned by a registered account. It also refuses to add a second membership in the same organisation. The original placeholder is retained; Vouch does not delete an account as part of linking or rejection.
+
+Invitations are checked again when they are consumed. An expired, revoked, accepted or replaced link cannot be reused. A host may send a new invitation after rejection with the normal create action.
+
+`before_invitation_acceptance` and `after_invitation_acceptance` wrap acceptance inside its transaction. Rejection has its own `invitation_rejection` lifecycle, separate from the inviter's `invitation_revocation`. Their `before_commit_of_*` and `after_commit_of_*` callbacks use the [normal lifecycle ordering](sessions-and-hooks.md#lifecycle-hooks).
+
+Membership-only impersonation cannot submit an acceptance choice. Full account impersonation follows the current account, subject to your action authorization.
+
+The `accept`, `reject` and `destroy` actions accept the same response block as `create` and `resend`. Authorize the prepared `@invitation` in your action where your application requires it, then call `super`; Vouch still validates the token and account relationship.
+
 ## Resend an invitation
 
 Creating another invitation for the same pending membership returns `:already_invited`. An existing joined membership returns `:already_joined`. Neither case sends another email or changes the invitation token.
@@ -162,19 +204,19 @@ Creating another invitation for the same pending membership returns `:already_in
 Use the separate resend action to send a replacement link:
 
 ```erb
-<%# app/views/users/invitations/index.html.erb — inside your invitation list %>
+<%# Your invitation list view; the generator does not create an index page %>
 <%= button_to "Resend invitation", resend_user_invitation_path,
   params: { invitation_token: invitation.invitation_token } %>
 ```
 
-The controller loads `@invitation` through `revocable_invitations` before your action. Resending rotates the token and restarts its expiry, so the previous link stops working. The inviter stays unchanged unless your action assigns a replacement:
+The controller loads `@invitation` through `revocable_invitations` before your action. It is `nil` when the token is unavailable. Resending rotates the token and restarts its expiry, so the previous link stops working. The inviter stays unchanged unless your action assigns a replacement:
 
 ```ruby
 # app/controllers/users/invitations_controller.rb
 class Users::InvitationsController < Vouch::InvitationsController
   def resend
     # Authorize @invitation using your application's permissions.
-    @invitation.inviter = current_user
+    @invitation.inviter = current_user if @invitation
     super
   end
 end
@@ -228,7 +270,9 @@ Revocation removes the invited membership in a multi-tenant setup. For a single-
 | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
 | `POST /users/invitation` | `user_invitation_path` | `Users::InvitationsController#create` |
 | `POST /users/invitation/resend` | `resend_user_invitation_path` | `Users::InvitationsController#resend` |
-| `GET /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |
+| `GET /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` (choice page) |
+| `POST /users/invitation/accept` | `accept_user_invitation_path` | `Users::InvitationsController#accept` (selected choice) |
+| `POST /users/invitation/reject` | `reject_user_invitation_path` | `Users::InvitationsController#reject` |
 | `DELETE /users/invitation` | `user_invitation_path` | `Users::InvitationsController#destroy` |
 
 ## Registration customization
@@ -254,6 +298,8 @@ Use registration hooks for account-wide records and invitation-acceptance hooks 
 `Preferences` and `MembershipPreferences` are example models you supply. These callbacks run inside their operation's database transaction. Use [post-commit hooks](sessions-and-hooks.md#lifecycle-hooks) for external effects.
 
 The generated lookup saves a pending account before sending its invitation. If your account requires profile fields at creation, supply them in `build_invited_account` or condition those validations on completed registration.
+
+For custom flows, the model methods `invite`, `accept_invitation`, `reissue_invitation` and `reject_invitation` return `Vouch::Result`. Their `!` variants return the successful result or raise `Vouch::OperationFailed`, whose `result` retains the failure and underlying error.
 
 ## Edit the invitation actions
 

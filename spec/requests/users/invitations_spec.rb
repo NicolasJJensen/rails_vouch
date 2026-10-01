@@ -21,7 +21,7 @@ RSpec.describe "Users::Invitations", type: :request do
 
     it "redirects to registration for valid token" do
       invitee = create(:user, :invited, account: create(:account, registration_required: true), organisation: organisation, invitation_sent_at: 1.day.ago, inviter: user)
-      get "/users/invitation/accept", params: { token: invitee.invitation_token }
+      post "/users/invitation/accept", params: { token: invitee.invitation_token, choice: "new" }
       expect(response).to redirect_to("/users/sign_up")
     end
   end
@@ -220,7 +220,7 @@ RSpec.describe "Users::Invitations", type: :request do
 
       replacement = invite
       logout(:user)
-      get "/users/invitation/accept", params: { token: replacement.invitation_token }
+      post "/users/invitation/accept", params: { token: replacement.invitation_token, choice: "new" }
       expect(response).to redirect_to("/users/sign_up")
       post "/users/sign_up", params: { account: { password: "chosen-password123", password_confirmation: "chosen-password123" } }
       expect(replacement.reload.invitation_accepted_at).to be_present
@@ -232,7 +232,7 @@ RSpec.describe "Users::Invitations", type: :request do
       second = invite
       expect(second.account_id).to eq(first.account_id)
       logout(:user)
-      get "/users/invitation/accept", params: { token: second.invitation_token }
+      post "/users/invitation/accept", params: { token: second.invitation_token, choice: "new" }
       expect(response).to redirect_to("/users/sign_up")
     end
 
@@ -264,11 +264,11 @@ RSpec.describe "Users::Invitations", type: :request do
       logout(:user)
       other_browser = ActionDispatch::Integration::Session.new(Rails.application)
       other_browser.host! "www.example.com"
-      other_browser.get "/users/invitation/accept", params: { token: invitation.invitation_token }
+      other_browser.post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
       expect(other_browser.response.location).to eq("http://www.example.com/users/sign_up")
 
       logout(:user)
-      get "/users/invitation/accept", params: { token: invitation.invitation_token }
+      post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
       post "/users/sign_up", params: { account: { password: "first-password123", password_confirmation: "first-password123" } }
       expect(invitation.reload.invitation_accepted_at).to be_present
       other_browser.post "/users/sign_up", params: { account: { password: "replacement-password123", password_confirmation: "replacement-password123" } }
@@ -348,7 +348,7 @@ RSpec.describe "Users::Invitations", type: :request do
     it "clears rejected invitation state so ordinary registration can proceed" do
       invitation = invite
       logout(:user)
-      get "/users/invitation/accept", params: { token: invitation.invitation_token }
+      post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
       invitation.account.complete_registration!
       post "/users/sign_up", params: { account: { password: "unused-password123", password_confirmation: "unused-password123" } }
       expect(response).to redirect_to("/users/sign_in")

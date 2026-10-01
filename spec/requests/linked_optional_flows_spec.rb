@@ -86,7 +86,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
     invitee = create(:user, :invited, account: invited_account, organisation: organisation,
       inviter: operator)
 
-    get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }
+    post "/linked_members/invitation/accept", params: { token: invitee.invitation_token, choice: "new" }
     expect(response).to redirect_to("/linked_accounts/sign_up")
 
     post "/linked_accounts/sign_up", params: {
@@ -97,6 +97,20 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
     member_login
     expect(response).to redirect_to("/")
     expect(status).to include("account" => invited_account.id, "member" => invitee.id, "current_member" => invitee.id)
+  end
+
+  it "links an unfinished invitation to the account chosen through the parent sign-in" do
+    placeholder = create(:account, registration_required: true)
+    invitee = create(:user, :invited, account: placeholder, organisation: organisation, inviter: operator)
+    destination = create(:account)
+    post "/linked_members/invitation/accept", params: {token: invitee.invitation_token, choice: "existing"}
+    expect(response).to redirect_to("/linked_accounts/sign_in")
+    account_login(destination)
+    expect(invitee.reload.account).to eq(destination)
+    expect(invitee.invitation_accepted_at).to be_present
+    member_login
+    expect(status).to include("account" => destination.id, "member" => invitee.id)
+    expect(Account.exists?(placeholder.id)).to be true
   end
 
   it "retains the operator account while switching and restoring the membership" do
@@ -137,7 +151,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
       inviter: operator)
 
     account_login(invited_account)
-    get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }
+    post "/linked_members/invitation/accept", params: { token: invitee.invitation_token, choice: "current" }
     expect(response).to redirect_to("/linked_members/sign_in")
 
     member_login
@@ -152,7 +166,7 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
       inviter: operator)
 
     account_login
-    get "/linked_members/invitation/accept", params: { token: invitee.invitation_token }
+    post "/linked_members/invitation/accept", params: { token: invitee.invitation_token, choice: "current" }
     expect(response).to redirect_to("/linked_members/sign_in")
 
     member_login

@@ -1,0 +1,17 @@
+<h1>Invitation</h1>
+<p>You have been invited to join.</p>
+
+<% if @receiving_account %>
+  <%= button_to "Add to my account", accept_user_invitation_path,
+    params: { token: @invitation.invitation_token, choice: "current" } %>
+<% else %>
+  <%= button_to "Sign in to an existing account", accept_user_invitation_path,
+    params: { token: @invitation.invitation_token, choice: "existing" } %>
+  <% if @registration_required %>
+    <%= button_to "Register a new account", accept_user_invitation_path,
+      params: { token: @invitation.invitation_token, choice: "new" } %>
+  <% end %>
+<% end %>
+
+<%= button_to "Reject invitation", reject_user_invitation_path,
+  params: { token: @invitation.invitation_token } %>

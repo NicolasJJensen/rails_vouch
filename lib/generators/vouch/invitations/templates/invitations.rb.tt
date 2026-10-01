@@ -1,15 +1,20 @@
 class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
   def change
     change_table :<%= table_name %> do |t|
-      t.string :invitation_token unless column_exists?(:<%= table_name %>, :invitation_token)
+      if column_exists?(:<%= table_name %>, :invitation_token)
+        t.index :invitation_token, unique: true unless index_exists?(:<%= table_name %>, :invitation_token)
+      else
+        t.string :invitation_token, index: { unique: true }
+      end
+
       t.datetime :invitation_sent_at unless column_exists?(:<%= table_name %>, :invitation_sent_at)
       t.datetime :invitation_accepted_at unless column_exists?(:<%= table_name %>, :invitation_accepted_at)
+      t.datetime :invitation_rejected_at unless column_exists?(:<%= table_name %>, :invitation_rejected_at)
 <% model_metadata.primary_keys.zip(model_metadata.foreign_keys("inviter")).each do |key, foreign| -%>
 <% unless model_metadata.primary_keys == ["id"] -%>
       t.<%= primary_key_type || model_metadata.primary_key_types[key] %> :<%= foreign %> unless column_exists?(:<%= table_name %>, :<%= foreign %>)
 <% end -%>
 <% end -%>
-      t.index :invitation_token, unique: true unless index_exists?(:<%= table_name %>, :invitation_token)
 <% if model_metadata.primary_keys == ["id"] -%>
       if column_exists?(:<%= table_name %>, :inviter_id)
         t.index :inviter_id unless index_exists?(:<%= table_name %>, :inviter_id)

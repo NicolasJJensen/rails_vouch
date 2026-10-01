@@ -3,15 +3,17 @@
 module Vouch
   class AuthenticationSession
     module Invitations
-      def begin_invitation!(identity)
+      def begin_invitation!(identity, choice: nil)
+        mapping = controller.send(:auth_mapping)
         payload = {
           'user_id' => Vouch::RecordKey.serialize(identity),
           'token' => identity.invitation_token,
-          'scope' => scope.to_s
+          'scope' => scope.to_s,
+          'choice' => choice&.to_s,
+          'account_id' => Vouch::RecordKey.serialize(mapping.account_for(identity))
         }
         session[key(:invited_user)] = payload
 
-        mapping = controller.send(:auth_mapping)
         if mapping.membership_scope?
           session[Vouch::Session.key_for(mapping.parent_scope_name, :invited_user)] = payload
         end
@@ -31,6 +33,8 @@ module Vouch
         return nil unless identity && identity.invitation_token.present? && !identity.invitation_expired? &&
           ActiveSupport::SecurityUtils.secure_compare(identity.invitation_token, payload['token'])
 
+        account = mapping.account_for(identity)
+        return nil unless Vouch::RecordKey.same?(payload['account_id'], Vouch::RecordKey.serialize(account), model: account.class)
         identity
       end
 

@@ -70,7 +70,7 @@ RSpec.describe "Users::Registrations", type: :request do
       invited_user = create(:user, :invited, account: create(:account, registration_required: true), organisation: organisation, invitation_sent_at: 1.day.ago)
 
       # Set the invited_user_id in session by going through the accept flow
-      get "/users/invitation/accept", params: { token: invited_user.invitation_token }
+      post "/users/invitation/accept", params: { token: invited_user.invitation_token, choice: "new" }
 
       post "/users/sign_up", params: {
         account: {

@@ -1,7 +1,9 @@
 class Vouch::InvitationsController < ::ApplicationController
   include Vouch::Authentication
-  allow_unauthenticated_access only: :accept
-  before_action :set_invitation, only: [:create, :resend]
+  allow_unauthenticated_access only: [:accept, :reject]
+  before_action :set_invitation, only: [:create, :resend, :accept, :reject, :destroy]
+
+  before_action :require_account_invitation_access!, only: :accept
 
   def new; end
 
@@ -23,70 +25,137 @@ class Vouch::InvitationsController < ::ApplicationController
     end
   end
 
-
-  def destroy
-    token = params[:invitation_token]
-    if token.present?
-      invitation = revocable_invitations.find_by(invitation_token: token)
-      if invitation
-        committed = run_authentication_hooks(:invitation_revocation, invitation, auth_mapping.account_for(invitation)) do |env|
-          succeeded = run_commit_hooks(:invitation_revocation, *env.args, **env.kwargs) do
-            account = auth_mapping.account_for(invitation)
-            account.lock!
-            invitation.lock! unless invitation == account
-            next false unless revocable_invitations.where(
-              auth_mapping.identity_class.primary_key => invitation.id,
-              invitation_token: token
-            ).exists?
-
-            if auth_mapping.split_model?
-              invitation.destroy!
-            else
-              Vouch::Persistence.update!(invitation,
-                invitation_token: nil, invitation_sent_at: nil)
-            end
-            true
-          end
-          env.abort! unless succeeded
-          true
-        end
+  def destroy(&response_handler)
+    return if performed?
+    result = revoke_invitation
+    respond_with_authentication_result(result, response_handler) do
+      if result.ok?
+        redirect_to root_path, notice: I18n.t("vouch.invitations.revoked")
+      elsif result.error || result.cancelled?
+        render plain: I18n.t("vouch.invitations.update_failed"), status: :unprocessable_content
+      else
+        redirect_to root_path, alert: I18n.t("vouch.invitations.not_found")
       end
     end
-    redirect_to root_path, notice: I18n.t('vouch.invitations.revoked')
-  rescue ActiveRecord::RecordNotDestroyed, Vouch::Persistence::Cancelled
-    head :unprocessable_content
   end
 
-  def accept
-    identity = auth_mapping.identity_class.find_by_invitation_token(params[:token])
-    unless identity && !identity.invitation_expired?
-      return redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
+  def accept(&response_handler)
+    return if performed?
+    if request.get? && @invitation && !@invitation.invitation_expired?
+      @receiving_account = current_account
+      @registration_required = invitation_requires_registration?(@invitation)
+      return render :accept
     end
 
-    authentication_session.begin_invitation!(identity)
-    if invitation_requires_registration?(identity)
-      if auth_mapping.membership_scope?
-        parent = Vouch.mapping_for(auth_mapping.parent_scope_name)
-        session[Vouch::Session.key_for(parent.scope_name, :destination_scope)] = auth_scope_name.to_s
-        redirect_to parent.route_path(:registrations, :new, self)
+    result = choose_invitation_acceptance
+    respond_with_authentication_result(result, response_handler) do
+      if result.ok?
+        redirect_to (auth_mapping.membership_scope? ? new_session_path : after_sign_in_path), notice: I18n.t("vouch.invitations.joined")
+      elsif result.pending?
+        mapping = if auth_mapping.membership_scope?
+          session[Vouch::Session.key_for(auth_mapping.parent_scope_name, :destination_scope)] = auth_scope_name.to_s
+          Vouch.mapping_for(auth_mapping.parent_scope_name)
+        else
+          auth_mapping
+        end
+        endpoint = result.metadata[:next_step] == :registration ? :registrations : :sessions
+        redirect_to mapping.route_path(endpoint, :new, self)
+      elsif result.error || result.cancelled?
+        render plain: I18n.t("vouch.invitations.update_failed"), status: :unprocessable_content
       else
-        redirect_to new_registration_path
+        redirect_to new_session_path, alert: I18n.t("vouch.invitations.invalid_token")
       end
-    elsif current_identity && auth_mapping.account_for(identity) == current_account
-      begin
-        accepted = accept_pending_invitation(current_account)
-      rescue Vouch::Persistence::Cancelled
-        return head :unprocessable_content
-      end
-      return head(:unprocessable_content) unless accepted
+    end
+  end
 
-      redirect_to after_sign_in_path
-    else
-      redirect_to new_session_path, notice: I18n.t('vouch.invitations.accepted')
+  def reject(&response_handler)
+    return if performed?
+    result = reject_invitation
+    respond_with_authentication_result(result, response_handler) do
+      if result.ok?
+        redirect_to root_path, notice: I18n.t("vouch.invitations.rejected")
+      else
+        redirect_to new_session_path, alert: I18n.t("vouch.invitations.invalid_token")
+      end
     end
   end
 
   private
+
+  def require_account_invitation_access!
+    if request.post? && Vouch::ImpersonationStack.membership_restricted?(session)
+      head :forbidden
+    end
+  end
+
+  def revoke_invitation
+    return Vouch::Result.invalid(reason: :not_found) unless @invitation
+    token = params[:invitation_token]
+    account = auth_mapping.account_for(@invitation)
+    completed = run_authentication_hooks(:invitation_revocation, @invitation, account) do |env|
+      committed = run_commit_hooks(:invitation_revocation, @invitation, account) do
+        account.lock!
+        @invitation.lock! unless @invitation == account
+        next false unless revocable_invitations.where(Vouch::RecordKey.attributes_for(@invitation))
+          .where(invitation_token: token).exists?
+        if auth_mapping.split_model?
+          @invitation.destroy!
+        else
+          Vouch::Persistence.update!(@invitation, invitation_token: nil, invitation_sent_at: nil)
+        end
+        true
+      end
+      env.abort! unless committed
+      true
+    end
+    completed ? Vouch::Result.ok(@invitation) : Vouch::Result.cancelled(record: @invitation)
+  rescue ActiveRecord::RecordNotDestroyed, Vouch::Persistence::Cancelled => error
+    Vouch::Result.invalid(record: @invitation, error: error)
+  end
+
+  def choose_invitation_acceptance
+    return Vouch::Result.invalid(reason: :invalid_token) unless @invitation && !@invitation.invitation_expired?
+    return Vouch::Result.invalid(reason: :invalid_choice) unless request.post?
+    choice = params[:choice].to_s
+    case choice
+    when "new"
+      return Vouch::Result.invalid(reason: :invalid_choice) if current_account || !invitation_requires_registration?(@invitation)
+      authentication_session.begin_invitation!(@invitation, choice: choice)
+      Vouch::Result.pending(@invitation, next_step: :registration)
+    when "existing"
+      return Vouch::Result.invalid(reason: :invalid_choice) if current_account
+      authentication_session.begin_invitation!(@invitation, choice: choice)
+      Vouch::Result.pending(@invitation, next_step: :sign_in)
+    when "current"
+      return Vouch::Result.invalid(reason: :invalid_choice) unless current_account
+      authentication_session.begin_invitation!(@invitation, choice: choice)
+      return Vouch::Result.invalid(reason: :invalid_token) unless invitation_acceptance_allowed?(@invitation, current_account)
+      accepted = accept_pending_invitation(current_account)
+      accepted ? Vouch::Result.ok(accepted) : Vouch::Result.cancelled(record: @invitation)
+    else
+      Vouch::Result.invalid(reason: :invalid_choice)
+    end
+  rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique => error
+    Vouch::Result.invalid(record: @invitation, error: error)
+  end
+
+  def reject_invitation
+    return Vouch::Result.invalid(reason: :invalid_token) unless @invitation && !@invitation.invitation_expired?
+    account = auth_mapping.account_for(@invitation)
+    result = nil
+    token = @invitation.invitation_token
+    completed = run_authentication_hooks(:invitation_rejection, @invitation, account) do |env|
+      committed = run_commit_hooks(:invitation_rejection, @invitation, account) do
+        result = @invitation.reject_invitation
+        result.ok?
+      end
+      env.abort! unless committed
+      payload = session[invited_user_session_key]
+      authentication_session.clear_invitation if payload.is_a?(Hash) && payload["token"] == token
+      true
+    end
+    completed ? result : Vouch::Result.cancelled(record: @invitation)
+  end
 
   def create_invitation
     identifier = params[:email_address] || params[:identifier]
@@ -97,7 +166,7 @@ class Vouch::InvitationsController < ::ApplicationController
       account.lock!
       if auth_mapping.split_model?
         existing = existing_identity_for_invitation(account)
-        if existing
+        if existing && existing.invitation_rejected_at.nil?
           error = existing.invitation_token.present? && existing.invitation_accepted_at.nil? ?
             Vouch::Invitable::InvitationExistsError : Vouch::Invitable::AlreadyJoinedError
           raise error.new(existing)
@@ -105,7 +174,7 @@ class Vouch::InvitationsController < ::ApplicationController
           @invitation.public_send("#{auth_mapping.account_association}=", account)
           assign_tenant_to_invitee(@invitation, current_identity)
           @invitation.assign_attributes(invitation_token: SecureRandom.uuid,
-            invitation_sent_at: Time.current, inviter: current_identity)
+            invitation_sent_at: Time.current, invitation_rejected_at: nil, inviter: current_identity)
           Vouch::Persistence.save!(@invitation)
           @invitation
         end
@@ -140,8 +209,8 @@ class Vouch::InvitationsController < ::ApplicationController
     identifier = auth_mapping.account_for(@invitation).email_address
     run_hooks(:invitation_token_generation, identifier, @invitation) { |env| env.add(@invitation) }
     Vouch::Result.ok(@invitation)
-  rescue Vouch::Invitable::InvitationExpiredError => error
-    Vouch::Result.invalid(record: @invitation, error: error, reason: :invalid_token)
+  rescue Vouch::OperationFailed => error
+    error.result
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
     Vouch::Result.invalid(record: @invitation, error: error)
   end
@@ -168,6 +237,8 @@ class Vouch::InvitationsController < ::ApplicationController
       else
         @account
       end
+    elsif %w[accept reject].include?(action_name)
+      auth_mapping.identity_class.find_by_invitation_token(params[:token])
     else
       revocable_invitations.find_by(invitation_token: params[:invitation_token]) if params[:invitation_token].present?
     end

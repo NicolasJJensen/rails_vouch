@@ -44,7 +44,7 @@ RSpec.describe "Invitation acceptance hook phases", type: :request do
     invitation
     depth = ActiveRecord::Base.connection.open_transactions
     observations = observe_acceptance(Users::InvitationsController) do
-      get "/users/invitation/accept", params: {token: invitation.invitation_token}
+      post "/users/invitation/accept", params: {token: invitation.invitation_token, choice: "current" }
     end
 
     expect(response).to redirect_to("/")
@@ -52,7 +52,7 @@ RSpec.describe "Invitation acceptance hook phases", type: :request do
   end
 
   it "wraps sign-in acceptance with commit callbacks outside its transaction" do
-    get "/users/invitation/accept", params: {token: invitation.invitation_token}
+    post "/users/invitation/accept", params: {token: invitation.invitation_token, choice: "existing" }
     depth = ActiveRecord::Base.connection.open_transactions
     observations = observe_acceptance(Users::SessionsController) do
       post "/users/sign_in", params: {email_address: account.email_address, password: "password123"}
@@ -64,7 +64,7 @@ RSpec.describe "Invitation acceptance hook phases", type: :request do
 
   it "wraps invited registration and its accompanying database work" do
     account.update!(registration_required: true)
-    get "/users/invitation/accept", params: {token: invitation.invitation_token}
+    post "/users/invitation/accept", params: {token: invitation.invitation_token, choice: "new" }
     depth = ActiveRecord::Base.connection.open_transactions
     observations = observe_acceptance(Users::RegistrationsController) do
       post "/users/sign_up", params: {account: {password: "replacement123", password_confirmation: "replacement123"}}
@@ -78,7 +78,7 @@ RSpec.describe "Invitation acceptance hook phases", type: :request do
     account.update!(registration_required: true)
     digest = account.password_digest
     token = invitation.invitation_token
-    get "/users/invitation/accept", params: {token: token}
+    post "/users/invitation/accept", params: {token: token, choice: "new" }
     original = Users::RegistrationsController.__hooks
     Users::RegistrationsController.before_commit_of_invitation_acceptance { throw :abort }
 

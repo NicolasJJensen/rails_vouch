@@ -24,6 +24,8 @@ module Vouch
     def valid_pending_invitation?(identity)
       payload = session[invited_user_session_key]
       return false unless payload.is_a?(Hash) && payload['token'].present?
+      owner = invitation_account_for(identity)
+      return false unless Vouch::RecordKey.same?(payload['account_id'], Vouch::RecordKey.serialize(owner), model: owner.class)
       identity.invitation_token.present? && !identity.invitation_expired? &&
         ActiveSupport::SecurityUtils.secure_compare(identity.invitation_token, payload['token'])
     end
@@ -34,7 +36,7 @@ module Vouch
 
     def run_authentication_hooks_with_invitation(kind, account, *args, **kwargs, &operation)
       invitation = pending_invited_identity unless @wrapping_invitation_acceptance
-      unless invitation && invitation_account_for(invitation) == account
+      unless invitation && (invitation_account_for(invitation) == account || invitation_link_allowed?(invitation, account))
         return run_authentication_hooks(kind, account, *args, **kwargs, &operation)
       end
 
@@ -56,8 +58,7 @@ module Vouch
 
     def accept_pending_invitation(account, publish: true, transactional: false)
       invitation = pending_invited_identity
-      return nil unless invitation && invitation_account_for(invitation) == account
-      return nil if invitation_requires_registration?(invitation)
+      return nil unless invitation && invitation_acceptance_allowed?(invitation, account)
 
       return accept_pending_invitation_in_transaction(account, invitation) if transactional
 
@@ -84,8 +85,7 @@ module Vouch
         invitation.with_lock do
           # The invitation can be reassigned or require registration while it waits for this lock.
           locked_invitation = invitation.class.find(invitation.id)
-          next false unless invitation_account_for(locked_invitation) == account
-          next false if invitation_requires_registration?(locked_invitation)
+          next false unless invitation_acceptance_allowed?(locked_invitation, account)
           next false unless valid_pending_invitation?(locked_invitation)
 
           core_ran = false
@@ -106,11 +106,23 @@ module Vouch
       # The caller holds both records' locks. Recheck the account relation and
       # token immediately before consuming the invitation.
       invitation.reload
-      raise Vouch::Persistence::Cancelled unless invitation_account_for(invitation) == account
-      raise Vouch::Persistence::Cancelled if invitation_requires_registration?(invitation)
+      raise Vouch::Persistence::Cancelled unless invitation_acceptance_allowed?(invitation, account)
       raise Vouch::Persistence::Cancelled unless valid_pending_invitation?(invitation)
 
-      invitation.accept_invitation!
+      if invitation_account_for(invitation) != account
+        original_account = invitation_account_for(invitation)
+        original_account.lock!
+        raise Vouch::Persistence::Cancelled unless invitation_link_allowed?(invitation, account)
+        mapping = invitation_mapping_for(invitation)
+        existing = mapping.identities_for(account)
+        if mapping.tenant?
+          association = mapping.identity_tenant_association.name
+          existing = existing.where(association => invitation.public_send(association))
+        end
+        raise Vouch::Persistence::Cancelled if existing.exists?
+        Vouch::Persistence.update!(invitation, mapping.account_association => account)
+      end
+      raise Vouch::Persistence::Cancelled unless invitation.accept_invitation.ok?
       @completed_invitation_acceptance = invitation
     end
 
@@ -140,6 +152,21 @@ module Vouch
       payload = session[invited_user_session_key]
       scope = payload.is_a?(Hash) && payload["scope"]
       scope ? Vouch.mapping_for(scope) : auth_mapping
+    end
+
+    def invitation_link_allowed?(invitation, account)
+      payload = session[invited_user_session_key]
+      return false unless payload.is_a?(Hash) && %w[current existing].include?(payload["choice"])
+      return false unless invitation_mapping_for(invitation).split_model?
+      return false unless valid_pending_invitation?(invitation)
+      return false if account.registration_required?
+
+      invitation_account_for(invitation).registration_required?
+    end
+
+    def invitation_acceptance_allowed?(invitation, account)
+      owner = invitation_account_for(invitation)
+      (owner == account && !owner.registration_required?) || invitation_link_allowed?(invitation, account)
     end
 
     def build_invited_account(identifier)

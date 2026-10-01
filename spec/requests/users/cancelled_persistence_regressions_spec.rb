@@ -95,7 +95,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     end
     User.set_callback(:update, :after, callback)
 
-    get "/users/invitation/accept", params: { token: original_token }
+    post "/users/invitation/accept", params: { token: original_token, choice: "new" }
     post "/users/sign_up", params: {
       account: {
         password: "replacement-password123",
@@ -134,7 +134,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     Users::InvitationsController.after_commit_of_invitation_acceptance { published << :accepted }
     sign_in(current_user)
 
-    get "/users/invitation/accept", params: { token: original_token }
+    post "/users/invitation/accept", params: { token: original_token, choice: "current" }
 
     expect(response).to have_http_status(:unprocessable_content)
     expect(invitation.reload.invitation_token).to eq(original_token)

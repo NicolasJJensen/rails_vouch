@@ -187,7 +187,8 @@ module Vouch
       router.scope m.path, as: m.helper_prefix do
         router.resource :invitation, only: [:new, :create, :destroy],
                         controller: ctrl do
-          router.get :accept, on: :collection
+          router.match :accept, via: [:get, :post], on: :collection
+          router.post :reject, on: :collection
           router.post :resend, on: :collection
         end
       end

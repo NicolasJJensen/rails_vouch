@@ -51,7 +51,7 @@ module Vouch
       extend ActiveSupport::Concern
 
       included do
-        scope :pending_invitation, -> { where.not(invitation_token: nil) }
+        scope :pending_invitation, -> { where(invitation_accepted_at: nil, invitation_rejected_at: nil).where.not(invitation_token: nil) }
       end
 
       def invitation_expired?
@@ -60,7 +60,7 @@ module Vouch
         invitation_sent_at < Vouch.configuration.invitations.expiry.ago
       end
 
-      def accept_invitation!
+      def accept_invitation
         expected_token = invitation_token
         raise InvitationExpiredError if expected_token.blank?
 
@@ -76,9 +76,39 @@ module Vouch
             invitation_accepted_at: Time.current
           )
         end
+        Vouch::Result.ok(self)
+      rescue InvitationExpiredError, ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, Vouch::Persistence::Cancelled => error
+        Vouch::Result.invalid(record: self, error: error)
       end
 
-      def reissue_invitation!(**options)
+      def accept_invitation!
+        result = accept_invitation
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
+      end
+
+      def reject_invitation
+        expected_token = invitation_token
+        Vouch::Persistence.transaction(self) do
+          lock!
+          unless expected_token.present? && invitation_token == expected_token && invitation_accepted_at.nil? && !invitation_expired?
+            return Vouch::Result.invalid(record: self, reason: :invalid_token)
+          end
+          Vouch::Persistence.update!(self, invitation_token: nil, invitation_sent_at: nil,
+            invitation_rejected_at: Time.current)
+        end
+        Vouch::Result.ok(self)
+      rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, Vouch::Persistence::Cancelled => error
+        Vouch::Result.invalid(record: self, error: error)
+      end
+
+      def reject_invitation!
+        result = reject_invitation
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
+      end
+
+      def reissue_invitation(**options)
         expected_token = invitation_token
         inviter_keys = Array(self.class.reflect_on_association(:inviter).foreign_key).map(&:to_s)
         inviter_changes = changes.slice(*inviter_keys).transform_values(&:last)
@@ -94,7 +124,15 @@ module Vouch
             invitation_token: SecureRandom.uuid,
             invitation_sent_at: Time.current)
         end
-        self
+        Vouch::Result.ok(self)
+      rescue InvitationExpiredError, ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, Vouch::Persistence::Cancelled => error
+        Vouch::Result.invalid(record: self, error: error)
+      end
+
+      def reissue_invitation!(**options)
+        result = reissue_invitation(**options)
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
       end
 
       class_methods do
@@ -108,7 +146,7 @@ module Vouch
         #   end
         #   invitee = result.value
         #
-        def invite!(invited_by: nil, **attributes)
+        def invite(invited_by: nil, **attributes)
           token = SecureRandom.uuid
 
           invitee = new(
@@ -124,11 +162,19 @@ module Vouch
             Vouch::Persistence.save!(invitee)
             Vouch::Result.ok(invitee)
           end
+        rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotSaved, Vouch::Persistence::Cancelled => error
+          Vouch::Result.invalid(record: (error.record if error.respond_to?(:record)), error: error)
+        end
+
+        def invite!(**attributes, &block)
+          result = invite(**attributes, &block)
+          raise Vouch::OperationFailed, result unless result.ok?
+          result
         end
 
         def find_by_invitation_token(token)
           return nil if token.blank?
-          find_by(invitation_token: token)
+          pending_invitation.find_by(invitation_token: token)
         end
       end
     end

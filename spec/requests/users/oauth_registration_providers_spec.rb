@@ -101,7 +101,7 @@ RSpec.describe "Multiple OAuth registration providers", type: :request do
   it "completes an invited pending owner with two providers and no new tenant" do
     account = create(:account, password: nil, password_confirmation: nil, registration_required: true)
     invitation = create(:user, :invited, account: account, invitation_sent_at: Time.current)
-    get "/users/invitation/accept", params: { token: invitation.invitation_token }
+    post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
     connect("first")
     connect("second")
     counts = [Account.count, User.count, Organisation.count]
@@ -153,7 +153,7 @@ RSpec.describe "Multiple OAuth registration providers", type: :request do
     Vouch.mapping_for(:user).oauth_registration = :automatic
     account = create(:account, password: nil, password_confirmation: nil, registration_required: true)
     invitation = create(:user, :invited, account: account, invitation_sent_at: Time.current)
-    get "/users/invitation/accept", params: { token: invitation.invitation_token }
+    post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
     counts = [Account.count, User.count, Organisation.count]
 
     connect("first")
@@ -229,9 +229,9 @@ RSpec.describe "Multiple OAuth registration providers", type: :request do
   it "does not apply existing proofs to a different invitation at final submission" do
     first = create(:user, :invited, account: create(:account, registration_required: true), invitation_sent_at: Time.current)
     second = create(:user, :invited, account: create(:account, registration_required: true), invitation_sent_at: Time.current)
-    get "/users/invitation/accept", params: { token: first.invitation_token }
+    post "/users/invitation/accept", params: { token: first.invitation_token, choice: "new" }
     connect("first")
-    get "/users/invitation/accept", params: { token: second.invitation_token }
+    post "/users/invitation/accept", params: { token: second.invitation_token, choice: "new" }
 
     expect { finish({}) }.not_to change(OmniAuthIdentity, :count)
 

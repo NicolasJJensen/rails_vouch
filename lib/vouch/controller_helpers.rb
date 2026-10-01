@@ -15,6 +15,7 @@ module Vouch
       oauth_link
       oauth_account_creation
       invitation_revocation
+      invitation_rejection
       invitation_acceptance
       impersonation_start
       impersonation_end
@@ -302,12 +303,12 @@ module Vouch
       return identities unless auth_mapping.split_model? && auth_mapping.identity_class.column_names.include?("invitation_token")
 
       invitation = pending_invited_identity
-      permitted_pending = invitation && invitation_account_for(invitation) == account &&
-        valid_pending_invitation?(invitation)
-      accepted = identities.where(invitation_token: nil)
+      permitted_pending = invitation && valid_pending_invitation?(invitation) &&
+        (invitation_account_for(invitation) == account || invitation_link_allowed?(invitation, account))
+      accepted = identities.where(invitation_token: nil, invitation_rejected_at: nil)
       return accepted unless permitted_pending
 
-      accepted.or(identities.where(Vouch::RecordKey.attributes_for(invitation)))
+      accepted.or(auth_mapping.identity_class.where(Vouch::RecordKey.attributes_for(invitation)))
     end
 
     def after_sign_in_path

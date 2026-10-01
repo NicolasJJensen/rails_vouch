@@ -20,7 +20,7 @@ RSpec.describe "Registration sign-in methods", type: :request do
   it "identifies invited registration and reuses its tenant" do
     invitee = create(:user, :invited,
       account: create(:account, registration_required: true), invitation_sent_at: Time.current)
-    get "/users/invitation/accept", params: { token: invitee.invitation_token }
+    post "/users/invitation/accept", params: { token: invitee.invitation_token, choice: "new" }
     get "/users/sign_up"
     expect(controller.send(:invitation_registration?)).to be(true)
 

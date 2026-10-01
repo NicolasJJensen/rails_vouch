@@ -180,7 +180,7 @@ RSpec.describe 'Invitation completion', type: :request do
     expect(invitation.account).not_to be_registration_required
     expect(invitation.organisation).to eq(operator.organisation)
     delete '/users/sign_out'
-    get '/users/invitation/accept', params: {token: invitation.invitation_token}
+    post '/users/invitation/accept', params: {token: invitation.invitation_token, choice: "existing" }
     expect(invitation.reload.invitation_token).to be_present
     post '/users/sign_in', params: {email_address: existing.email_address, password: 'password123'}
     expect(response).to redirect_to('/users/select')
@@ -203,7 +203,7 @@ RSpec.describe 'Invitation completion', type: :request do
     existing.account.enable_two_factor!
 
     delete '/users/sign_out'
-    get '/users/invitation/accept', params: {token: invitation.invitation_token}
+    post '/users/invitation/accept', params: {token: invitation.invitation_token, choice: "existing" }
     expect(response).to redirect_to('/users/sign_in')
 
     post '/users/sign_in', params: {email_address: existing.email_address, password: 'password123'}
@@ -224,7 +224,7 @@ RSpec.describe 'Invitation completion', type: :request do
     identity = create(:user, :invited)
     identity.account.update!(registration_required: true)
     original_counts = [Account.count, User.count, Organisation.count]
-    get '/users/invitation/accept', params: {token: identity.invitation_token}
+    post '/users/invitation/accept', params: {token: identity.invitation_token, choice: "new" }
     post '/users/sign_up', params: {account: {email_address: identity.email_address,
       password: 'newpassword123', password_confirmation: 'newpassword123'}}
     expect([Account.count, User.count, Organisation.count]).to eq(original_counts)
@@ -234,7 +234,7 @@ RSpec.describe 'Invitation completion', type: :request do
 
   it 'R13 requires authentication for an existing account invitation' do
     identity = create(:user, :invited)
-    get '/users/invitation/accept', params: {token: identity.invitation_token}
+    post '/users/invitation/accept', params: {token: identity.invitation_token, choice: "existing" }
     expect(response).to redirect_to('/users/sign_in')
     post '/users/sign_up', params: {account: {password: 'attacker123', password_confirmation: 'attacker123'}}
     expect(identity.account.reload.authenticate('attacker123')).to be false
@@ -243,7 +243,7 @@ RSpec.describe 'Invitation completion', type: :request do
   it 'R13 rejects a revoked invitation retained in the session' do
     identity = create(:user, :invited)
     identity.account.update!(registration_required: true)
-    get '/users/invitation/accept', params: {token: identity.invitation_token}
+    post '/users/invitation/accept', params: {token: identity.invitation_token, choice: "new" }
     identity.update!(invitation_token: nil)
     post '/users/sign_up', params: {account: {password: 'attacker123', password_confirmation: 'attacker123'}}
     expect(identity.account.reload.authenticate('attacker123')).to be false

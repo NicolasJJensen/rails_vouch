@@ -61,7 +61,7 @@ RSpec.describe Vouch::Invitable::Concern do
           invitee.organisation = organisation
           invitee.account = Account.create!(email_address: "cancelled-standalone-invite@example.com", password: "password123")
         end
-      }.to raise_error(Vouch::Persistence::Cancelled)
+      }.to raise_error(Vouch::OperationFailed)
       expect(Account.count).to eq(account_count)
     ensure
       User.skip_callback(:create, :after, callback) if callback
@@ -109,7 +109,7 @@ RSpec.describe Vouch::Invitable::Concern do
       accepted_at = user.reload.invitation_accepted_at
 
       expect { stale_user.accept_invitation! }
-        .to raise_error(Vouch::Invitable::InvitationExpiredError)
+        .to raise_error(Vouch::OperationFailed)
       expect(user.reload.invitation_accepted_at).to eq(accepted_at)
     end
 
@@ -118,7 +118,7 @@ RSpec.describe Vouch::Invitable::Concern do
       user.update_columns(invitation_token: nil, invitation_sent_at: nil)
 
       expect { stale_user.accept_invitation! }
-        .to raise_error(Vouch::Invitable::InvitationExpiredError)
+        .to raise_error(Vouch::OperationFailed)
       expect(user.reload.invitation_accepted_at).to be_nil
     end
 
@@ -127,7 +127,7 @@ RSpec.describe Vouch::Invitable::Concern do
       user.update_columns(invitation_sent_at: 8.days.ago)
 
       expect { stale_user.accept_invitation! }
-        .to raise_error(Vouch::Invitable::InvitationExpiredError)
+        .to raise_error(Vouch::OperationFailed)
       expect(user.reload.invitation_token).to be_present
     end
 
@@ -137,7 +137,7 @@ RSpec.describe Vouch::Invitable::Concern do
       user.update_columns(invitation_token: reissued_token, invitation_sent_at: Time.current)
 
       expect { stale_user.accept_invitation! }
-        .to raise_error(Vouch::Invitable::InvitationExpiredError)
+        .to raise_error(Vouch::OperationFailed)
       expect(user.reload.invitation_token).to eq(reissued_token)
       expect(user.invitation_accepted_at).to be_nil
     end
@@ -151,7 +151,7 @@ RSpec.describe Vouch::Invitable::Concern do
       organisation_count = Organisation.count
 
       expect { user.accept_invitation! }
-        .to raise_error(Vouch::Persistence::Cancelled)
+        .to raise_error(Vouch::OperationFailed)
       expect(Organisation.count).to eq(organisation_count)
       expect(user.reload.invitation_token).to eq(token)
     ensure
@@ -165,7 +165,7 @@ RSpec.describe Vouch::Invitable::Concern do
       invitation = create(:user, :invited, inviter: inviter, organisation: organisation)
       stale = User.find(invitation.id)
       invitation.accept_invitation!
-      expect { stale.reissue_invitation! }.to raise_error(Vouch::Invitable::InvitationExpiredError)
+      expect { stale.reissue_invitation! }.to raise_error(Vouch::OperationFailed)
       expect(invitation.reload.invitation_token).to be_nil
     end
 
@@ -220,4 +220,17 @@ RSpec.describe Vouch::Invitable::Concern do
       expect(invitee.reload.inviter_id).to be_nil
     end
   end
+  it "returns structured failures normally and carries the same error in bang failures" do
+    invitation = create(:user, :invited, inviter: inviter, organisation: organisation)
+    invitation.accept_invitation!
+    result = invitation.reissue_invitation
+    expect(result).to be_invalid
+    expect(result.error).to be_a(Vouch::Invitable::InvitationExpiredError)
+    expect { invitation.reissue_invitation! }.to raise_error(Vouch::OperationFailed) { |error|
+      expect(error.result).to be_invalid
+      expect(error.result.metadata[:record]).to eq(invitation)
+      expect(error.result.error).to be_a(Vouch::Invitable::InvitationExpiredError)
+    }
+  end
+
 end

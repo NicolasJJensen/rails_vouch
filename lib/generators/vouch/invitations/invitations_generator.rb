@@ -58,6 +58,8 @@ module Vouch
         return if options[:model_only]
         path = File.join(destination_root, "app/views/#{view_scope_path}/invitations/new.html.erb")
         template "invitations_new.html.erb.tt", path unless File.file?(path)
+        acceptance = File.join(destination_root, "app/views/#{view_scope_path}/invitations/accept.html.erb")
+        template "invitations_accept.html.erb.tt", acceptance unless File.file?(acceptance)
       end
 
       def configure_model
