@@ -87,6 +87,19 @@ RSpec.describe Vouch::Generators::EjectGenerator do
       expect(body).not_to include("auth_scope :")
     end
 
+    it "rejects unsupported host syntax before creating or changing any files" do
+      directory = File.join(tmpdir, "app/controllers/users")
+      FileUtils.mkdir_p(directory)
+      target = File.join(directory, "sessions_controller.rb")
+      original = "module Users\n  class SessionsController < Vouch::SessionsController\n  end\nend\n"
+      File.write(target, original)
+
+      expect { run_generator(["users", "sessions"]) }
+        .to raise_error(Thor::Error, /nested module syntax/)
+      expect(File.read(target)).to eq(original)
+      expect(Dir.children(directory)).to eq(["sessions_controller.rb"])
+    end
+
     it "raises Thor::Error for unknown controller names" do
       expect {
         run_generator(["users", "bogus"], {})

@@ -51,9 +51,11 @@ module Vouch
       def copy_controller
         implementation = "app/controllers/#{scope}/#{controller_name}_implementation_controller.rb"
         target = "app/controllers/#{scope}/#{controller_name}_controller.rb"
+        existing = File.file?(File.join(destination_root, target))
+        rewritten = rewritten_host_source(target) if existing
         create_file implementation, rewrite_class_declaration(File.read(source_path)) unless File.file?(File.join(destination_root, implementation))
-        if File.file?(File.join(destination_root, target))
-          rewrite_host_superclass(target)
+        if existing
+          create_file target, rewritten, force: true unless rewritten == File.read(File.join(destination_root, target))
         else
           create_file target, host_controller_body
         end
@@ -96,7 +98,7 @@ module Vouch
         "class #{host_class} < #{implementation_class}#{scope_line}\nend\n"
       end
 
-      def rewrite_host_superclass(target)
+      def rewritten_host_source(target)
         path = File.join(destination_root, target)
         source = File.read(path)
         unless source.match?(/class\s+#{Regexp.escape(host_class)}\s*</)
@@ -106,7 +108,7 @@ module Vouch
         if options[:auth_scope].present? && !rewritten.match?(/^\s*auth_scope\b/)
           rewritten = rewritten.sub(/(class\s+#{Regexp.escape(host_class)}[^\n]*\n)/, "\\1  auth_scope #{options[:auth_scope].to_sym.inspect}\n")
         end
-        create_file target, rewritten, force: true unless rewritten == source
+        rewritten
       end
 
 
