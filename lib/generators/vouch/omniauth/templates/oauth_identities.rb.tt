@@ -12,6 +12,7 @@ class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::
       t.string :uid, null: false
       t.json :auth_data
       t.timestamps
+
       t.index [:provider, :uid], unique: true
 <% unless owner_metadata.primary_keys == ["id"] -%>
       t.index <%= owner_metadata.foreign_keys.inspect %>

@@ -44,7 +44,9 @@ create_table :oauth_identities do |t|
 end
 ```
 
-An existing compatible table or migration is reused; the generator does not overwrite an existing model. For an existing table, it checks the required columns and reports incompatible storage.
+An existing compatible table or migration is reused; the generator does not overwrite an existing model. It checks required columns and types. Missing not-null constraints, a global unique index on `provider`/`uid`, or the owner foreign key produce a separate repair migration; incompatible owner foreign keys or missing columns require correction before generation continues.
+
+> Review a repair migration before running it. Existing duplicate provider identities, null values or orphaned owners must be resolved before PostgreSQL can add those constraints. The generator preserves your original migration and custom indexes.
 
 For storage and model support only:
 

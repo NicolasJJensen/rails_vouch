@@ -12,6 +12,11 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
 
   after { FileUtils.rm_rf(directory) }
 
+  def schema_column(name)
+    type = name == "auth_data" ? :json : (name.end_with?("_id") ? :integer : :string)
+    Struct.new(:name, :type, :null, :sql_type).new(name, type, false, type == :integer ? "bigint" : type.to_s)
+  end
+
   it "defaults the owner scope to users" do
     argument = described_class.arguments.find { |candidate| candidate.name.to_s == "scope" }
 
@@ -45,6 +50,14 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     expect(migration).not_to include(":refresh_token")
     expect(migration).not_to include(":token_expires_at")
     expect { RubyVM::InstructionSequence.compile(migration) }.not_to raise_error
+  end
+
+  it "does not add a repair migration when rerun against its complete pending schema" do
+    generator = described_class.new(["Member"], {}, destination_root: directory)
+    generator.create_feature_migration
+    files = Dir[File.join(directory, "db/migrate/*.rb")]
+    described_class.new(["Member"], {}, destination_root: directory).create_feature_migration
+    expect(Dir[File.join(directory, "db/migrate/*.rb")]).to eq(files)
   end
 
   it "uses the selected single-model owner for its identity and association" do
@@ -89,8 +102,16 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     allow(generator).to receive(:generating_current_host?).and_return(true)
     connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
     allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["user_id"]).and_return(true)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["oauthable_type", "oauthable_id"]).and_return(true)
+    allow(connection).to receive(:indexes).with("oauth_identities").and_return([
+      Struct.new(:unique, :columns, :where).new(true, %w[provider uid], nil)
+    ])
+    allow(connection).to receive(:foreign_keys).with("oauth_identities").and_return([
+      Struct.new(:to_table, :column, :primary_key).new("users", "user_id", "id")
+    ])
     allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
-    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider uid auth_data].map { |name| schema_column(name) })
 
     expect { generator.create_feature_migration }.not_to change { Dir[File.join(directory, "db/migrate/*.rb")] }
   end
@@ -101,8 +122,16 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     allow(generator).to receive(:generating_current_host?).and_return(true)
     connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
     allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["user_id"]).and_return(true)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["oauthable_type", "oauthable_id"]).and_return(true)
+    allow(connection).to receive(:indexes).with("oauth_identities").and_return([
+      Struct.new(:unique, :columns, :where).new(true, %w[provider uid], nil)
+    ])
+    allow(connection).to receive(:foreign_keys).with("oauth_identities").and_return([
+      Struct.new(:to_table, :column, :primary_key).new("users", "user_id", "id")
+    ])
     allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
-    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider].map { |name| Struct.new(:name).new(name) })
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[user_id provider].map { |name| schema_column(name) })
 
     expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing uid, auth_data/)
   end
@@ -115,8 +144,16 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     allow(generator).to receive(:generating_current_host?).and_return(true)
     connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
     allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["user_id"]).and_return(true)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["oauthable_type", "oauthable_id"]).and_return(true)
+    allow(connection).to receive(:indexes).with("oauth_identities").and_return([
+      Struct.new(:unique, :columns, :where).new(true, %w[provider uid], nil)
+    ])
+    allow(connection).to receive(:foreign_keys).with("oauth_identities").and_return([
+      Struct.new(:to_table, :column, :primary_key).new("users", "user_id", "id")
+    ])
     allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
-    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type oauthable_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type oauthable_id provider uid auth_data].map { |name| schema_column(name) })
 
     expect { generator.create_feature_migration }.not_to raise_error
   end
@@ -129,8 +166,16 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     allow(generator).to receive(:generating_current_host?).and_return(true)
     connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
     allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["user_id"]).and_return(true)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["oauthable_type", "oauthable_id"]).and_return(true)
+    allow(connection).to receive(:indexes).with("oauth_identities").and_return([
+      Struct.new(:unique, :columns, :where).new(true, %w[provider uid], nil)
+    ])
+    allow(connection).to receive(:foreign_keys).with("oauth_identities").and_return([
+      Struct.new(:to_table, :column, :primary_key).new("users", "user_id", "id")
+    ])
     allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
-    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[oauthable_type provider uid auth_data].map { |name| schema_column(name) })
 
     expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing oauthable_id/)
   end
@@ -141,8 +186,16 @@ RSpec.describe Vouch::Generators::OmniauthGenerator do
     allow(generator).to receive(:generating_current_host?).and_return(true)
     connection = instance_double(ActiveRecord::ConnectionAdapters::AbstractAdapter)
     allow(ActiveRecord::Base).to receive(:connection).and_return(connection)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["user_id"]).and_return(true)
+    allow(connection).to receive(:index_exists?).with("oauth_identities", ["oauthable_type", "oauthable_id"]).and_return(true)
+    allow(connection).to receive(:indexes).with("oauth_identities").and_return([
+      Struct.new(:unique, :columns, :where).new(true, %w[provider uid], nil)
+    ])
+    allow(connection).to receive(:foreign_keys).with("oauth_identities").and_return([
+      Struct.new(:to_table, :column, :primary_key).new("users", "user_id", "id")
+    ])
     allow(connection).to receive(:data_source_exists?).with("oauth_identities").and_return(true)
-    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[other_type other_id provider uid auth_data].map { |name| Struct.new(:name).new(name) })
+    allow(connection).to receive(:columns).with("oauth_identities").and_return(%w[other_type other_id provider uid auth_data].map { |name| schema_column(name) })
 
     expect { generator.create_feature_migration }.to raise_error(Thor::Error, /missing user_id/)
   end

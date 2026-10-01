@@ -1,0 +1,21 @@
+class RepairOauthIdentityConstraints < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def up
+<% @oauth_required_columns.each do |column| -%>
+    change_column_null :oauth_identities, :<%= column %>, false
+<% end -%>
+
+    unless connection.indexes(:oauth_identities).any? { |index| index.unique && index.columns == %w[provider uid] && index.where.nil? }
+      add_index :oauth_identities, [:provider, :uid], unique: true, name: :index_oauth_identities_on_provider_and_uid_unique
+    end
+    add_index :oauth_identities, <%= oauth_owner_columns.inspect %> unless index_exists?(:oauth_identities, <%= oauth_owner_columns.inspect %>)
+<% unless @oauth_polymorphic -%>
+    unless foreign_key_exists?(:oauth_identities, :<%= owner_table %>, column: <%= owner_metadata.foreign_keys.inspect %>, primary_key: <%= owner_primary_keys.inspect %>)
+      add_foreign_key :oauth_identities, :<%= owner_table %>, column: <%= owner_metadata.foreign_keys.inspect %>, primary_key: <%= owner_primary_keys.inspect %>
+    end
+<% end -%>
+  end
+
+  def down
+    raise ActiveRecord::IrreversibleMigration, "Existing OAuth constraints cannot be reconstructed automatically"
+  end
+end
