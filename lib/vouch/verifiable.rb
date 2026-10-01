@@ -96,6 +96,7 @@ module Vouch
           self.verified_at = Time.current
           @verification_verified_subject = verifiable_subject
           @verification_verified_version = verifiable_subject_version
+          @verification_verified_at = verified_at
           Vouch::Result.ok(self)
         end
       else

@@ -11,7 +11,7 @@ module Vouch
     end
 
     def verification_subject_values
-      canonical_verifiable_subject_attributes.map { |name| public_send(name) }
+      canonical_verifiable_subject_attributes.map { |name| verification_serializable_value(public_send(name)) }
     end
 
     def verification_subject_key
@@ -30,13 +30,22 @@ module Vouch
         (e.g. :address for Email, :e164 for Phone, :label for Totp).
       MSG
 
-      return public_send(attr).to_s unless attr.is_a?(Array)
+      return verification_serializable_value(public_send(attr)).to_s unless attr.is_a?(Array)
 
       raise ArgumentError, "verification subject attributes cannot be empty" if attr.empty?
-      attr.map { |name| [name.to_s, public_send(name)] }.to_json
+      attr.map { |name| [name.to_s, verification_serializable_value(public_send(name))] }.to_json
     end
 
     private
+
+    def verification_serializable_value(value)
+      case value
+      when Time, DateTime then value.iso8601(9)
+      when Hash then value.transform_values { |entry| verification_serializable_value(entry) }
+      when Array then value.map { |entry| verification_serializable_value(entry) }
+      else value
+      end
+    end
 
     def verifiable_subject_version
       has_attribute?(:verification_version) ? self[:verification_version].to_i : 0
@@ -111,7 +120,7 @@ module Vouch
       local_delta = [self[:verification_version].to_i - database_version, 1].max
       latest_version = Vouch::RecordKey.find(self.class.lock, Vouch::RecordKey.serialize(self)).verification_version.to_i
       self[:verification_version] = latest_version + local_delta
-      self[:verified_at] = nil if subject_changed
+      self[:verified_at] = nil if subject_changed && !@applying_trusted_verification
       true
     end
   end

@@ -240,6 +240,32 @@ After checking a code, the updated state is retained before your result block ru
 
 > With cookie sessions, someone can replay an older authentic cookie until it expires. Updating the current session cannot globally revoke every older snapshot. The authoritative saved-record check prevents replay from becoming fresh verification after the contact has been saved and verified; it does not promise global single-use proof before persistence.
 
+To replace the identifying fields of an existing authorized record, apply the temporary proof instead of copying `verified_at`:
+
+```ruby
+# app/controllers/temporary_verifications_controller.rb
+class TemporaryVerificationsController < Vouch::TemporaryVerificationsController
+  # Keep the preparation and rate-limit callbacks from the complete example above.
+  def update
+    target = current_user.phones.find(params.require(:replacement_id))
+    # Authorize replacing target here.
+    super do |result|
+      next unless result.ok?
+
+      applied = @verifiable.apply_verification_to(target)
+      if applied.ok? || applied.already_verified?
+        forget_temporary_verification
+        redirect_to edit_profile_path, notice: "Phone updated"
+      else
+        render json: { errors: target.errors.to_hash }, status: :unprocessable_entity
+      end
+    end
+  end
+end
+```
+
+`apply_verification_to` requires an unexpired, verified temporary record and a saved record of the same model class. It copies only the declared identifying fields, revokes old challenges, and saves the replacement and verification together under a row lock. An already-verified identical subject returns `already_verified?` without refreshing proof. Your controller owns target authorization and duplicate rules.
+
 ## Protect delivery and code submission
 
 Both controllers above use Rails' `rate_limit`. Matching `scope`, `name`, canonical model/subject and cache store share a budget across temporary and saved-record endpoints. New sessions and aliases for the same kind do not reset it.
@@ -364,6 +390,7 @@ Code and signed-link verification share one subject declaration. Success clears 
 | Send code | `start_verification` | `start_verification!` |
 | Check code | `complete_verification(code)` | `complete_verification!(code)` |
 | Revoke verification | `unverify` | `unverify!` |
+| Apply a verified replacement | `apply_verification_to(record)` | `apply_verification_to!(record)` |
 | Restore temporary state | `restore_verification_state(state)` | `restore_verification_state!(state)` |
 | Consume signed link | `Email.consume_token(token)` | `Email.consume_token!(token)` |
 | Revoke signed links | `rotate_confirmation_nonce` | `rotate_confirmation_nonce!` |

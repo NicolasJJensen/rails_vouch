@@ -5,6 +5,7 @@ RSpec.describe Vouch::VerificationState do
   before do
     stub_const("TemporaryContact", Class.new(PhoneVerification) do
       include Vouch::VerificationState
+      attribute :owner_reference, :datetime
       attribute :totp_secret, :string
       attribute :password_digest, :string
       attribute :two_factor_enabled_at, :datetime
@@ -83,6 +84,18 @@ RSpec.describe Vouch::VerificationState do
     restored.restore_verification_state!(record.serialize_verification_state)
 
     expect(restored).not_to be_verified
+  end
+
+  it "preserves subsecond owner attributes and subject boundaries" do
+    TemporaryContact.verifiable_subject_attribute = [:e164, :owner_reference]
+    record.owner_reference = Time.utc(2026, 1, 1, 0, 0, 0, 123456)
+    another = TemporaryContact.new(e164: record.e164, owner_reference: Time.utc(2026, 1, 1, 0, 0, 0, 123457))
+    restored = TemporaryContact.new
+    restored.restore_verification_state!(record.serialize_verification_state)
+
+    expect(restored.owner_reference).to eq(record.owner_reference)
+    expect(restored.verification_subject_key).to eq(record.verification_subject_key)
+    expect(another.verification_subject_key).not_to eq(record.verification_subject_key)
   end
 
   it "keeps failed-attempt state across restoration" do
