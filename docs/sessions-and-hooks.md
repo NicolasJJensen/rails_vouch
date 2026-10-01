@@ -22,7 +22,7 @@ Vouch renews the session identifier during authentication to prevent session fix
 
 Lifecycle hooks are class methods on Vouch controllers. They are available for
 sign-in, sign-out, sign-up, OAuth linking, OAuth account
-creation, invitation acceptance and revocation, and impersonation start and end.
+creation, invitation acceptance, rejection and revocation, and impersonation start and end.
 
 Use `before_sign_in` or `after_sign_in` for database work that must roll back if sign-in fails. Use `after_commit_of_sign_in` for work outside the database, such as notifying another service after sign-in succeeds.
 
@@ -65,6 +65,7 @@ typical use. Each supports the phases in the preceding table.
 | `oauth_link` | Current identity, `auth_hash:` | Record a newly linked provider. |
 | `oauth_account_creation` | `auth_hash:` initially; account and identity are added after creation | Provision an OAuth signup. |
 | `invitation_acceptance` | Invitation identity, credentials account | Create records for the accepted membership. |
+| `invitation_rejection` | Invitation identity, credentials account | Audit the recipient declining an invitation. |
 | `invitation_revocation` | Invitation identity, credentials account | Audit an invitation withdrawal. |
 | `impersonation_start` | Actor authorizing the switch, target | Record who began impersonation. |
 | `impersonation_end` | Current identity, record being restored | Record restoration. |

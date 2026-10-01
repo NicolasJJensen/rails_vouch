@@ -155,7 +155,7 @@ When supplied, `result.error` retains the underlying expected error and `result.
 | `TwoFactorCredentialsController` | List, enroll, verify, and remove second-factor credentials. The generator supplies enrollment actions for your credential model. |
 | `RecoveryCodesController` | Display remaining recovery codes and generate a replacement set for an authenticated account or owned credential. |
 | `OmniAuthsController` | Handle provider sign-in, registration, and account linking. |
-| `InvitationsController` | Invite someone, accept an invitation, or revoke it. |
+| `InvitationsController` | Invite someone, resend, accept, reject, or revoke an invitation. |
 | `ImpersonationsController` | Switch to an authorized target and restore the original signed-in user. |
 
 ## Routes
@@ -225,7 +225,9 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `GET /users/auth/failure` | `users_auth_failure_path` | `Users::OmniAuthsController#failure` |
 | `auth.invitations` | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
 | | `POST /users/invitation` | `user_invitation_path` | `Users::InvitationsController#create` |
-| | `GET /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |
+| | `GET/POST /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |
+| | `POST /users/invitation/reject` | `reject_user_invitation_path` | `Users::InvitationsController#reject` |
+| | `POST /users/invitation/resend` | `resend_user_invitation_path` | `Users::InvitationsController#resend` |
 | | `DELETE /users/invitation` | `user_invitation_path` | `Users::InvitationsController#destroy` |
 | `auth.impersonation` | `POST /users/impersonations/:id` | `user_impersonate_path(id)` | `Users::ImpersonationsController#create` |
 | | `DELETE /users/impersonations` | `user_stop_impersonation_path` | `Users::ImpersonationsController#destroy` |
@@ -233,6 +235,7 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 
 For a linked membership scope, the three session routes use `Users::SessionsController < Vouch::MembershipSessionsController`. Credential routes such as password reset belong to its parent account scope and use `/accounts` and `account_` prefixes. See [model mapping](model-mapping.md).
 
+| | `DELETE /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#destroy` |
 OAuth request URLs are provided by OmniAuth; [the OAuth guide](oauth.md) shows the sign-in button and provider configuration. Callback methods can vary by provider.
 
 Use `bin/rails routes` to inspect your enabled routes. [Custom prefixes](model-mapping.md) change URLs and route helper names independently.

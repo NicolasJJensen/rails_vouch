@@ -1,8 +1,6 @@
-# Warden integration
+# Use an existing Warden manager
 
-Vouch installs Warden middleware by default. Use this guide when your application
-already owns Warden middleware or needs to configure its defaults explicitly.
-See [model mapping](model-mapping.md) for scope definitions.
+Vouch installs Warden middleware during normal setup; you can skip this guide unless your application already manages that middleware. Warden holds authenticated records in named session scopes. Its manager configures which sign-in strategies and failure handler those scopes use. A session scope is a login context, not an Active Record query scope.
 
 ## Contents
 
@@ -12,15 +10,12 @@ See [model mapping](model-mapping.md) for scope definitions.
 
 ## Configure existing middleware
 
-Disable Vouch's middleware initializer and configure the manager in your application's
-middleware stack:
+Disable Vouch's middleware initializer, then edit your existing manager block. Do not add a second Warden middleware entry:
 
 ```ruby
 # config/initializers/vouch.rb
 Vouch.configure do |config|
   config.install_middleware = false
-  config.warden_default_strategies = [:password]
-  config.warden_failure_app = Vouch::FailureApp
 end
 ```
 
@@ -35,14 +30,14 @@ module YourApplication
 end
 ```
 
-`Vouch.configure_warden` accepts a `Warden::Manager` or its config object. It
-sets the failure app when your application has not already supplied one, applies the
-default strategy only when the manager has no defaults, and adds Vouch's
-strategy defaults to each registered scope. Existing application defaults remain in
-place.
+`Vouch.configure_warden` accepts a `Warden::Manager` or its configuration object:
 
-If your application already has a manager block, call `Vouch.configure_warden(manager)`
-inside that block instead of adding a second Warden middleware entry.
+- It preserves an existing failure handler; otherwise it installs Vouch's handler.
+- It supplies global default strategies only when the manager has none and no Vouch mappings have been registered yet.
+- It sets the configured Vouch strategies for credentials scopes and an empty strategy list for membership scopes.
+- It applies scope settings to mappings registered later, so your routes do not need special boot-order wiring.
+
+> A shared failure handler must handle failures for every scope it serves. Vouch does not wrap or adapt an existing handler; `Vouch::FailureApp` handles Vouch scopes.
 
 ## Scope ownership
 
@@ -54,13 +49,12 @@ reserved by Vouch's password strategy.
 
 Vouch registers serializers for these scopes when the route mapping is built.
 The identity and account serializers store a record key plus an authentication
-fingerprint. Restoration reloads the current model class, checks the
+fingerprint used to reject sessions after credentials or session-version changes. Restoration reloads the current model class, checks the
 fingerprint, and rejects locked accounts when session invalidation on lockout
 is enabled. A membership also requires its parent account scope to identify
 the same account.
 
-Do not register a second serializer or authentication policy for a Vouch-owned
-scope. If another application component owns a separate Warden scope, choose
+Leave serialization and Warden authentication mechanisms for Vouch-owned scopes to Vouch. Customize admission through the supported [authentication policy](authentication-policy.md) instead. If another application component owns a separate Warden scope, choose
 a non-overlapping name and keep its serializer independent.
 
 ## Account and membership sessions
