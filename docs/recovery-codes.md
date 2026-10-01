@@ -1,6 +1,6 @@
 # Recovery codes
 
-A recovery code is a single-use alternative to an MFA challenge. The person first signs in with their username/email and password, then chooses **Use a recovery code** on the MFA page. A valid code completes that pending sign-in and is permanently invalidated.
+A recovery code is a single-use alternative to an MFA challenge. When sign-in reaches an MFA challenge, the person chooses **Use a recovery code** on that page. A valid code completes that pending sign-in and is permanently invalidated.
 
 You can attach a set to an account, a particular MFA credential, or both:
 
@@ -10,8 +10,6 @@ You can attach a set to an account, a particular MFA credential, or both:
 | Credential | Replace the challenge for that specific phone, email address or authenticator |
 
 Both use the same hashed-storage and single-use implementation. Replacing a set invalidates old codes for that owner only.
-
-> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
 
 ## Contents
 
@@ -33,7 +31,14 @@ bin/rails generate vouch:recovery_codes User
 bin/rails db:migrate
 ```
 
-The migrations add attempt tracking to `users` and create the recovery-code table:
+The generator adds:
+
+- Recovery-code support and attempt-tracking columns to `User`.
+- A `UserRecoveryCode` model and `user_recovery_codes` table.
+- `User#recovery_codes` and `recovery_codes_from :recovery_codes`.
+- A recovery-code settings controller and view, plus the MFA recovery form.
+
+Its migrations add:
 
 ```ruby
 change_table :users do |t|
@@ -49,7 +54,7 @@ create_table :user_recovery_codes do |t|
 end
 ```
 
-The generator adds `UserRecoveryCode`, a `User#recovery_codes` association and `recovery_codes_from :recovery_codes`. Only hashes are stored; plaintext codes are returned when a set is generated.
+Only hashes are stored; plaintext codes are returned when a set is generated.
 
 For a **multi-tenant application**, use the model that holds sign-in credentials, such as `Account`:
 
@@ -84,6 +89,8 @@ The generator adds `PhoneRecoveryCode`, `Phone#recovery_codes` and `recovery_cod
 Vouch verifies that the selected credential belongs to the pending or signed-in account. A credential-specific code cannot restore a credential that has been disabled, locked or had its verification cleared. Account-owned recovery codes remain independent of a device's state.
 
 ## Choose storage
+
+> Compatible existing storage is reused. If its required indexes, non-null columns or concrete foreign key are missing, the generator adds a repair migration. It does not rewrite existing rows: reconcile null values or orphaned rows before running that migration. A conflicting owner relationship is rejected before new artifacts are written.
 
 The default creates a separate table for each owner model. Account-owned and credential-owned codes can instead use one shared table:
 
@@ -184,13 +191,15 @@ For composite primary keys, pass `Vouch::RecordKey.to_param(phone)` instead of `
 
 The generated MFA pages provide the recovery option. When both kinds are enabled, the recovery form identifies which set to use.
 
-1. The person supplies their password at the normal sign-in page.
+1. The person completes the first sign-in step, such as password or provider authentication.
 2. They choose **Use a recovery code** at the MFA prompt.
 3. Vouch compares the submitted code with unused hashes for the selected owner.
 4. Vouch atomically consumes a matching code and completes sign-in.
 5. A warning explains that a recovery code was used and directs them to manage their factors.
 
-A recovery code cannot start a login without the pending first-factor authentication. It creates a normal authenticated session; it does not enable a persistent “remember me” session.
+A recovery code cannot start a login on its own. It completes the pending authentication and creates a normal authenticated session; it does not enable a persistent “remember me” session.
+
+Someone already signed in can also use a recovery code when [confirming a sensitive action](authentication-policy.md#confirm-identity-before-a-sensitive-action) or [providing another MFA proof](mfa.md#request-another-mfa-proof). That keeps their existing session and records the additional recovery proof.
 
 The generated credential-management page lets the person enroll and verify a replacement factor before deleting the lost device:
 

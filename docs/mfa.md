@@ -2,7 +2,7 @@
 
 Verification checks that someone controls a phone number or email address. It does not sign them in.
 
-MFA challenges a verified credential after the person supplies their password. The credential model implements the challenge; its owner controls whether MFA is required for account sign-in. Your application can use [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions) in its own permissions checks.
+MFA challenges a verified credential after password or provider authentication. The credential model implements the challenge; its owner controls whether MFA is required for account sign-in. Your application can use [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions) in its own permissions checks.
 
 ## Contents
 
@@ -36,6 +36,8 @@ create_table :phones do |t|
 end
 ```
 
+> Persisted credentials require `created_at`: Vouch binds a challenge to the record’s creation time as well as its key, so reusing a deleted record’s key cannot make an old code valid.
+
 Add MFA:
 
 ```sh
@@ -57,17 +59,15 @@ Vouch's migrations add:
 add_column :users, :two_factor_enabled, :boolean, default: false, null: false
 change_table :phones do |t|
   t.string :two_factor_nonce
-  t.datetime :two_factor_enabled_at
+  t.datetime :two_factor_enabled_at, index: true
   t.bigint :two_factor_failed_attempts, default: 0, null: false
   t.datetime :two_factor_locked_at
   t.datetime :two_factor_last_used_at
   t.string :verification_nonce
-  t.datetime :verified_at
+  t.datetime :verified_at, index: true
   t.bigint :verification_version, default: 0, null: false
   t.bigint :verification_attempts, default: 0, null: false
   t.datetime :verification_locked_at
-  t.index :two_factor_enabled_at
-  t.index :verified_at
 end
 ```
 
