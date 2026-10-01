@@ -176,11 +176,13 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     expect(oauth.public_send(owner_association)).to eq(owner)
     expect(owner.oauth_identities).to include(oauth)
 
-    archive = PasswordArchive.create!(account: owner, password_digest: "digest")
-    archive_reflection = PasswordArchive.reflect_on_association(:account)
-    expect(Array(archive_reflection.foreign_key).map(&:to_s)).to eq(owner_metadata.foreign_keys("account"))
+    archive = PasswordArchive.create!(owner_association.to_sym => owner, password_digest: "digest")
+    archive_reflection = PasswordArchive.reflect_on_association(owner_association)
+    expect(Array(archive_reflection.foreign_key).map(&:to_s)).to eq(owner_metadata.foreign_keys(owner_association))
     expect(Array(archive_reflection.options[:primary_key]).map(&:to_s)).to eq(owner_metadata.primary_keys)
-    expect(archive.account).to eq(owner)
+    expect(archive.reload.public_send(owner_association)).to eq(owner)
+    expect(archive.attributes.slice(*owner_metadata.foreign_keys(owner_association)).values)
+      .to eq(owner_metadata.primary_keys.map { |key| owner.public_send(key) })
     expect(owner.password_archives).to include(archive)
 
     backup_code_class = Object.const_get("#{owner_name}BackupCode")

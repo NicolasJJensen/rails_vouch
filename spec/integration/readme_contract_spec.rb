@@ -94,7 +94,10 @@ RSpec.describe "documentation executable contracts" do
     expect(routes).to include('root "dashboard#show"', "auth.sessions", "auth.registrations")
     expect(routes).not_to include("auth.user_selection")
     model = File.read(File.join(directory, "app/models/user.rb"))
-    expect(model).to include("normalizes :email_address", "uniqueness: { case_sensitive: false }")
+    expect(model).to include("normalizes :email_address", "uniqueness: true")
+    migration = File.read(Dir[File.join(directory, "db/migrate/*create_users.rb")].sole)
+    expect(migration).to include('enable_extension "citext"', 't.citext :email_address, null: false, index: { unique: true }')
+    expect(migration).not_to include("lower(email_address)")
   ensure
     FileUtils.rm_rf(directory) if directory
   end
