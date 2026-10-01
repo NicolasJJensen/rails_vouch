@@ -247,8 +247,10 @@ module Vouch
 
       def active_evidence(session)
         Vouch.each_mapping.each_with_object({}) do |mapping, evidence|
-          key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
-          evidence[key] = session[key].deep_dup if session[key]
+          %i[evidence signed_in_via].each do |purpose|
+            key = Vouch::Session.key_for(mapping.evidence_scope_name, purpose)
+            evidence[key] = session[key].deep_dup if session[key]
+          end
         end
       end
 
@@ -293,7 +295,9 @@ module Vouch
         session.delete(AuthenticationSession::CONTEXT_KEY)
         Vouch.each_mapping do |mapping|
           warden.logout(mapping.scope_name)
-          session.delete(Vouch::Session.key_for(mapping.evidence_scope_name, :evidence))
+          %i[evidence signed_in_via].each do |purpose|
+            session.delete(Vouch::Session.key_for(mapping.evidence_scope_name, purpose))
+          end
         end
       end
 

@@ -74,6 +74,40 @@ RSpec.describe Vouch::ImpersonationStack do
 
     expect(session[evidence_key]).to eq({"method" => "totp", "credential" => "operator"})
   end
+  it "restores the original first-factor reference separately from MFA evidence" do
+    key = Vouch::Session.key_for(mapping.evidence_scope_name, :signed_in_via)
+    original = { "type" => "Phone", "id" => "operator-phone", "account_fingerprint" => "operator" }
+    session[key] = original.deep_dup
+    described_class.start!(warden: warden, session: session, source_mapping: mapping,
+      target_mapping: mapping, target: first_target)
+    expect(session[key]).to eq(original)
+    session[key]["id"] = "changed-reference"
+
+    described_class.stop!(warden: warden, session: session, target_mapping: mapping)
+
+    expect(session[key]).to eq(original)
+  end
+
+  it "does not copy first-factor or MFA proof into an impersonated account" do
+    account_mapping = Vouch::Mapping.new(:credentials, model: "Account")
+    Vouch.mappings[:credentials] = account_mapping
+    primary_key = Vouch::Session.key_for(mapping.evidence_scope_name, :signed_in_via)
+    evidence_key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
+    session[primary_key] = { "type" => "Phone", "id" => "operator-phone" }
+    session[evidence_key] = [{ "method" => "totp" }]
+
+    described_class.start!(warden: warden, session: session, source_mapping: mapping,
+      target_mapping: account_mapping, target: first_target.account)
+
+    expect(session[primary_key]).to be_nil
+    expect(session[evidence_key]).to be_nil
+    described_class.stop_all!(warden: warden, session: session, target_mapping: account_mapping)
+    expect(session[primary_key]).to eq("type" => "Phone", "id" => "operator-phone")
+    expect(session[evidence_key]).to eq([{ "method" => "totp" }])
+  ensure
+    Vouch.mappings.delete(:credentials)
+  end
+
   it "preserves the original authenticated context across serialized nested frames" do
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: mapping, target: first_target)
