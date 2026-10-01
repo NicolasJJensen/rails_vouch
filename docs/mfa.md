@@ -193,6 +193,8 @@ Both values are bound to the verification. Changing either invalidates existing 
 
 `phone.enable_two_factor!` enables an already verified factor. `user.enable_two_factor!` enables the account requirement and checks that a usable factor exists.
 
+These operations also have normal methods: `enable_two_factor`, `disable_two_factor`, `challenge`, `verify_challenge` and `record_two_factor_use`. They return a `Vouch::Result` so your controller can handle an unsuccessful operation. Their bang versions return the same successful result and raise `Vouch::OperationFailed` on failure; `error.result` retains the record and underlying error. Configuration and delivery errors propagate.
+
 Calling `phone.enable_two_factor!` again leaves its enabled timestamp unchanged. Disabling the phone cancels its outstanding MFA challenge. Enabling it again starts a new enabled period: earlier challenges and recorded MFA proof no longer count, but an unchanged phone remains verified.
 
 Your application decides who may remove or disable a factor. Removing the last one does not turn off the account's login MFA preference. If that preference remains enabled, the next sign-in still requires MFA; offer recovery codes or a replacement-factor journey according to your application's permissions.
@@ -298,7 +300,7 @@ A successful challenge runs `on_two_factor_verification` once with the account, 
 
 ### Authenticator apps (TOTP)
 
-Vouch's generated phone flow delivers a code. An authenticator app instead calculates codes from a shared secret. You supply that credential model, its enrollment page and QR-code presentation, and implement `challenge!` and `verify_challenge(code, token:)` using a library such as `rotp`.
+Vouch's generated phone flow delivers a code. An authenticator app instead calculates codes from a shared secret. You supply that credential model, its enrollment page and QR-code presentation, and implement `challenge` and `verify_challenge(code, token:)` using a library such as `rotp`.
 
 The [credential adapter contract](credential-adapter-contract.md) includes executable TOTP examples and checks replay prevention, lockout, expiry and cancellation. Its adapter tests belong in your test suite; they are not an enrollment controller.
 

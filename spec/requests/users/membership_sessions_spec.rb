@@ -24,7 +24,7 @@ RSpec.describe "Users::MembershipSessions", type: :request do
     # Stub the protocol methods so we don't need to drive a real TOTP through
     # the request cycle. challenge! returns a fake token that the controller
     # stores in the session; verify_challenge is stubbed per-context below.
-    allow_any_instance_of(TwoFactorCredential).to receive(:challenge!).and_return(
+    allow_any_instance_of(TwoFactorCredential).to receive(:challenge).and_return(
       Vouch::Result.ok("fake-token")
     )
   end

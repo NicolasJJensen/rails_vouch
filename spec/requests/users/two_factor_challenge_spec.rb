@@ -29,7 +29,7 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
     # The dummy TwoFactorCredential delegates to ROTP when otp_secret is
     # set. For request specs we stub the protocol-level methods so we
     # don't need to drive an actual TOTP code through the request cycle.
-    allow_any_instance_of(TwoFactorCredential).to receive(:challenge!).and_return(
+    allow_any_instance_of(TwoFactorCredential).to receive(:challenge).and_return(
       Vouch::Result.ok("fake-token")
     )
   end
@@ -163,9 +163,9 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
 
   describe "attempts exceeded" do
     it "redirects to sign-in when the credential is two-factor locked" do
-      # Re-stub challenge! to return locked (the top-level before stubs ok
+      # Re-stub challenge to return locked (the top-level before stubs ok
       # for the happy-path tests; here we want the locked branch).
-      allow_any_instance_of(TwoFactorCredential).to receive(:challenge!).and_return(
+      allow_any_instance_of(TwoFactorCredential).to receive(:challenge).and_return(
         Vouch::Result.locked
       )
       credential.update!(two_factor_locked_at: Time.current)

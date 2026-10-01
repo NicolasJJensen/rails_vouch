@@ -11,6 +11,50 @@ RSpec.describe Vouch::TwoFactorable do
     TwoFactorCredential.create!(account: account, type: "email")
   end
 
+  describe "normal and bang operations" do
+    it "returns expected eligibility failures and lets the bang caller inspect them" do
+      expect(credential.enable_two_factor).to be_invalid
+      expect(account.enable_two_factor).to be_invalid
+      expect { account.enable_two_factor! }.to raise_error(Vouch::OperationFailed) do |error|
+        expect(error.result.metadata[:record]).to equal(account)
+        expect(account.errors.full_messages).to include("Cannot enable two-factor without a usable credential")
+      end
+      expect(credential.challenge).to be_locked
+      expect { credential.challenge! }.to raise_error(Vouch::OperationFailed) { |error| expect(error.result).to be_locked }
+      expect { credential.verify_challenge!("invalid", token: nil) }.to raise_error(Vouch::OperationFailed)
+    end
+
+    it "returns records through successful normal and bang operations" do
+      credential.update!(verified_at: Time.current)
+      expect(credential.enable_two_factor.value).to equal(credential)
+      expect(credential.record_two_factor_use!.value).to equal(credential)
+      expect(account.enable_two_factor!.value).to equal(account)
+      expect(account.disable_two_factor.value).to equal(account)
+      expect(credential.disable_two_factor!.value).to equal(credential)
+    end
+
+    it "preserves cancellation errors and does not enable a cancelled credential" do
+      credential.update!(verified_at: Time.current)
+      callback = proc { throw :abort if two_factor_enabled_at_changed? }
+      TwoFactorCredential.before_update(callback)
+      result = credential.enable_two_factor
+      expect(result).to be_cancelled
+      expect(result.error).to be_a(ActiveRecord::RecordNotSaved)
+      expect(result.metadata[:record]).to equal(credential)
+      expect(credential.reload).not_to be_two_factor_enabled
+      expect { credential.enable_two_factor! }.to raise_error(Vouch::OperationFailed)
+    ensure
+      TwoFactorCredential.skip_callback(:update, :before, callback) if callback
+    end
+
+    it "does not reclassify a delivery service's persistence error as credential cancellation" do
+      credential.update!(verified_at: Time.current, two_factor_enabled_at: Time.current)
+      failure = ActiveRecord::RecordNotSaved.new("Delivery storage failed", account)
+      allow(credential).to receive(:deliver_two_factor_code).and_raise(failure)
+      expect { credential.challenge }.to raise_error { |error| expect(error).to equal(failure) }
+    end
+  end
+
   describe "schema guard" do
     it "defers missing created_at errors until feature use" do
       klass = Class.new(ActiveRecord::Base) do
@@ -272,9 +316,9 @@ RSpec.describe Vouch::TwoFactorable do
       expect(credential.reload.two_factor_enabled_at).to be_present
     end
 
-    it "raises UnverifiedCredential when the credential is not verified" do
+    it "preserves the unverified error in a failed bang operation" do
       expect { credential.enable_two_factor! }
-        .to raise_error(Vouch::UnverifiedCredential, /not verified/)
+        .to raise_error(Vouch::OperationFailed) { |error| expect(error.result.error).to be_a(Vouch::UnverifiedCredential) }
     end
 
     it "rechecks verification while holding the row lock when another instance changed the subject" do
@@ -286,7 +330,7 @@ RSpec.describe Vouch::TwoFactorable do
       changed.update!(otp_secret: "new-secret")
 
       expect { stale.enable_two_factor! }
-        .to raise_error(Vouch::UnverifiedCredential, /not verified/)
+        .to raise_error(Vouch::OperationFailed) { |error| expect(error.result.error).to be_a(Vouch::UnverifiedCredential) }
       expect(credential.reload.two_factor_enabled_at).to be_nil
     end
   end
@@ -354,7 +398,7 @@ RSpec.describe Vouch::TwoFactorable do
     it "returns Result.locked without issuing when two_factor_locked?" do
       credential.update!(two_factor_locked_at: 1.minute.ago)
       expect(credential).not_to receive(:deliver_two_factor_code)
-      expect(credential.challenge!).to be_locked
+      expect(credential.challenge).to be_locked
     end
 
     it "raises ArgumentError on an unpersisted record" do
@@ -392,7 +436,7 @@ RSpec.describe Vouch::TwoFactorable do
       captured = nil
       allow(credential).to receive(:deliver_two_factor_code) { |c| captured = c }
       credential.update!(verified_at: Time.current, two_factor_enabled_at: nil)
-      result = credential.challenge! # disabled credentials cannot issue a challenge
+      result = credential.challenge # disabled credentials cannot issue a challenge
 
       expect(result).to be_locked
       expect(credential.verify_challenge(captured, token: result.token)).to be_locked
@@ -423,7 +467,7 @@ RSpec.describe Vouch::TwoFactorable do
       captured = nil
       allow(credential).to receive(:deliver_two_factor_code) { |c| captured = c }
       credential.update!(verified_at: nil, two_factor_enabled_at: Time.current)
-      result = credential.challenge! # the dummy model enforces the same policy
+      result = credential.challenge # the dummy model enforces the same policy
 
       expect(result).to be_locked
       expect(credential.verify_challenge(captured, token: result.token)).to be_locked
@@ -509,7 +553,7 @@ RSpec.describe Vouch::TwoFactorable do
     end
 
     it "returns false when the token payload's id does not match the record" do
-      other = TwoFactorCredential.create!(account: account, type: "email")
+      other = TwoFactorCredential.create!(account: account, type: "email", verified_at: Time.current, two_factor_enabled_at: Time.current)
       other_code = nil
       allow(other).to receive(:deliver_two_factor_code) { |c| other_code = c }
       other_result = other.challenge!

@@ -3,7 +3,7 @@
 # Dummy-app 2FA credential. Mixes in the new TwoFactorable concern. The
 # host owns delivery — TOTP renders no code (the QR is generated at
 # enrollment time and read out-of-band), so `deliver_two_factor_code` is
-# a no-op and `challenge!` is overridden to skip OTP issuance entirely.
+# a no-op and `challenge` is overridden to skip OTP issuance entirely.
 #
 class TwoFactorCredential < ApplicationRecord
   include Vouch::Verifiable
@@ -26,7 +26,7 @@ class TwoFactorCredential < ApplicationRecord
 
   # TOTP fork: replace the courier-issued OTP with a TOTP-derived one.
   # For non-TOTP credentials, delegate to the inherited stateless flow.
-  def challenge!
+  def challenge
     raise ArgumentError, "cannot challenge an unpersisted record" unless persisted?
     return Vouch::Result.locked unless two_factor_enabled? && verified?
 

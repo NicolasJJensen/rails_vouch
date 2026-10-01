@@ -174,7 +174,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   def issue_challenge!(credential)
-    result = credential.challenge!
+    result = credential.challenge
     if result.ok?
       session[two_factor_token_session_key(credential)] = { "token" => result.token,
         "enabled_at" => credential.two_factor_enabled_at&.utc&.iso8601(6) }

@@ -29,7 +29,7 @@ RSpec.describe "Additional MFA", type: :request do
         head :forbidden
         super()
       end
-      expect_any_instance_of(TwoFactorCredential).not_to receive(:challenge!)
+      expect_any_instance_of(TwoFactorCredential).not_to receive(:challenge)
       expect_any_instance_of(Account).not_to receive(:consume_recovery_code)
 
       case action

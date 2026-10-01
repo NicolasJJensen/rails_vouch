@@ -19,9 +19,9 @@
 #
 # Public surface:
 #   - #two_factor_enabled?, #two_factor_locked?
-#   - #enable_two_factor!                       (raises UnverifiedCredential if not verified)
+#   - #enable_two_factor!                       (raises OperationFailed if not verified)
 #   - #disable_two_factor!                      (clears the flag; leaves verified_at intact)
-#   - #challenge!                               => Result.ok(token) | Result.locked
+#   - #challenge!                               => Result.ok(token), raises OperationFailed on failure
 #   - #verify_challenge(code, token:)           => Result
 #   - #record_two_factor_use!                   (idempotent timestamp bump for hosts to call after sign-in)
 #
@@ -105,40 +105,54 @@ module Vouch
     # Toggle 2FA on. Requires that the credential has been verified. The
     # verified gate eliminates the "2FA enabled on an
     # unconfirmed channel" bug class.
-    def enable_two_factor!
-      Vouch::Persistence.transaction(self) do
+    def enable_two_factor
+      result = Vouch::Persistence.transaction(self) do
         lock!
 
         unless respond_to?(:verified?) && verified?
-          raise Vouch::UnverifiedCredential, <<~MSG.squish
-            Cannot enable two-factor on #{self.class.name}##{id}: credential
-            is not verified. Run start_verification! / complete_verification!
-            first.
-          MSG
+          error = Vouch::UnverifiedCredential.new("Cannot enable two-factor: credential is not verified")
+          next Vouch::Result.invalid(record: self, error: error)
         end
 
         Vouch::Persistence.update!(self, two_factor_enabled_at: Time.current) unless two_factor_enabled?
       end
 
-      self
+      result.is_a?(Vouch::Result) ? result : Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
     end
 
-    def disable_two_factor!
+    def disable_two_factor
       Vouch::Persistence.transaction(self) do
         lock!
         Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil)
       end
-      self
+      Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
     end
 
     # Issue a fresh 2FA challenge. Delivery exceptions bubble (decisions
     # 38, 40). Hosts rescue at the controller level.
-    def challenge!
+    def challenge
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:two_factorable, self.class))
       raise ArgumentError, "cannot challenge an unpersisted record" unless persisted?
       return Vouch::Result.locked if two_factor_locked? || !two_factor_eligible?
 
-      nonce = issue_nonce!(:two_factor_nonce)
+      begin
+        nonce = issue_nonce!(:two_factor_nonce)
+      rescue ActiveRecord::RecordInvalid => error
+        return Vouch::Result.invalid(record: error.record, error: error)
+      rescue ActiveRecord::RecordNotSaved => error
+        raise unless error.record
+        return Vouch::Result.cancelled(record: error.record, error: error)
+      end
       issued = OtpCourier::OTP.issue(
         purpose:  Vouch::Purposes.two_factor(self),
         payload:  two_factor_payload.merge("nonce" => nonce),
@@ -184,17 +198,33 @@ module Vouch
         )
         Vouch::Result.invalid
       end
-    rescue Vouch::Persistence::Cancelled
-      Vouch::Result.cancelled
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
     end
 
     # Idempotent timestamp bump. Hosts call this after a successful sign-in
     # that consumed a 2FA factor — gives them a stable hook rather than
     # poking the column directly. Does NOT clear failed-attempt counters
     # (those clear on a successful verify_challenge instead).
-    def record_two_factor_use!
+    def record_two_factor_use
       Vouch::Persistence.transaction(self) { Vouch::Persistence.update!(self, two_factor_last_used_at: Time.current) }
-      self
+      Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
+    end
+
+    %i[enable_two_factor disable_two_factor challenge verify_challenge record_two_factor_use].each do |operation|
+      define_method(:"#{operation}!") do |*args, **options|
+        result = public_send(operation, *args, **options)
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
+      end
     end
 
     # Host delivery hook. Override per credential type:
@@ -336,22 +366,42 @@ module Vouch
       public_send(self.class.two_factor_enabled_attribute) == true
     end
 
-    def enable_two_factor!
-      self.class.transaction(requires_new: true) do
+    def enable_two_factor
+      result = Vouch::Persistence.transaction(self) do
         lock!
-        raise Vouch::ConfigurationError, "cannot enable two-factor without a usable credential" unless usable_two_factor_credentials.any?
-
+        unless usable_two_factor_credentials.any?
+          errors.add(:base, "Cannot enable two-factor without a usable credential")
+          next Vouch::Result.invalid(record: self)
+        end
         write_two_factor_enabled!(true)
       end
-      self
+      result.is_a?(Vouch::Result) ? result : Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
     end
 
-    def disable_two_factor!
-      self.class.transaction(requires_new: true) do
+    def disable_two_factor
+      Vouch::Persistence.transaction(self) do
         lock!
         write_two_factor_enabled!(false)
       end
-      self
+      Vouch::Result.ok(self)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error)
+    rescue ActiveRecord::RecordNotSaved => error
+      raise unless error.record
+      Vouch::Result.cancelled(record: error.record, error: error)
+    end
+
+    %i[enable_two_factor disable_two_factor].each do |operation|
+      define_method(:"#{operation}!") do
+        result = public_send(operation)
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
+      end
     end
 
     # Host apps with a non-standard account column or persistence layer can
