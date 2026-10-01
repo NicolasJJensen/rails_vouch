@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 Rails.application.routes.draw do
+  post "/users/auth/:provider", to: "oauth_requests#create"
   Vouch.routes(self) do |auth|
     auth.scope :user, account: "Account", identity: "User", tenant: "Organisation" do |auth|
       auth.sessions

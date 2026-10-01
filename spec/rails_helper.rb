@@ -20,6 +20,12 @@ end
 require 'warden/test/helpers'
 
 module RequestAuthHelpers
+  def oauth_callback(path, auth:, purpose: :sign_in)
+    post path.delete_suffix("/callback"), params: { purpose: purpose }
+    request_params = response.parsed_body
+    get path, env: { "omniauth.auth" => auth, "omniauth.params" => request_params }
+  end
+
   include Warden::Test::Helpers
 
   def sign_in(user)

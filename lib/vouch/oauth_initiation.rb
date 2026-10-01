@@ -5,6 +5,32 @@ require "uri"
 module Vouch
   class OAuthInitiation
     RETURN_TO_SUFFIX = "oauth_initiation_return_to"
+    REQUEST_PARAM = "vouch_request_id"
+    PURPOSES = %w[sign_in register link].freeze
+
+    def self.install(stack)
+      return unless defined?(OmniAuth::Builder) && stack.any? { |middleware| middleware.klass == OmniAuth::Builder }
+
+      if stack.any? { |middleware| middleware.klass == Warden::Manager }
+        stack.move_before OmniAuth::Builder, Warden::Manager
+      end
+      stack.delete(self)
+      stack.insert_before OmniAuth::Builder, self
+    end
+
+    def self.contexts_key(scope)
+      Vouch::Session.dynamic_key_for(scope, "oauth_requests")
+    end
+
+    def self.prune_contexts!(session, scope)
+      key = contexts_key(scope)
+      contexts = session[key]
+      return session.delete(key) unless contexts.is_a?(Hash)
+
+      cutoff = Time.current.to_f - Vouch.configuration.pending_authentication_ttl.to_f
+      contexts.delete_if { |_, context| !context.is_a?(Hash) || context["issued_at"].to_f < cutoff }
+      contexts.shift while contexts.size > 5
+    end
 
     def self.return_to_key(scope)
       Vouch::Session.dynamic_key_for(scope, RETURN_TO_SUFFIX)
@@ -23,12 +49,41 @@ module Vouch
         if (return_to = local_referer_path(request))
           request.session[key] = return_to
         end
+        capture_context(request, mapping)
       end
 
       @app.call(env)
     end
 
     private
+
+    def capture_context(request, mapping)
+      purpose = request.params.fetch("purpose", "sign_in").to_s
+      purpose = "invalid" unless PURPOSES.include?(purpose)
+      identity = request.env["warden"]&.user(mapping.membership_scope? ? mapping.parent_scope_name : mapping.scope_name)
+      account = mapping.membership_scope? ? identity : (mapping.account_for(identity) if identity)
+      self.class.prune_contexts!(request.session, mapping.scope_name)
+      contexts = request.session[self.class.contexts_key(mapping.scope_name)] ||= {}
+      contexts.shift while contexts.size >= 5
+      nonce = SecureRandom.hex(24)
+      contexts[nonce] = {
+        "purpose" => purpose,
+        "provider" => request.path.split("/").last,
+        "scope" => mapping.scope_name.to_s,
+        "account_scope" => mapping.evidence_scope_name.to_s,
+        "account_id" => account && Vouch::RecordKey.serialize(account),
+        "fingerprint" => account && Vouch::PendingAuthentication.fingerprint(account),
+        "context_id" => Vouch::AuthenticationSession.context_id_for(request.session),
+        "issued_at" => Time.current.to_f
+      }
+
+      # OmniAuth preserves request GET parameters in its validated callback environment.
+      query = request.query_parameters.merge(REQUEST_PARAM => nonce)
+      request.env["QUERY_STRING"] = Rack::Utils.build_nested_query(query)
+      request.env.delete("action_dispatch.request.query_parameters")
+      request.env.delete("rack.request.query_hash")
+      request.env.delete("rack.request.query_string")
+    end
 
     def mapping_for(request)
       Vouch.each_mapping.find do |mapping|

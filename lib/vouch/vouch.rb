@@ -95,11 +95,14 @@ module Vouch
       roots = [scope.to_sym] + impersonation_scopes
       scopes = (roots + roots.flat_map { |name| dependent_mappings(name).map(&:scope_name) }).uniq
       scopes.each do |name|
+        OAuthInitiation.prune_contexts!(session, name)
         mapping = mapping_for(name)
         owned = [name, :"#{name}_impersonation"]
         owned << mapping.account_scope_name unless mapping.membership_scope?
         warden.logout(*owned)
-        session.keys.select { |key| Session.state_key?(key, name) }.each { |key| session.delete(key) }
+        session.keys.select { |key| Session.state_key?(key, name) }.each do |key|
+          session.delete(key) unless key.to_s == OAuthInitiation.contexts_key(name)
+        end
       end
     end
 

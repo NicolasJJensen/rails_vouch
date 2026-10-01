@@ -431,12 +431,25 @@ RSpec.describe "generated host smoke test", :generated_host do
           auth_scope :#{account_scope}
         end
       RUBY
+      write_file(directory, "app/controllers/oauth_requests_controller.rb", <<~RUBY)
+        class OauthRequestsController < ApplicationController
+          def create
+            preserved = nil
+            Vouch::OAuthInitiation.new(->(env) {
+              preserved = Rack::Request.new(env).GET
+              [204, {}, []]
+            }).call(request.env)
+            render json: preserved
+          end
+        end
+      RUBY
       routes_path = File.join(directory, "config/routes.rb")
       routes = File.read(routes_path)
       oauth_routes = routes.sub(/^([ \t]*)auth\.registrations\n/) do
         "#{Regexp.last_match(0)}#{Regexp.last_match(0)[/\A[ \t]*/]}auth.oauth_callbacks\n"
       end
       raise "generated OAuth route was not inserted" if oauth_routes == routes
+      oauth_routes.sub!("Rails.application.routes.draw do", "Rails.application.routes.draw do\n  post '/#{account_path_name}/auth/:provider', to: 'oauth_requests#create'")
       write_file(directory, "config/routes.rb", oauth_routes)
 
       connection_result = run_host(directory, "runner", <<~RUBY)
@@ -473,7 +486,10 @@ RSpec.describe "generated host smoke test", :generated_host do
         OauthIdentity.create!(#{Vouch::ModelMetadata.new(variant == :single ? model_name : owner_name).association_key}: account,
           provider: "generated_provider", uid: "generated-oauth")
         oauth_session = ActionDispatch::Integration::Session.new(Rails.application)
+        oauth_session.post("/#{account_path_name}/auth/generated_provider", params: {purpose: "sign_in"})
+        oauth_request_params = oauth_session.response.parsed_body
         oauth_session.get("/#{account_path_name}/auth/generated_provider/callback", env: {
+          "omniauth.params" => oauth_request_params,
           "omniauth.auth" => OmniAuth::AuthHash.new(provider: "generated_provider", uid: "generated-oauth", info: {email: account.email_address})
         })
         abort "OAuth callback status: \#{oauth_session.response.status}; exception=\#{oauth_session.response.request.env['action_dispatch.exception']&.full_message}" unless oauth_session.response.redirect?

@@ -3,17 +3,35 @@ class Vouch::OmniAuthsController < ::ApplicationController
   prepend_before_action :require_unimpersonated_authentication!, only: :callback
   allow_unauthenticated_access
 
-  def callback
+  def callback(&response_handler)
     @auth_hash = request.env['omniauth.auth']
     return failure unless @auth_hash && @auth_hash['provider'].present? && @auth_hash['uid'].present?
 
+    @oauth_initiation = authentication_session.consume_oauth_initiation(@auth_hash)
+    return oauth_request_failed(:invalid_request, response_handler) unless @oauth_initiation
+
     oauth_identity = auth_mapping.oauth_identity_class&.find_from_omniauth(@auth_hash)
-    if current_identity
+    case @oauth_initiation["purpose"]
+    when "link"
+      unless authentication_session.oauth_initiation_matches_account?(@oauth_initiation, current_account)
+        return oauth_request_failed(:context_changed, response_handler)
+      end
       link_identity(oauth_identity)
-    elsif oauth_identity
+    when "sign_in"
+      return oauth_request_failed(:context_changed, response_handler) if current_identity
+      return oauth_request_failed(:not_registered, response_handler) unless oauth_identity
+
       sign_in_existing(oauth_identity)
-    else
+    when "register"
+      if current_identity || @oauth_initiation["account_id"] ||
+          !ActiveSupport::SecurityUtils.secure_compare(@oauth_initiation["context_id"].to_s, authentication_session.context_id)
+        return oauth_request_failed(:context_changed, response_handler)
+      end
+      return oauth_request_failed(:registration_conflict, response_handler) if oauth_identity
+
       create_account
+    else
+      oauth_request_failed(:invalid_request, response_handler)
     end
   end
 
@@ -23,6 +41,15 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   private
+
+  def oauth_request_failed(reason, response_handler)
+    result = Vouch::Result.invalid(reason: reason)
+    respond_with_authentication_result(result, response_handler) do
+      authentication_session.clear_oauth_initiation_return_to
+      destination = reason == :registration_conflict ? new_registration_path : new_session_path
+      redirect_to destination, alert: I18n.t("vouch.oauth.#{reason}")
+    end
+  end
 
   def sign_in_existing(oauth_identity)
     account = auth_mapping.account_for_oauth_identity(oauth_identity)

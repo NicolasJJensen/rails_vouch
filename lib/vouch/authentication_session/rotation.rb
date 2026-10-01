@@ -10,12 +10,14 @@ module Vouch
         preserved = scoped_keys + [key(:impersonation)]
 
         affected.each do |current|
+          OAuthInitiation.prune_contexts!(rails_session, current.scope_name)
           owned = [current.scope_name]
           owned << current.account_scope_name unless current.membership_scope?
           owned << :"#{current.scope_name}_impersonation" unless mapping.membership_scope?
           warden.logout(*owned)
           rails_session.keys.each do |name|
             next unless Vouch::Session.state_key?(name, current.scope_name)
+            next if name.to_s == OAuthInitiation.contexts_key(current.scope_name)
             next if current.scope_name == scope && preserved.include?(name.to_s)
 
             rails_session.delete(name)

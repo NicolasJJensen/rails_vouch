@@ -33,11 +33,7 @@ module Vouch
       # Rails merges it into the concrete stack, after host OmniAuth
       # initializers have added their builders.
       app.config.middleware.send(:operations) << lambda do |stack|
-        next unless defined?(OmniAuth::Builder)
-        next unless stack.any? { |middleware| middleware.klass == OmniAuth::Builder }
-        next if stack.any? { |middleware| middleware.klass == Vouch::OAuthInitiation }
-
-        stack.insert_before OmniAuth::Builder, Vouch::OAuthInitiation
+        Vouch::OAuthInitiation.install(stack)
       end
     end
 

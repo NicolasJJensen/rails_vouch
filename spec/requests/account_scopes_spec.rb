@@ -87,6 +87,7 @@ RSpec.describe "Account and membership sessions", type: :request do
       end
     end)
     Rails.application.routes.draw do
+      post "/linked_accounts/auth/:provider", to: "oauth_requests#create"
       Vouch.routes(self) do |auth|
         auth.scope :account, model: "Account", path: "linked_accounts" do
           auth.sessions controller: "linked_accounts/sessions"
@@ -389,10 +390,10 @@ RSpec.describe "Account and membership sessions", type: :request do
 
   it "uses the sign-up redirect for a new OAuth account and sign-in for an existing account" do
     auth_hash = OmniAuth::AuthHash.new(provider: "example", uid: "new", info: {email: "new-oauth@example.com"})
-    get "/linked_accounts/auth/example/callback", env: {"omniauth.auth" => auth_hash}
+    oauth_callback "/linked_accounts/auth/example/callback", auth: auth_hash, purpose: :register
     expect(response).to redirect_to("/oauth-welcome")
     delete "/linked_accounts/sign_out"
-    get "/linked_accounts/auth/example/callback", env: {"omniauth.auth" => auth_hash}
+    oauth_callback "/linked_accounts/auth/example/callback", auth: auth_hash, purpose: :sign_in
     expect(response).to redirect_to("/oauth-home")
   end
 

@@ -56,7 +56,7 @@ RSpec.describe "Users lifecycle hook phases", type: :request do
         observed << (current_identity == identity)
       end
 
-      get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+      oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
     end
 
     expect(observed).to eq([true])

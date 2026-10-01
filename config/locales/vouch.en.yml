@@ -41,6 +41,10 @@ en:
       ended: "Impersonation ended."
       all_ended: "All impersonations ended."
     oauth:
+      invalid_request: "Restart the provider sign-in request."
+      context_changed: "Your sign-in session changed. Restart connecting the provider."
+      not_registered: "This provider is not connected to an account. Register to use it."
+      registration_conflict: "This provider is already connected to an account. Sign in to continue."
       signed_in: "Signed in."
       linked: "Account linked."
       already_linked: "Already linked."

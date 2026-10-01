@@ -4,6 +4,7 @@
 
 - [Add GitHub sign-in](#add-github-sign-in)
 - [Choose registration behavior](#choose-registration-behavior)
+- [Connect a provider to an existing account](#connect-a-provider-to-an-existing-account)
 - [Prefill and extend the registration form](#prefill-and-extend-the-registration-form)
 - [Retain additional provider data](#retain-additional-provider-data)
 - [Handle automatic registration failures](#handle-automatic-registration-failures)
@@ -68,14 +69,24 @@ bin/rails db:migrate
 Start sign-in with a POST button. OmniAuth handles this request and redirects to GitHub:
 
 ```erb
-<%= button_to "Sign in with GitHub", "/users/auth/github", data: { turbo: false } %>
+<%# app/views/users/sessions/new.html.erb %>
+<%= button_to "Sign in with GitHub", "/users/auth/github",
+  params: { purpose: :sign_in }, data: { turbo: false } %>
 ```
 
-When GitHub returns, OmniAuth verifies the response and passes it to Vouch. A previously linked provider login signs in its account. If someone is already signed in, the callback links the provider login to that account. A provider login already linked to another account cannot be reassigned this way.
+When GitHub returns, OmniAuth verifies the response and passes it to Vouch. Sign-in succeeds only when that provider identity is already connected to an account. An unknown identity produces an error asking the person to register. Omitting `purpose` also means sign-in.
 
 ## Choose registration behavior
 
-New provider logins use your registration form by default:
+Start registration explicitly from your registration page:
+
+```erb
+<%# app/views/users/registrations/new.html.erb %>
+<%= button_to "Register with GitHub", "/users/auth/github",
+  params: { purpose: :register }, data: { turbo: false } %>
+```
+
+An unlinked provider identity opens your registration form by default:
 
 ```ruby
 # Inside the User scope in config/routes.rb
@@ -84,8 +95,12 @@ auth.oauth_callbacks registration: :form
 
 ```mermaid
 flowchart TD
-  A[Verified provider callback] --> B{Provider login already linked?}
-  B -->|Yes| C[Sign in the existing account]
+  A[Verified provider callback] --> P{Purpose selected when starting OAuth}
+  P -->|Sign in| S{Provider identity linked?}
+  S -->|Yes| C[Sign in the existing account]
+  S -->|No| X[Error: explicitly register to create an account]
+  P -->|Register| B{Provider identity linked?}
+  B -->|Yes| Y[Conflict: sign in to the existing account]
   B -->|No| D{Registration mode}
   D -->|form: default| E[Retain provider data in the session]
   E --> F[Build an unsaved User and prefill registration form]
@@ -102,6 +117,20 @@ auth.oauth_callbacks registration: :automatic
 ```
 
 The controller method `oauth_registration_required?` remains an override point for a decision that varies by request. Returning `true` chooses the form; returning `false` attempts automatic creation. Its default follows the route setting.
+
+## Connect a provider to an existing account
+
+Use a separate linking button on your account settings page:
+
+```erb
+<%# app/views/accounts/settings/show.html.erb %>
+<%= button_to "Connect GitHub", "/users/auth/github",
+  params: { purpose: :link }, data: { turbo: false } %>
+```
+
+Vouch binds this request to the account, scope and signed-in session that started it. Switching accounts, signing out and back in, or entering impersonation before the callback returns prevents linking. A provider identity already attached to the same account is harmless; one owned by another account cannot be reassigned.
+
+> Vouch retains the purpose in session state associated with the provider request. Callback URL parameters cannot turn registration into linking or change the destination account. OmniAuth's own provider response and state validation remain required.
 
 ## Prefill and extend the registration form
 
@@ -205,13 +234,13 @@ class Users::OmniAuthsController < Vouch::OmniAuthsController
 end
 ```
 
-Reasons are `:validation`, `:conflict`, `:cancelled`, `:aborted`, or `:completion`. Expected failures are not automatically sent to an error reporter. Unexpected exceptions propagate through Rails error handling. Provider authentication failure itself uses the `failure` action and returns to sign-in.
+Reasons are `:validation`, `:conflict`, `:cancelled`, or `:aborted`. If registration commits but subsequent sign-in fails, Vouch keeps the account and redirects to sign-in with a creation notice and failure alert. This is separate from a failed registration form submission, which redisplays validation errors. Expected failures are not automatically sent to an error reporter. Unexpected exceptions propagate through Rails error handling. Provider authentication failure itself uses the `failure` action and returns to sign-in.
 
 ## Routes and custom controllers
 
 | Request | Handler | Purpose |
 | --- | --- | --- |
-| `POST /users/auth/github` | OmniAuth middleware | Start the provider exchange. |
+| `POST /users/auth/:provider` | OmniAuth middleware | Start sign-in, registration or linking with `purpose`. |
 | `GET /users/auth/:provider/callback` | `Users::OmniAuthsController#callback` | Link, sign in, or start registration after provider verification. |
 | `GET /users/auth/failure` | `Users::OmniAuthsController#failure` | Return to sign-in after provider failure. |
 

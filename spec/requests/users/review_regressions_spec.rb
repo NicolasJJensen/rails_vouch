@@ -154,7 +154,7 @@ RSpec.describe 'Authentication boundaries', type: :request do
     user.account.enable_two_factor!
     user.account.omni_auth_identities.create!(provider: 'review', uid: 'subject', auth_data: '{}')
     auth = OmniAuth::AuthHash.new(provider: 'review', uid: 'subject', info: {email: user.email_address})
-    get '/users/auth/review/callback', env: {'omniauth.auth' => auth}
+    oauth_callback '/users/auth/review/callback', auth: auth, purpose: :sign_in
     expect(response).to redirect_to('/users/two_factor_challenges')
   end
 
@@ -163,7 +163,7 @@ RSpec.describe 'Authentication boundaries', type: :request do
     user.account.update!(locked_at: Time.current, failed_attempts: 5)
     user.account.omni_auth_identities.create!(provider: 'review', uid: 'subject', auth_data: '{}')
     auth = OmniAuth::AuthHash.new(provider: 'review', uid: 'subject', info: {email: user.email_address})
-    get '/users/auth/review/callback', env: {'omniauth.auth' => auth}
+    oauth_callback '/users/auth/review/callback', auth: auth, purpose: :sign_in
     expect(signed_in_identity).to be_nil
   end
 end

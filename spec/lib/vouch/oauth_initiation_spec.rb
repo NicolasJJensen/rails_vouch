@@ -43,4 +43,35 @@ RSpec.describe Vouch::OAuthInitiation do
     expect(middleware).not_to include(OmniAuth::Builder)
     expect(middleware).not_to include(described_class)
   end
+
+  it "reads Warden before OmniAuth handles an initiation request" do
+    stack = ActionDispatch::MiddlewareStack.new
+    stack.use OmniAuth::Builder
+    stack.use Warden::Manager
+
+    2.times { described_class.install(stack) }
+
+    expect(stack.map(&:klass)).to eq([Warden::Manager, described_class, OmniAuth::Builder])
+  end
+
+  it "retains an explicit purpose and replaces a supplied request identifier" do
+    session = call("/users/auth/google_oauth2?purpose=register&vouch_request_id=forged")
+    contexts = session.fetch(described_class.contexts_key(:user))
+
+    expect(contexts.keys).not_to include("forged")
+    expect(contexts.values.one?).to be(true)
+    expect(contexts.values.first).to include("purpose" => "register", "provider" => "google_oauth2")
+  end
+
+  it "bounds request metadata and discards expired entries" do
+    session = {}
+    8.times { call("/users/auth/google_oauth2?purpose=register", session: session) }
+    key = described_class.contexts_key(:user)
+    expect(session.fetch(key).size).to eq(5)
+
+    travel Vouch.configuration.pending_authentication_ttl + 1 do
+      described_class.prune_contexts!(session, :user)
+      expect(session.fetch(key)).to be_empty
+    end
+  end
 end

@@ -33,7 +33,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         OmniAuthIdentity.create!(account: account, provider: "google_oauth2", uid: "12345")
 
         # Pass omniauth.auth directly in the Rack env
-        get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :sign_in
         expect(response).to redirect_to("/")
       end
     end
@@ -44,7 +44,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         sign_in(user)
 
         expect {
-          get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :link
         }.to change(OmniAuthIdentity, :count).by(1)
 
         expect(response).to redirect_to("/")
@@ -62,7 +62,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
         OmniAuthIdentity.create!(account: user.account, provider: "google_oauth2", uid: "12345")
 
-        get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :link
         expect(response).to redirect_to("/")
         expect(flash[:alert]).to include("Already linked")
       end
@@ -100,7 +100,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
       it "creates an account, user, and organisation" do
         expect {
-          get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
         }.to change(Account, :count).by(1)
           .and change(User, :count).by(1)
           .and change(Organisation, :count).by(1)
@@ -113,7 +113,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         with_form_registration do
           counts = [Account.count, User.count, OmniAuthIdentity.count]
 
-          get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
 
           expect(response).to redirect_to("/users/sign_up")
           expect([Account.count, User.count, OmniAuthIdentity.count]).to eq(counts)
@@ -133,7 +133,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         allow_any_instance_of(Users::OmniAuthsController).to receive(:complete_sign_in).and_return(:no_identity)
 
         expect do
-          get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
         end.to change(Account, :count).by(1).and change(OmniAuthIdentity, :count).by(1)
 
         expect(response).to redirect_to("/users/sign_in")
@@ -144,7 +144,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
       it "renders the generated OAuth registration form with mapped fields and no password inputs" do
         with_form_registration do
           with_generated_registration_view do
-            get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+            oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
             get "/users/sign_up"
 
             expect(response.body).to include('action="/users/sign_up"')
@@ -169,7 +169,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         allow_any_instance_of(Users::OmniAuthsController).to receive(:oauth_registration_required?).and_return(true)
         counts = [Account.count, User.count, OmniAuthIdentity.count]
 
-        get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
 
         expect(response).to redirect_to("/users/sign_up")
         expect([Account.count, User.count, OmniAuthIdentity.count]).to eq(counts)
@@ -182,7 +182,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
       it "expires a deferred OAuth signup context without accepting provider identity from params" do
         allow_any_instance_of(Users::OmniAuthsController).to receive(:oauth_registration_required?).and_return(true)
-        get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
 
         travel Vouch.configuration.pending_authentication_ttl + 1.second do
           post "/users/sign_up", params: {account: {email_address: "restart@example.com", password: "password123", password_confirmation: "password123"}, provider: "google_oauth2", uid: "12345"}
@@ -194,7 +194,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
       it "retains a valid deferred OAuth context across registration validation errors" do
         allow_any_instance_of(Users::OmniAuthsController).to receive(:oauth_registration_required?).and_return(true)
-        get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
 
         post "/users/sign_up", params: {account: {email_address: "invalid-address", password: "password123", password_confirmation: "password123"}}
         expect(response).to have_http_status(:unprocessable_content)
@@ -207,7 +207,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
       it "rejects explicitly submitted blank passwords during OAuth registration" do
         with_form_registration do
-          get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
 
           post "/users/sign_up", params: {account: {
             email_address: "oauth@example.com", password: "", password_confirmation: ""
@@ -232,7 +232,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
           .and_return("/projects?tab=access")
 
         expect {
-          get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => invalid_hash}
+          oauth_callback "/users/auth/google_oauth2/callback", auth: invalid_hash, purpose: :register
         }.not_to change(Account, :count)
 
         expect(response).to redirect_to("/projects?tab=access")
@@ -243,7 +243,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         allow(Account).to receive(:new_from_omniauth).and_raise(RuntimeError, "unexpected OAuth failure")
 
         expect {
-          get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
         }.to raise_error(RuntimeError, "unexpected OAuth failure")
       end
 
@@ -258,7 +258,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
           end
 
         expect {
-          get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
+          oauth_callback "/users/auth/google_oauth2/callback", auth: oauth_hash, purpose: :register
         }.not_to change(Account, :count)
 
         expect(response).to redirect_to("/users/sign_in")
