@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "persistence"
+require_relative "recovery_code_association"
 
 # Account-owned recovery codes share generation and consumption with
 # credential-owned sets. Row locking serializes replacement and consumption.
@@ -8,14 +9,11 @@ module Vouch
   module Recoverable
     extend ActiveSupport::Concern
     include Vouch::LockoutCounter
+    include Vouch::RecoveryCodeAssociation
 
     included do
-      dependent = respond_to?(:composite_primary_key?) && composite_primary_key? ? nil : :destroy
-      has_many :vouch_recovery_codes,
-               class_name:  "Vouch::RecoveryCode",
-               as:          :recoverable,
-               dependent:   dependent
-      before_destroy :destroy_composite_recovery_codes if dependent.nil?
+      has_many :vouch_recovery_codes, class_name: "Vouch::RecoveryCode", as: :recoverable
+      before_destroy :destroy_default_recovery_codes, unless: -> { self.class.recovery_code_association_name }
     end
 
     def recovery_locked?
@@ -32,7 +30,7 @@ module Vouch
     end
 
     def recovery_codes_remaining
-      recovery_codes_relation.unused.count
+      recovery_codes_relation.where(used_at: nil).count
     end
 
     def recovery_codes_low?
@@ -45,7 +43,7 @@ module Vouch
     def generate_recovery_codes(count: recovery_code_setting(:code_count), length: recovery_code_setting(:code_length))
       plaintexts = Vouch::RecoveryCodes.generate(count: count, length: length)
       attributes = {}
-      if composite_recovery_key?
+      if composite_recovery_key? && !self.class.recovery_code_association_name
         attributes = {recoverable_type: recoverable_polymorphic_name, recoverable_key: Vouch::RecordKey.dump(self)}
       end
       result = Vouch::RecoveryCodes.replace!(self, relation: recovery_codes_relation,
@@ -99,6 +97,8 @@ module Vouch
     end
 
     def recovery_codes_relation
+      return configured_recovery_codes(default: :vouch_recovery_codes) if self.class.recovery_code_association_name
+
       return vouch_recovery_codes unless composite_recovery_key?
 
       Vouch::RecoveryCode.where(
@@ -107,8 +107,8 @@ module Vouch
       )
     end
 
-    def destroy_composite_recovery_codes
-      recovery_codes_relation.destroy_all
+    def destroy_default_recovery_codes
+      recovery_codes_relation.each { |code| throw(:abort) unless code.destroy }
     end
 
     def recoverable_config

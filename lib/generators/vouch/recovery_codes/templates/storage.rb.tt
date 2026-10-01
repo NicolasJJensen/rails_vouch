@@ -1,0 +1,23 @@
+class <%= migration_class_name %> < ActiveRecord::Migration[<%= Rails::VERSION::MAJOR %>.<%= Rails::VERSION::MINOR %>]
+  def change
+    create_table :<%= join_table_name %> do |t|
+<% if options[:polymorphic] -%>
+      t.references :recoverable, polymorphic: true, null: false, type: :<%= primary_key_type || parent_metadata.primary_key_types.values.first %>
+<% elsif parent_metadata.primary_keys == ["id"] -%>
+      t.references :<%= parent_singular %>, null: false, type: :<%= primary_key_type || parent_metadata.primary_key_types["id"] %>, foreign_key: { to_table: :<%= parent_metadata.table_name %> }
+<% else -%>
+<% parent_metadata.primary_keys.zip(parent_metadata.foreign_keys(parent_singular)).each do |key, foreign| -%>
+      t.<%= primary_key_type || parent_metadata.primary_key_types[key] %> :<%= foreign %>, null: false
+<% end -%>
+<% end -%>
+      t.string :code_digest, null: false
+      t.datetime :used_at, index: true
+      t.timestamps
+<% unless options[:polymorphic] || parent_metadata.primary_keys == ["id"] -%>
+
+      t.index <%= parent_metadata.foreign_keys(parent_singular).inspect %>
+      t.foreign_key :<%= parent_metadata.table_name %>, column: <%= parent_metadata.foreign_keys(parent_singular).inspect %>, primary_key: <%= parent_metadata.primary_keys.inspect %>
+<% end -%>
+    end
+  end
+end

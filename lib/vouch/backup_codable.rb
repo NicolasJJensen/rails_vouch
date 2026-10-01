@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "persistence"
+require_relative "recovery_code_association"
 
 # Recovery codes owned by an individual authenticator. Code storage comes
 # from the host's backup_codes association; successful recovery retains the
@@ -8,6 +9,7 @@ require_relative "persistence"
 module Vouch
   module BackupCodable
     extend ActiveSupport::Concern
+    include Vouch::RecoveryCodeAssociation
 
     # Installed ahead of both the host model and TwoFactorable so backup codes
     # are an alternate proof, not a fallback after a failed proof has already
@@ -55,7 +57,7 @@ module Vouch
       raise ArgumentError, "cannot generate recovery codes for an unpersisted record" unless persisted?
 
       plain = Vouch::RecoveryCodes.generate(count: count, length: length)
-      Vouch::RecoveryCodes.replace!(self, relation: backup_codes, plaintexts: plain)
+      Vouch::RecoveryCodes.replace!(self, relation: recovery_codes_relation, plaintexts: plain)
     rescue Vouch::Persistence::Cancelled => error
       Vouch::Result.cancelled(record: self, error: error)
     end
@@ -79,7 +81,7 @@ module Vouch
     alias_method :consume_backup_code!, :consume_recovery_code!
 
     def backup_codes_remaining
-      backup_codes.where(used_at: nil).count
+      recovery_codes_relation.where(used_at: nil).count
     end
     alias_method :recovery_codes_remaining, :backup_codes_remaining
 
@@ -90,11 +92,15 @@ module Vouch
 
     private
 
+    def recovery_codes_relation
+      configured_recovery_codes(default: :backup_codes)
+    end
+
     def consume_recovery_code_result(submitted, count_failure:)
       raise ArgumentError, "cannot consume recovery codes for an unpersisted record" unless persisted?
       return Vouch::Result.locked(record: self) unless backup_code_factor_eligible?
 
-      Vouch::RecoveryCodes.consume!(self, relation: backup_codes, submitted: submitted,
+      Vouch::RecoveryCodes.consume!(self, relation: recovery_codes_relation, submitted: submitted,
         eligible: -> { backup_code_factor_eligible? }, on_success: ->(_) {
           if backup_code_two_factor_credential?
             Vouch::Persistence.update!(self, two_factor_failed_attempts: 0,

@@ -5,6 +5,7 @@ require "vouch/model_metadata"
 require_relative "../feature_base"
 require_relative "../recoverable/recoverable_generator"
 require_relative "../backup_codes/backup_codes_generator"
+require_relative "storage_generator"
 
 module Vouch
   module Generators
@@ -16,6 +17,7 @@ module Vouch
       argument :scope, type: :string, banner: "AccountOrCredential"
       class_option :owner, type: :string, default: nil,
                            desc: "Owner account model for credential-owned recovery codes"
+      class_option :polymorphic, type: :boolean, default: false
       class_option :primary_key_type, type: :string, default: nil
       class_option :auth_scope, type: :string, default: nil,
                                   desc: "Authentication scope that owns the recovery-code pages"
@@ -26,9 +28,20 @@ module Vouch
 
       def generate_recovery_codes
         validate_owner! if options[:owner].present?
-        generator_class = options[:owner].present? ? BackupCodesGenerator : RecoverableGenerator
-        generator = generator_class.new([scope], {primary_key_type: options[:primary_key_type]}.compact)
+        if options[:polymorphic] && scope_metadata.composite_primary_key?
+          raise Thor::Error, "Composite recovery owners need concrete storage; omit --polymorphic"
+        end
+        generator = RecoveryCodeStorageGenerator.new([scope], {
+          primary_key_type: options[:primary_key_type], polymorphic: options[:polymorphic],
+          credential: options[:owner].present?
+        }.compact)
         generator.destination_root = destination_root
+        generator.validate_configuration!
+        unless options[:owner].present?
+          host_generator = RecoverableGenerator.new([scope], { primary_key_type: options[:primary_key_type] }.compact)
+          host_generator.destination_root = destination_root
+          host_generator.invoke(:create_host_columns_migration)
+        end
         generator.invoke_all
       end
 
@@ -78,9 +91,8 @@ module Vouch
           recovery_owner_model.underscore.tr("/", "_")
       end
 
-      def inferred_controller_path(model_name, selected_scope)
-        declaration = route_declaration_for(model_name, selected_scope) || route_declaration_for(model_name)
-        declaration&.match(/\bpath:\s*["']([^"']+)["']/)&.captures&.first || selected_scope.to_s.pluralize
+      def inferred_controller_path(_model_name, selected_scope)
+        selected_scope.to_s.pluralize
       end
 
       def inferred_route_helper_prefix

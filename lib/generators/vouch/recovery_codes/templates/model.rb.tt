@@ -1,0 +1,8 @@
+class <%= backup_code_class %> < ApplicationRecord
+  self.table_name = "<%= join_table_name %>"
+<% if options[:polymorphic] -%>
+  belongs_to :recoverable, polymorphic: true
+<% else -%>
+  belongs_to :<%= parent_singular %>, class_name: "<%= parent_class %>", <%= parent_metadata.association_options(parent_singular) %>
+<% end -%>
+end

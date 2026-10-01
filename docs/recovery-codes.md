@@ -15,6 +15,7 @@ Both use the same hashed-storage and single-use implementation. Replacing a set 
 
 - [Account-owned codes](#account-owned-codes)
 - [Credential-owned codes](#credential-owned-codes)
+- [Choose storage](#choose-storage)
 - [Code format and results](#code-format-and-results)
 - [Generate and replace a set](#generate-and-replace-a-set)
 - [Sign in with a code](#sign-in-with-a-code)
@@ -38,23 +39,23 @@ change_table :users do |t|
   t.datetime :recovery_locked_at
 end
 
-create_table :vouch_recovery_codes do |t|
-  t.references :recoverable, polymorphic: true, null: false
+create_table :user_recovery_codes do |t|
+  t.references :user, null: false, foreign_key: true
   t.string :code_digest, null: false
-  t.datetime :used_at
+  t.datetime :used_at, index: true
   t.timestamps
 end
 ```
 
-The shared table identifies its owner with `recoverable_type` and `recoverable_id`. Only hashes are stored; Vouch returns plaintext codes when a set is generated.
+The generator adds `UserRecoveryCode`, a `User#recovery_codes` association and `recovery_codes_from :recovery_codes`. Only hashes are stored; plaintext codes are returned when a set is generated.
 
-For a **multi-tenant application**, use the credentials account:
+For a **multi-tenant application**, use the model that holds sign-in credentials, such as `Account`:
 
 ```sh
 bin/rails generate vouch:recovery_codes Account
 ```
 
-The attempt columns go on `accounts`; the shared code table remains the same. Its pages use `/accounts` and `account_` route prefixes.
+This adds the attempt columns to `accounts` and creates `account_recovery_codes` with an `account_id` reference. The other code columns are the same as above.
 
 ## Credential-owned codes
 
@@ -68,18 +69,54 @@ bin/rails db:migrate
 The migration creates:
 
 ```ruby
-create_table :phone_backup_codes do |t|
+create_table :phone_recovery_codes do |t|
   t.references :phone, null: false, foreign_key: true
   t.string :code_digest, null: false
-  t.datetime :used_at
+  t.datetime :used_at, index: true
   t.timestamps
-  t.index :used_at
 end
 ```
 
-The internal association is named `backup_codes`; the public feature and its model methods use recovery-code terminology. The same setup works for other `TwoFactorable` credentials, including email and authenticator models.
+The generator adds `PhoneRecoveryCode`, `Phone#recovery_codes` and `recovery_codes_from :recovery_codes`. The same setup works for other `TwoFactorable` credentials, including email and authenticator models.
 
 Vouch verifies that the selected credential belongs to the pending or signed-in account. A credential-specific code cannot restore a credential that has been disabled, locked or had its verification cleared. Account-owned recovery codes remain independent of a device's state.
+
+## Choose storage
+
+The default creates a separate table for each owner model. Account-owned and credential-owned codes can instead use one shared table:
+
+```sh
+bin/rails generate vouch:recovery_codes User --polymorphic
+bin/rails generate vouch:recovery_codes Phone --owner User --polymorphic
+```
+
+Both commands use this `RecoveryCode` model and migration. A compatible existing table or pending migration is reused:
+
+```ruby
+create_table :recovery_codes do |t|
+  t.references :recoverable, polymorphic: true, null: false
+  t.string :code_digest, null: false
+  t.datetime :used_at, index: true
+  t.timestamps
+end
+```
+
+```ruby
+# app/models/recovery_code.rb
+class RecoveryCode < ApplicationRecord
+  belongs_to :recoverable, polymorphic: true
+end
+
+# app/models/phone.rb
+class Phone < ApplicationRecord
+  include Vouch::BackupCodable
+
+  has_many :recovery_codes, as: :recoverable, dependent: :destroy
+  recovery_codes_from :recovery_codes
+end
+```
+
+For an existing custom code model, select its direct Rails association with `recovery_codes_from`. The code table must have `code_digest` and `used_at`, and its foreign keys must identify that owner. Concrete associations support custom and composite owner keys. Shared polymorphic generation supports scalar owner keys of a compatible type; use concrete tables for composite owners.
 
 ## Code format and results
 
@@ -124,11 +161,11 @@ Replacing a set deletes every previous hash and saves the replacement hashes in 
 For your own settings controller, the same operation is:
 
 ```ruby
-result = current_user.generate_recovery_codes!
+result = current_user.generate_recovery_codes
 @recovery_codes = result.value if result.ok?
 ```
 
-Use `phone.generate_recovery_codes!` for a phone-owned set. Both owners expose `recovery_codes_remaining` and `recovery_codes_low?`.
+Use `phone.generate_recovery_codes` for a phone-owned set. Both owners expose `recovery_codes_remaining` and `recovery_codes_low?`.
 
 ## Sign in with a code
 

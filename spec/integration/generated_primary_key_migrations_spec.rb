@@ -8,6 +8,8 @@ require "tmpdir"
 require "generators/vouch/omniauth/omniauth_generator"
 require "generators/vouch/password_trackable/password_trackable_generator"
 require "generators/vouch/backup_codes/backup_codes_generator"
+require "generators/vouch/recovery_codes/storage_generator"
+require "generators/vouch/recovery_codes/recovery_codes_generator"
 require "generators/vouch/invitations/invitations_generator"
 require "generators/vouch/scope/scope_generator"
 
@@ -77,9 +79,40 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     )
   end
 
+  it "runs shared UUID recovery storage", use_transactional_fixtures: false do
+    exercise_generated_keys(key_columns: { id: :uuid }, key_values: { id: SecureRandom.uuid },
+      primary_key: "id", inline_reference: true, recovery_polymorphic: true)
+  end
+
+  it "destroys a generated concrete recovery owner without a legacy shared table", use_transactional_fixtures: false do
+    directory = Dir.mktmpdir("vouch-concrete-recovery-destroy")
+    owner_name = "GeneratedRecoveryOwner#{Process.pid}"
+    owner_table = "generated_recovery_owners"
+    create_owner_table(owner_table, { id: :bigint }, "id")
+    stub_const(owner_name, Class.new(ApplicationRecord) { self.table_name = owner_table })
+    write_owner_model(directory, owner_name, owner_table, "id")
+    generator = Vouch::Generators::RecoveryCodesGenerator.new([owner_name])
+    generator.destination_root = directory
+    Dir.chdir(directory) { generator.invoke_all }
+    ActiveRecord::MigrationContext.new(File.join(directory, "db/migrate")).migrate
+    load File.join(directory, "app/models/#{owner_name.underscore}.rb")
+    recovery_class_name = "#{owner_name}RecoveryCode"
+    load File.join(directory, "app/models/#{recovery_class_name.underscore}.rb")
+    owner_class = Object.const_get(owner_name)
+    owner_class.reset_column_information
+    owner = owner_class.create!(id: 7, email_address: "owner@example.com")
+    owner.generate_recovery_codes!
+    expect(ActiveRecord::Base.connection.data_source_exists?("vouch_recovery_codes")).to be false
+    expect { owner.destroy! }.not_to raise_error
+    expect(Object.const_get(recovery_class_name).count).to eq(0)
+  ensure
+    Object.send(:remove_const, recovery_class_name) if recovery_class_name && Object.const_defined?(recovery_class_name, false)
+    FileUtils.rm_rf(directory) if directory
+  end
+
   private
 
-  def exercise_generated_keys(key_columns:, key_values:, primary_key:, inline_reference: false)
+  def exercise_generated_keys(key_columns:, key_values:, primary_key:, inline_reference: false, recovery_polymorphic: false)
     skip "custom primary key integration requires PostgreSQL" unless ActiveRecord::Base.connection.adapter_name == "PostgreSQL"
 
     suffix = "#{Process.pid}#{rand(100_000)}"
@@ -117,6 +150,11 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     backup_codes.destination_root = directory
     Dir.chdir(directory) { backup_codes.invoke_all }
 
+    recovery_codes = Vouch::Generators::RecoveryCodeStorageGenerator.new([owner_name], credential: true, polymorphic: recovery_polymorphic)
+    recovery_codes.destination_root = directory
+    Dir.chdir(directory) { recovery_codes.invoke_all }
+
+
     invitations = Vouch::Generators::InvitationsGenerator.new(
       [owner_name],
       single_model: true,
@@ -127,7 +165,7 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
 
     migrations_directory = File.join(directory, "db/migrate")
     migration_paths = Dir.children(migrations_directory).sort.map { |name| File.join(migrations_directory, name) }
-    expect(migration_paths.length).to eq(7)
+    expect(migration_paths.length).to eq(8)
     oauth_migration = migration_paths.find { |path| path.end_with?("_create_oauth_identities.rb") }
     password_migration = migration_paths.find { |path| path.end_with?("_create_password_archives.rb") }
     backup_migration = migration_paths.find { |path| path.end_with?("_create_#{owner_table.singularize}_backup_codes.rb") }
@@ -156,6 +194,8 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     load File.join(directory, "app/models/password_archive.rb")
     load File.join(directory, Vouch::ModelMetadata.new(identity_name).model_path)
     load File.join(directory, "app/models/#{Vouch::ModelMetadata.new(owner_name).class_name.underscore}_backup_code.rb")
+    recovery_model_path = recovery_polymorphic ? "recovery_code" : "#{Vouch::ModelMetadata.new(owner_name).class_name.underscore}_recovery_code"
+    load File.join(directory, "app/models/#{recovery_model_path}.rb")
     owner_class.reset_column_information
 
     owner = owner_class.create!(**key_values)
@@ -193,6 +233,16 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     expect(backup_code.public_send(owner_association)).to eq(owner)
     expect(owner.backup_codes).to include(backup_code)
 
+    recovery_class_name = recovery_polymorphic ? "RecoveryCode" : "#{owner_name}RecoveryCode"
+    recovery_code_class = Object.const_get(recovery_class_name)
+    recovery_reflection = recovery_code_class.reflect_on_association(recovery_polymorphic ? :recoverable : owner_association)
+    expect(Array(recovery_reflection.foreign_key).map(&:to_s)).to eq(recovery_polymorphic ? ["recoverable_id"] : owner_metadata.foreign_keys(owner_association))
+    code = owner.generate_recovery_codes!.value.first
+    expect(owner.consume_recovery_code(code)).to be_ok
+    expect(owner.consume_recovery_code(code)).to be_invalid
+    expect(owner.recovery_codes.count).to eq(Vouch.configuration.recovery_codes.code_count)
+
+
     invitee_key = Array(primary_key).last.to_sym
     invitee_value = key_columns.fetch(invitee_key) == :uuid ? SecureRandom.uuid : "invitee-#{SecureRandom.hex(6)}"
     invitee_keys = key_values.merge(invitee_key => invitee_value)
@@ -218,6 +268,7 @@ RSpec.describe "generated custom primary key migrations", :generated_host do
     Object.const_set(:OauthIdentity, original_oauth_identity) if original_oauth_identity && !Object.const_defined?(:OauthIdentity, false)
     Object.const_set(:PasswordArchive, original_password_archive) if original_password_archive && !Object.const_defined?(:PasswordArchive, false)
     Object.send(:remove_const, identity_name) if identity_name && Object.const_defined?(identity_name, false)
+    Object.send(:remove_const, recovery_class_name) if recovery_class_name && Object.const_defined?(recovery_class_name, false)
     FileUtils.rm_rf(directory) if directory
   end
 
