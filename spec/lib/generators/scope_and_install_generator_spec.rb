@@ -41,7 +41,7 @@ RSpec.describe "Vouch generators" do
 
     expect(initializer).to include("Vouch.configure do |config|")
     expect(initializer).not_to include("Vouch.setup")
-    expect(initializer).to include("config.register_login_resolver")
+    expect(initializer).to include("config.login_resolvers = [Vouch::LoginResolver::EmailResolver]")
   end
 
   it "generates a single-model account with the required password contract" do
@@ -492,7 +492,7 @@ RSpec.describe "Vouch generators" do
     controller = File.read(File.join(@generator_directory, "app/controllers/users/invitations_controller.rb"))
 
     expect(controller).not_to include("auth_scope :user")
-    expect(controller).to include("find_by(\"LOWER(email_address) = ?\", normalized_identifier)")
+    expect(controller).to include("find_by(email_address: normalized_identifier)")
     expect(controller).to include("email_address: normalized_identifier")
     expect(controller).to include("registration_required: true")
     migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*add_registration_required_to_accounts.rb")].sole)

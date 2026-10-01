@@ -54,8 +54,7 @@ module Vouch
       end
 
       def inferred_controller_path(model_name, scope_name)
-        declaration = route_declaration_for(model_name, scope_name) || route_declaration_for(model_name)
-        declaration&.match(/\bpath:\s*["']([^"']+)["']/)&.captures&.first || scope_name.to_s.pluralize
+        scope_name.to_s.pluralize
       end
 
       def route_helper_prefix

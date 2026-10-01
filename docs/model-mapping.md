@@ -63,18 +63,21 @@ end
 The generated `Account` also includes Vouch authentication, `has_secure_password`, and email normalization and validation. The migrations create:
 
 ```ruby
+enable_extension "citext" unless extension_enabled?("citext")
+
 create_table :accounts do |t|
-  t.string :email_address, null: false
+  t.citext :email_address, null: false, index: { unique: true }
   t.string :password_digest, null: false
   t.bigint :auth_session_version, null: false, default: 0
   t.timestamps
-  t.index "lower(email_address)", unique: true, name: "index_accounts_on_lower_email_address"
 end
 
 create_table :organisations do |t|
   t.string :name, null: false
   t.timestamps
 end
+
+enable_extension "citext" unless extension_enabled?("citext")
 
 create_table :users do |t|
   t.references :account, null: false, foreign_key: true
@@ -136,7 +139,10 @@ end
 | --- | --- |
 | `path: "members"` | `/members/sign_in` |
 | `as: "member"` | `new_member_session_path` |
+| Default controller | `Users::SessionsController` |
 | Scope remains `:user` | `current_user` and `authenticate_user!` |
+
+`path:` changes the URL only. The controller namespace follows the authentication scope; use `controller: "portal/sessions"` to select another controller. `as:` changes route helpers independently.
 
 Without an explicit scope name, `User` infers `:user`; `Staff::User` infers `:staff_user`.
 

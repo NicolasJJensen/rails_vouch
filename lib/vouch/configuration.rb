@@ -9,7 +9,7 @@
 #     config.lockable.max_failed_attempts = 10
     #     config.lockable.lockout_duration    = 30.minutes
 #
-#     config.register_login_resolver Vouch::LoginResolver::EmailResolver
+#     config.login_resolvers = [Vouch::LoginResolver::EmailResolver]
 #   end
 #
 module Vouch
@@ -57,6 +57,7 @@ module Vouch
       @install_middleware          = true
 
       @login_resolver_names = []
+      @model_login_resolvers = {}
     end
 
     # New-style memoized accessors for the concerns that replaced the
@@ -82,37 +83,46 @@ module Vouch
       @recoverable ||= RecoverableConfig.new(self)
     end
 
-    # Register a login resolver class. Resolvers are tried in order; first
-    # match wins. Named classes are stored by constant name so Rails reloads
-    # resolve the current class instead of retaining stale class objects.
-    #
-    #   config.register_login_resolver Vouch::LoginResolver::EmailResolver
-    #   config.register_login_resolver MyApp::PhoneResolver
-    #
-    def register_login_resolver(resolver_class)
-      name = resolver_class.respond_to?(:name) ? resolver_class.name : nil
-      @login_resolver_names << (name.presence || resolver_class)
+    def login_resolvers=(resolvers)
+      @login_resolver_names = resolver_names(resolvers)
     end
 
-    # Lazy login resolver instantiation. Each call returns fresh instances so
-    # resolvers can hold per-request state safely.
-    def login_resolvers
-      @login_resolver_names.filter_map do |name|
-        resolver_class = name.is_a?(String) ? name.constantize : name
-        resolver_class.new
-      rescue NameError => e
-        raise ConfigurationError, "Configured login resolver #{name.inspect} could not be loaded: #{e.message}"
-      end
+    def login_resolvers_for(model, with:)
+      @model_login_resolvers[model_name(model)] = resolver_names(with)
     end
 
-    # Resolve the currently loaded resolver classes. This is useful to hosts
-    # that inspect the registry while keeping the registry itself reload-safe.
-    def login_resolver_classes
-      @login_resolver_names.filter_map do |name|
+    def reset_login_resolvers_for(model)
+      @model_login_resolvers.delete(model_name(model))
+    end
+
+    def login_resolvers(model: nil)
+      login_resolver_classes(model: model).map(&:new)
+    end
+
+    def login_resolver_classes(model: nil)
+      names = model ? @model_login_resolvers.fetch(model_name(model), @login_resolver_names) : @login_resolver_names
+      names.map do |name|
         name.is_a?(String) ? name.constantize : name
-      rescue NameError => e
-        raise ConfigurationError, "Configured login resolver #{name.inspect} could not be loaded: #{e.message}"
+      rescue NameError => error
+        raise ConfigurationError, "Configured login resolver #{name.inspect} could not be loaded: #{error.message}"
       end
+    end
+
+    private
+
+    def resolver_names(resolvers)
+      unless resolvers.is_a?(Array)
+        raise ConfigurationError, "Login resolvers must be an ordered Array of classes or class names"
+      end
+      resolvers.map do |resolver|
+        resolver.respond_to?(:name) ? (resolver.name.presence || resolver) : resolver
+      end
+    end
+
+    def model_name(model)
+      name = model.respond_to?(:name) ? model.name : model.to_s
+      raise ConfigurationError, "A named credentials model is required" if name.blank?
+      name
     end
   end
 end

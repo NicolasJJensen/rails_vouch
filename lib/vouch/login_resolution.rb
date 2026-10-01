@@ -1,10 +1,10 @@
 # Login resolver concern.
 #
-# Iterates registered resolvers from Vouch.configuration.login_resolvers.
+# Iterates configured resolvers from Vouch.configuration.login_resolvers.
 # Each resolver implements `valid?` and `resolve!`, signaling outcomes via
 # `success!(account)` and `fail!` (throw-based control flow).
 #
-# Resolvers are tried in registration order; first match wins.
+# Resolvers are tried in registration order; conflicting accounts are rejected.
 #
 #   Account.first_by_auth_conditions(params)
 #
@@ -14,13 +14,16 @@ module Vouch
 
     class_methods do
       def first_by_auth_conditions(params)
-        Vouch.configuration.login_resolvers.each do |resolver|
+        candidate = nil
+        Vouch.configuration.login_resolvers(model: self).each do |resolver|
           next unless resolver.valid?(params)
 
           result = catch(:resolver) { resolver.resolve!(params, self); nil }
-          return resolver.account if result == :success
+          next unless result == :success
+          return nil if candidate && candidate != resolver.account
+          candidate = resolver.account
         end
-        nil
+        candidate
       end
     end
   end

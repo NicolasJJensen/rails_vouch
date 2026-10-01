@@ -130,7 +130,7 @@ RSpec.describe "generated host smoke test", :generated_host do
             config.session_store :cookie_store, key: "_generated_host_session"
             config.action_controller.allow_forgery_protection = false
             config.after_initialize do
-              ActiveRecord::Base.connection.schema_search_path = ENV.fetch("GENERATED_SCHEMA")
+              ActiveRecord::Base.connection.schema_search_path = "\#{ENV.fetch("GENERATED_SCHEMA")},public"
             end
           end
         end
@@ -350,7 +350,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         # permitted parameter, and invitation lookup.
         owner_migration = Dir[File.join(directory, "db/migrate/*_create_#{owner_table}.rb")].fetch(0)
         owner_migration_body = File.read(owner_migration)
-          .sub("t.string :email_address, null: false", "t.string :email_address")
+          .sub("t.citext :email_address, null: false", "t.citext :email_address")
           .sub(/(create_table[^\n]*\n)/, "\\1      t.string :login\n")
           .sub(/(    end\n    add_index)/, "    end\n    add_index :#{owner_table}, :login, unique: true\n    add_index")
         File.write(owner_migration, owner_migration_body)
@@ -383,7 +383,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           #{model_name}.has_many :invitees, class_name: #{model_name.inspect}, foreign_key: :inviter_id, dependent: :nullify
 
           Vouch.configure do |config|
-            config.register_login_resolver GeneratedLoginResolver
+            config.login_resolvers_for #{owner_name.inspect}, with: [GeneratedLoginResolver]
           end
 
           Rails.application.config.after_initialize do
@@ -446,7 +446,7 @@ RSpec.describe "generated host smoke test", :generated_host do
       expect(connection_result).to include(@generated_schema)
 
       migration_result = run_host(directory, "runner", <<~RUBY)
-        ActiveRecord::Base.connection.schema_search_path = ENV.fetch("GENERATED_SCHEMA")
+        ActiveRecord::Base.connection.schema_search_path = "\#{ENV.fetch("GENERATED_SCHEMA")},public"
         ActiveRecord::MigrationContext.new(Rails.root.join("db/migrate").to_s).migrate
         oauth_columns = ActiveRecord::Base.connection.columns("oauth_identities").map(&:name)
         abort "generated OAuth owner column was not migrated" unless oauth_columns.include?(#{Vouch::ModelMetadata.new(variant == :single ? model_name : owner_name).association_key.inspect} + "_id")
@@ -507,7 +507,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         if #{variant == :single}
           session.get("/#{path_name}/sign_in", params: {format: :html})
           abort "sign-in form status: \#{session.response.status}" unless session.response.successful?
-          abort "sign-in form did not use the resolver parameter" unless session.response.body.include?('name="email_address"')
+          abort "sign-in form did not use the resolver parameter" unless session.response.body.include?('name="' + #{model_name}.model_name.param_key + '[email_address]"')
 
           session.get("/#{account_path_name}/sign_up", params: {format: :html})
           abort "registration form status: \#{session.response.status}" unless session.response.successful?
@@ -772,7 +772,7 @@ RSpec.describe "generated host smoke test", :generated_host do
       "BUNDLE_GEMFILE" => ENV.fetch("BUNDLE_GEMFILE", File.expand_path("../../Gemfile", __dir__)),
       "RAILS_ENV" => "test",
       "GENERATED_SCHEMA" => @generated_schema,
-      "PGOPTIONS" => "-c search_path=#{@generated_schema}"
+      "PGOPTIONS" => "-c search_path=#{@generated_schema},public"
     }
     stdout, stderr, status = Open3.capture3(environment, *command, chdir: directory)
     return stdout if status.success?

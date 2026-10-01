@@ -2,8 +2,10 @@
 
 class CreateAccounts < ActiveRecord::Migration[7.0]
   def change
+    enable_extension "citext" unless extension_enabled?("citext")
+
     create_table :accounts do |t|
-      t.string :email_address, null: false
+      t.citext :email_address, null: false, index: { unique: true }
       t.string :password_digest, null: false
 
       # Lockable
@@ -20,7 +22,6 @@ class CreateAccounts < ActiveRecord::Migration[7.0]
       t.timestamps
     end
 
-    add_index :accounts, :email_address, unique: true
     add_index :accounts, :password_reset_token_digest, unique: true
     add_index :accounts, :password_reset_sent_at
   end

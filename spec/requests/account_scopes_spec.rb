@@ -90,17 +90,17 @@ RSpec.describe "Account and membership sessions", type: :request do
     Rails.application.routes.draw do
       Vouch.routes(self) do |auth|
         auth.scope :account, model: "Account", path: "linked_accounts" do
-          auth.sessions
-          auth.registrations
-          auth.oauth_callbacks registration: :automatic
+          auth.sessions controller: "linked_accounts/sessions"
+          auth.registrations controller: "linked_accounts/registrations"
+          auth.oauth_callbacks controller: "linked_accounts/omni_auths", registration: :automatic
           auth.two_factor challenge_controller: "linked_accounts/two_factor_challenge"
         end
         auth.scope :member, account_scope: :account, identity: "User", tenant: "Organisation", path: "linked_members" do
-          auth.sessions
+          auth.sessions controller: "linked_members/sessions"
           auth.impersonation controller: "linked_members/impersonations"
         end
         auth.scope :admin, account_scope: :account, identity: "User", tenant: "Organisation", path: "linked_admins" do
-          auth.sessions
+          auth.sessions controller: "linked_admins/sessions"
           auth.impersonation controller: "linked_admins/impersonations"
         end
       end

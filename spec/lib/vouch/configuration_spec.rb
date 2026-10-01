@@ -139,15 +139,15 @@ RSpec.describe Vouch::Configuration do
     end
   end
 
-  describe "#register_login_resolver" do
+  describe "resolver lists" do
     it "registers a class-based resolver" do
-      config.register_login_resolver Vouch::LoginResolver::EmailResolver
+      config.login_resolvers = [Vouch::LoginResolver::EmailResolver]
 
       expect(config.login_resolvers.last).to be_a(Vouch::LoginResolver::EmailResolver)
     end
 
     it "instantiates the resolver" do
-      config.register_login_resolver Vouch::LoginResolver::EmailResolver
+      config.login_resolvers = [Vouch::LoginResolver::EmailResolver]
 
       resolver = config.login_resolvers.last
       expect(resolver).to respond_to(:valid?)
@@ -157,7 +157,7 @@ RSpec.describe Vouch::Configuration do
     it "resolves a named resolver through the current constant" do
       resolver_name = "ReloadableResolver"
       stub_const(resolver_name, Class.new(Vouch::LoginResolver::Base))
-      config.register_login_resolver(resolver_name.constantize)
+      config.login_resolvers = [resolver_name.constantize]
       first_class = config.login_resolver_classes.first
 
       stub_const(resolver_name, Class.new(Vouch::LoginResolver::Base))

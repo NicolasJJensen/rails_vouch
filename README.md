@@ -15,7 +15,7 @@ Vouch adds conventional Rails authentication: password sign-in, registration, pa
 
 ## Install and generate a login
 
-Vouch requires Rails 8.x and Ruby 3.2 or newer, subject to your Rails version’s requirements.
+Vouch supports Rails 8.1 and newer Rails 8 releases, Ruby 3.2 or newer, and PostgreSQL.
 
 ```sh
 bundle add rails_vouch
@@ -29,12 +29,13 @@ forms, routes, and this standard credential schema. The generated model
 normalizes and validates `email_address` and uses `has_secure_password`.
 
 ```ruby
+enable_extension "citext" unless extension_enabled?("citext")
+
 create_table :users do |t|
-  t.string :email_address, null: false
+  t.citext :email_address, null: false, index: { unique: true }
   t.string :password_digest, null: false
   t.bigint :auth_session_version, null: false, default: 0
   t.timestamps
-  t.index "lower(email_address)", unique: true, name: "index_users_on_lower_email_address"
 end
 ```
 

@@ -5,7 +5,7 @@
 # All values shown are defaults — uncomment and edit to override.
 Vouch.configure do |config|
   # Login resolvers — order determines which gets first crack at params.
-  config.register_login_resolver Vouch::LoginResolver::EmailResolver
+  config.login_resolvers = [Vouch::LoginResolver::EmailResolver]
 
   # Warden defaults.
   # config.warden_default_strategies = [:password]

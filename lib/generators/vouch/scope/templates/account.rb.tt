@@ -5,7 +5,7 @@ class <%= @account_class %> < ApplicationRecord
   has_secure_password
 
   normalizes :email_address, with: ->(value) { value.strip.downcase }
-  validates :email_address, presence: true, uniqueness: { case_sensitive: false }
+  validates :email_address, presence: true, uniqueness: true
 <% unless @single_model -%>
 
   has_many :<%= model_association(@identity_class).pluralize %>, class_name: "<%= @identity_class %>", <%= model_has_many_options(@account_class) %>

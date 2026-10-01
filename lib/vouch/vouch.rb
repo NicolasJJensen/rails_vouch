@@ -5,7 +5,7 @@
 #
 #   Vouch.configure do |config|
 #     config.lockable.max_failed_attempts = 5
-#     config.register_login_resolver MyApp::EmailResolver
+#     config.login_resolvers = [MyApp::EmailResolver]
 #   end
 #
 #   Vouch.mapping_for(:user)  # => Vouch::Mapping

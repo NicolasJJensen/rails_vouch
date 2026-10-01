@@ -36,10 +36,10 @@ Gem::Specification.new do |spec|
 
   spec.require_paths = ["lib"]
 
-  spec.add_dependency "railties",      ">= 8.0", "< 9.0"
-  spec.add_dependency "activerecord",  ">= 8.0", "< 9.0"
-  spec.add_dependency "activesupport", ">= 8.0", "< 9.0"
-  spec.add_dependency "actionpack",    ">= 8.0", "< 9.0"
+  spec.add_dependency "railties",      ">= 8.1", "< 9.0"
+  spec.add_dependency "activerecord",  ">= 8.1", "< 9.0"
+  spec.add_dependency "activesupport", ">= 8.1", "< 9.0"
+  spec.add_dependency "actionpack",    ">= 8.1", "< 9.0"
   # head :unprocessable_content is only a valid status symbol from Rack 3.1.
   spec.add_dependency "rack",          ">= 3.1", "< 4.0"
   spec.add_dependency "active_hooks",  "~> 0.1"

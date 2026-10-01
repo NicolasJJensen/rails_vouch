@@ -2,7 +2,7 @@ source "https://rubygems.org"
 
 gemspec
 
-gem "rails", ENV.fetch("VOUCH_RAILS", "~> 8.0")
+gem "rails", ENV.fetch("VOUCH_RAILS", "~> 8.1")
 
 # activesupport 8.1.3 still calls JSON.parse with a second positional argument,
 # which json 3.0 removed. Pin json until Rails ships the fix.

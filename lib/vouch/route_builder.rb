@@ -106,6 +106,9 @@ module Vouch
       raise Vouch::ConfigurationError, "auth.membership requires model: or identity:." unless model || identity
       raise Vouch::ConfigurationError, "auth.membership requires a route block." unless block
 
+      if opts.key?(:account_scope) && opts[:account_scope].to_s != parent.scope_name.to_s
+        raise Vouch::ConfigurationError, "Nested account_scope must match :#{parent.scope_name}"
+      end
       name ||= Vouch::Mapping.inferred_scope_name(model: model, identity: identity)
       @pending_memberships << {
         name: name,
@@ -116,7 +119,7 @@ module Vouch
 
     def sessions(paths: {}, path_names: {}, controller: nil)
       m = @current_mapping
-      ctrl = controller || "#{m.path}/sessions"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/sessions"
       routes = {new: "sign_in", create: "sign_in", destroy: "sign_out"}.merge(validate_paths!(:sessions, paths))
       m.configure_route_names(:sessions, path_names)
       prefix = m.helper_prefix
@@ -126,8 +129,8 @@ module Vouch
         router.post routes[:create], to: "#{ctrl}#create", as: m.route_name(:sessions, :create)
         router.delete routes[:destroy], to: "#{ctrl}#destroy", as: m.route_name(:sessions, :destroy)
         if m.split_model? && !m.membership_scope?
-          router.get "select", to: "#{m.path}/membership_sessions#new", as: :"#{prefix}_select"
-          router.post "select", to: "#{m.path}/membership_sessions#create"
+          router.get "select", to: "#{m.scope_name.to_s.pluralize}/membership_sessions#new", as: :"#{prefix}_select"
+          router.post "select", to: "#{m.scope_name.to_s.pluralize}/membership_sessions#create"
         end
       end
     end
@@ -135,7 +138,7 @@ module Vouch
     def registrations(paths: {}, path_names: {}, controller: nil)
       require_credentials_scope!
       m = @current_mapping
-      ctrl = controller || "#{m.path}/registrations"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/registrations"
       routes = {new: "sign_up", create: "sign_up"}.merge(validate_paths!(:registrations, paths))
       m.configure_route_names(:registrations, path_names)
 
@@ -148,7 +151,7 @@ module Vouch
     def password_resets(controller: nil)
       require_credentials_scope!
       m = @current_mapping
-      ctrl = controller || "#{m.path}/password_resets"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/password_resets"
 
       router.scope m.path, as: m.helper_prefix do
         router.resource :password_reset, only: [:new, :create, :edit, :update],
@@ -159,9 +162,9 @@ module Vouch
     def two_factor(challenge_controller: nil, credentials_controller: nil, recovery_controller: nil)
       require_credentials_scope!
       m = @current_mapping
-      challenge_ctrl = challenge_controller || "#{m.path}/two_factor_challenge"
-      creds_ctrl     = credentials_controller || "#{m.path}/two_factor_credentials"
-      recovery_ctrl  = recovery_controller || "#{m.path}/recovery_codes"
+      challenge_ctrl = challenge_controller || "#{m.scope_name.to_s.pluralize}/two_factor_challenge"
+      creds_ctrl     = credentials_controller || "#{m.scope_name.to_s.pluralize}/two_factor_credentials"
+      recovery_ctrl  = recovery_controller || "#{m.scope_name.to_s.pluralize}/recovery_codes"
 
       router.scope m.path, as: m.helper_prefix do
         router.resources :two_factor_challenges, only: [:index, :show, :update],
@@ -178,7 +181,7 @@ module Vouch
 
     def invitations(controller: nil)
       m = @current_mapping
-      ctrl = controller || "#{m.path}/invitations"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/invitations"
 
       router.scope m.path, as: m.helper_prefix do
         router.resource :invitation, only: [:new, :create, :destroy],
@@ -190,7 +193,7 @@ module Vouch
 
     def impersonation(controller: nil)
       m = @current_mapping
-      ctrl = controller || "#{m.path}/impersonations"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/impersonations"
 
       router.scope m.path, as: m.helper_prefix do
         router.post   "impersonations/:id", to: "#{ctrl}#create",      as: :impersonate
@@ -205,7 +208,7 @@ module Vouch
                         callback_methods: nil, failure_methods: nil, registration: :form)
       require_credentials_scope!
       m = @current_mapping
-      ctrl = controller || "#{m.path}/omni_auths"
+      ctrl = controller || "#{m.scope_name.to_s.pluralize}/omni_auths"
       unless %i[form automatic].include?(registration)
         raise Vouch::ConfigurationError, "OAuth registration must be :form or :automatic"
       end
