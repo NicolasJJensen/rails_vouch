@@ -10,7 +10,6 @@ RSpec.describe Vouch::Recoverable do
       expect(account).to respond_to(:vouch_recovery_codes)
       reflection = Account.reflect_on_association(:vouch_recovery_codes)
       expect(reflection.options[:as]).to eq(:recoverable)
-      expect(reflection.options[:dependent]).to eq(:destroy)
     end
 
     it "destroys recovery codes when the host row is destroyed" do
