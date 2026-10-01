@@ -146,8 +146,9 @@ module Vouch
       account_class_name = auth_mapping.account_class_name
       raise NotImplementedError, <<~MSG.squish
         Define #build_invited_account(identifier) in the host controller.
-        Return an existing #{account_class_name} or create one with a random
-        password. Normalize the identifier using the account model's rules.
+        Return an existing #{account_class_name} or build an unsaved one.
+        Normalize the identifier using the account model's rules; do not persist
+        or deliver anything while preparing the invitation.
       MSG
     end
   end

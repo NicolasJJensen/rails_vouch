@@ -52,28 +52,21 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(response).to redirect_to("/users/sign_in")
     end
 
-    it "raises until the host configures invitation authorization" do
+    it "lets the host authorize the prepared invitation before mutation" do
       sign_in(user)
-      allow_any_instance_of(Users::InvitationsController).to receive(:authorize_invitation!) do |controller|
-        Vouch::InvitationsController.instance_method(:authorize_invitation!).bind_call(controller)
+      original = Users::InvitationsController.instance_method(:create)
+      Users::InvitationsController.define_method(:create) do
+        raise "missing prepared target" unless @invitation.new_record?
+        head :forbidden
+        super()
       end
 
       expect {
         post "/users/invitation", params: {email_address: "newinvite@example.com"}
-      }.to raise_error(Vouch::ConfigurationError, /authorize_invitation!/)
-    end
-
-    it "does not create an invitation when the host denies authorization" do
-      sign_in(user)
-      allow_any_instance_of(Users::InvitationsController).to receive(:authorize_invitation!) { |controller|
-        controller.head :forbidden
-      }
-
-      expect {
-        post "/users/invitation", params: {email_address: "newinvite@example.com"}
-      }.not_to change(User, :count)
-
+      }.not_to change(Account, :count)
       expect(response).to have_http_status(:forbidden)
+    ensure
+      Users::InvitationsController.define_method(:create, original) if original
     end
 
     it "creates an invitation when authenticated" do
@@ -94,7 +87,8 @@ RSpec.describe "Users::Invitations", type: :request do
 
     it "shows an error instead of success when invitation fails" do
       sign_in(user)
-      allow(User).to receive(:invite!).and_raise(ActiveRecord::RecordInvalid)
+      allow(Vouch::Persistence).to receive(:save!).and_call_original
+      allow(Vouch::Persistence).to receive(:save!).with(an_instance_of(User)).and_raise(ActiveRecord::RecordInvalid)
 
       post "/users/invitation", params: { email_address: "bad@example.com" }
       expect(response).to redirect_to("/")
@@ -106,7 +100,8 @@ RSpec.describe "Users::Invitations", type: :request do
       sign_in(user)
       invalid = User.new
       invalid.errors.add(:base, "Required profile details are missing")
-      allow(User).to receive(:invite!).and_raise(ActiveRecord::RecordInvalid.new(invalid))
+      allow(Vouch::Persistence).to receive(:save!).and_call_original
+      allow(Vouch::Persistence).to receive(:save!).with(an_instance_of(User)).and_raise(ActiveRecord::RecordInvalid.new(invalid))
 
       post "/users/invitation", params: { email_address: "bad@example.com" }
 
@@ -124,7 +119,7 @@ RSpec.describe "Users::Invitations", type: :request do
       expect(response).to redirect_to("/")
     end
 
-    it "reissues a pending invitation for the same account and organisation" do
+    it "does not silently resend an existing pending invitation" do
       sign_in(user)
       post "/users/invitation", params: {email_address: "pending-reissue@example.com"}
       invitation = User.order(:id).last
@@ -135,8 +130,60 @@ RSpec.describe "Users::Invitations", type: :request do
       }.not_to change(User, :count)
 
       expect(invitation.reload.invitation_token).to be_present
-      expect(invitation.invitation_token).not_to eq(original_token)
+      expect(invitation.invitation_token).to eq(original_token)
       expect(invitation.invitation_accepted_at).to be_nil
+    end
+  end
+
+  describe "POST /users/invitation/resend" do
+    let(:invitation) { create(:user, :invited, organisation: organisation, inviter: user) }
+
+    it "rotates the token without changing the inviter" do
+      sign_in(user)
+      token = invitation.invitation_token
+      post "/users/invitation/resend", params: {invitation_token: token}
+      expect(response).to redirect_to("/")
+      expect(invitation.reload.invitation_token).not_to eq(token)
+      expect(invitation.inviter).to eq(user)
+    end
+
+    it "preserves a host inviter assignment made before super" do
+      sign_in(user)
+      replacement = create(:user, organisation: organisation)
+      original = Users::InvitationsController.instance_method(:resend)
+      Users::InvitationsController.define_method(:resend) do
+        @invitation.inviter = replacement
+        super()
+      end
+      post "/users/invitation/resend", params: {invitation_token: invitation.invitation_token}
+      expect(invitation.reload.inviter).to eq(replacement)
+    ensure
+      Users::InvitationsController.define_method(:resend, original) if original
+    end
+
+    it "does not resend an invitation outside the current relation" do
+      sign_in(user)
+      other = create(:user, :invited)
+      token = other.invitation_token
+      post "/users/invitation/resend", params: {invitation_token: token}
+      expect(other.reload.invitation_token).to eq(token)
+      expect(flash[:notice]).to be_nil
+    end
+
+    it "allows a host response for duplicate creation with the existing invitation" do
+      sign_in(user)
+      invitation
+      original = Users::InvitationsController.instance_method(:create)
+      Users::InvitationsController.define_method(:create) do
+        super() do |result|
+          render json: {reason: result.metadata[:reason], id: result.error.invitation.id}, status: :conflict
+        end
+      end
+      post "/users/invitation", params: {email_address: invitation.account.email_address}
+      expect(response).to have_http_status(:conflict)
+      expect(response.parsed_body).to include("reason" => "already_invited", "id" => invitation.id)
+    ensure
+      Users::InvitationsController.define_method(:create, original) if original
     end
   end
 
@@ -191,12 +238,10 @@ RSpec.describe "Users::Invitations", type: :request do
 
     it "retains a placeholder while another invitation references it" do
       first = invite
-      second = invite
+      second = create(:user, :invited, account: first.account, organisation: create(:organisation))
       delete "/users/invitation", params: { invitation_token: first.invitation_token }
       expect(Account.exists?(second.account_id)).to be true
       expect(second.reload.invitation_token).to be_present
-      delete "/users/invitation", params: { invitation_token: second.invitation_token }
-      expect(Account.exists?(second.account_id)).to be true
     end
 
     it "retains an account with another active identity" do

@@ -1,45 +1,28 @@
 class Vouch::InvitationsController < ::ApplicationController
   include Vouch::Authentication
   allow_unauthenticated_access only: :accept
-  before_action :authorize_invitation!, only: :create
+  before_action :set_invitation, only: [:create, :resend]
 
   def new; end
 
-  def create
-    identifier = params[:email_address] || params[:identifier]
-    transaction_record = auth_mapping.identity_class.new
-    invitee = Vouch::Persistence.transaction(transaction_record) do
-      account = build_invited_account(identifier)
-      account.lock!
-      if auth_mapping.split_model?
-        existing = existing_identity_for_invitation(account)
-        if existing
-          existing.with_lock do
-            existing.reissue_invitation!(invited_by: current_identity) if existing.invitation_token.present? && existing.invitation_accepted_at.nil?
-          end
-          existing if existing.invitation_token.present?
-        else
-          result = auth_mapping.identity_class.invite!(invited_by: current_identity) do |identity|
-            identity.public_send("#{auth_mapping.account_association}=", account)
-            assign_tenant_to_invitee(identity, current_identity)
-          end
-          result.value
-        end
-      else
-        Vouch::Persistence.update!(account,
-          invitation_token: SecureRandom.uuid, invitation_sent_at: Time.current,
-          inviter: current_identity)
-        account
-      end
+  def create(&response_handler)
+    return if performed?
+
+    result = create_invitation
+    respond_with_authentication_result(result, response_handler) do
+      render_invitation_delivery_result(result)
     end
-    run_hooks(:invitation_token_generation, identifier, invitee) { |env| env.add(invitee) } if invitee
-    redirect_to root_path, notice: I18n.t('vouch.invitations.sent')
-  rescue ActiveRecord::RecordInvalid => error
-    message = error.record&.errors&.full_messages&.to_sentence.presence
-    redirect_to root_path, alert: message || I18n.t("vouch.invitations.failed")
-  rescue ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled
-    redirect_to root_path, alert: I18n.t("vouch.invitations.failed")
   end
+
+  def resend(&response_handler)
+    return if performed?
+
+    result = resend_invitation
+    respond_with_authentication_result(result, response_handler) do
+      render_invitation_delivery_result(result)
+    end
+  end
+
 
   def destroy
     token = params[:invitation_token]
@@ -105,11 +88,89 @@ class Vouch::InvitationsController < ::ApplicationController
 
   private
 
-  def authorize_invitation!
-    raise Vouch::ConfigurationError, <<~MSG.squish
-      Define #authorize_invitation! in the host invitations controller before
-      creating invitations.
-    MSG
+  def create_invitation
+    identifier = params[:email_address] || params[:identifier]
+    transaction_record = auth_mapping.account_class.new
+    invitee = Vouch::Persistence.transaction(transaction_record) do
+      account = @account
+      Vouch::Persistence.save!(account) if account.new_record?
+      account.lock!
+      if auth_mapping.split_model?
+        existing = existing_identity_for_invitation(account)
+        if existing
+          error = existing.invitation_token.present? && existing.invitation_accepted_at.nil? ?
+            Vouch::Invitable::InvitationExistsError : Vouch::Invitable::AlreadyJoinedError
+          raise error.new(existing)
+        else
+          @invitation.public_send("#{auth_mapping.account_association}=", account)
+          assign_tenant_to_invitee(@invitation, current_identity)
+          @invitation.assign_attributes(invitation_token: SecureRandom.uuid,
+            invitation_sent_at: Time.current, inviter: current_identity)
+          Vouch::Persistence.save!(@invitation)
+          @invitation
+        end
+      else
+        if account.invitation_token.present?
+          raise Vouch::Invitable::InvitationExistsError.new(account)
+        elsif !account.registration_required?
+          raise Vouch::Invitable::AlreadyJoinedError.new(account)
+        end
+        Vouch::Persistence.update!(account,
+          invitation_token: SecureRandom.uuid, invitation_sent_at: Time.current,
+          inviter: current_identity)
+        account
+      end
+    end
+    run_hooks(:invitation_token_generation, identifier, invitee) { |env| env.add(invitee) } if invitee
+    Vouch::Result.ok(invitee)
+  rescue Vouch::Invitable::AlreadyJoinedError => error
+    Vouch::Result.invalid(record: error.invitation, error: error, reason: :already_joined)
+  rescue Vouch::Invitable::InvitationExistsError => error
+    Vouch::Result.invalid(record: error.invitation, error: error, reason: :already_invited)
+  rescue ActiveRecord::RecordInvalid => error
+    Vouch::Result.invalid(record: error.record, error: error)
+  rescue ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
+    Vouch::Result.invalid(error: error)
+  end
+
+  def resend_invitation
+    return Vouch::Result.invalid(reason: :not_found) unless @invitation
+
+    @invitation.reissue_invitation!
+    identifier = auth_mapping.account_for(@invitation).email_address
+    run_hooks(:invitation_token_generation, identifier, @invitation) { |env| env.add(@invitation) }
+    Vouch::Result.ok(@invitation)
+  rescue Vouch::Invitable::InvitationExpiredError => error
+    Vouch::Result.invalid(record: @invitation, error: error, reason: :invalid_token)
+  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
+    Vouch::Result.invalid(record: @invitation, error: error)
+  end
+
+  def render_invitation_delivery_result(result)
+    if result.ok?
+      redirect_to root_path, notice: I18n.t('vouch.invitations.sent')
+    else
+      message = result.metadata[:record]&.errors&.full_messages&.to_sentence.presence
+      reason = result.metadata[:reason] || :failed
+      redirect_to root_path, alert: message || I18n.t("vouch.invitations.#{reason}", default: I18n.t("vouch.invitations.failed"))
+    end
+  end
+
+  def set_invitation
+    @invitation = if action_name == "create"
+      @account = build_invited_account(params[:email_address] || params[:identifier])
+      if auth_mapping.split_model?
+        existing = existing_identity_for_invitation(@account) if @account.persisted?
+        existing || auth_mapping.identity_class.new(inviter: current_identity).tap do |invitation|
+          invitation.public_send("#{auth_mapping.account_association}=", @account)
+          assign_tenant_to_invitee(invitation, current_identity) if auth_mapping.tenant?
+        end
+      else
+        @account
+      end
+    else
+      revocable_invitations.find_by(invitation_token: params[:invitation_token]) if params[:invitation_token].present?
+    end
   end
 
   def revocable_invitations

@@ -188,6 +188,7 @@ module Vouch
         router.resource :invitation, only: [:new, :create, :destroy],
                         controller: ctrl do
           router.get :accept, on: :collection
+          router.post :resend, on: :collection
         end
       end
     end

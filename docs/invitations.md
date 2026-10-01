@@ -6,6 +6,7 @@ An invitation lets someone join your application through a link. In a multi-tena
 
 - [Add invitations](#add-invitations)
 - [Invite someone to an organisation](#invite-someone-to-an-organisation)
+- [Resend an invitation](#resend-an-invitation)
 - [Revoke an invitation](#revoke-an-invitation)
 - [Routes](#routes)
 - [Registration customization](#registration-customization)
@@ -24,12 +25,11 @@ The generator adds invitation fields and associations to `User`, a controller an
 
 ```ruby
 change_table :users do |t|
-  t.string :invitation_token
+  t.string :invitation_token, index: { unique: true }
   t.datetime :invitation_sent_at
   t.datetime :invitation_accepted_at
   t.references :inviter, foreign_key: {to_table: :users}
   t.boolean :registration_required, default: false, null: false
-  t.index :invitation_token, unique: true
 end
 ```
 
@@ -37,32 +37,38 @@ end
 
 ### Decide who can invite
 
-Replace the generated authorization method:
+Override the action, authorize the prepared `@invitation`, and call `super`:
 
 ```ruby
 # app/controllers/users/invitations_controller.rb
- def authorize_invitation!
-   head :forbidden unless current_user.admin?
- end
+class Users::InvitationsController < Vouch::InvitationsController
+  def create
+    # Authorize @invitation using your application's permissions.
+    super
+  end
+end
 ```
 
-`authorize_invitation!` runs as a `before_action` on `create`. The example uses your own `admin?` role predicate. The default method denies creation until you replace it. Acceptance validates the invitation and account; revocation uses the relation described below.
+Preparation builds an unsaved invitation. It does not create an account or send email before your action runs. Vouch performs the writes when you call `super`; a response such as `head :forbidden` prevents them even if you subsequently call `super`.
 
-For single-tenant authentication, the generated `build_invited_account` method finds a `User` by email or creates one awaiting registration:
+The generated `build_invited_account` method finds the credentials record by email or builds an unsaved account awaiting registration:
 
 ```ruby
-# In Users::InvitationsController
- def build_invited_account(identifier)
-   email = identifier.to_s.strip.downcase
-   User.find_by("LOWER(email_address) = ?", email) || User.create!(
-     email_address: email,
-     registration_required: true,
-     password: SecureRandom.base64(48).truncate_bytes(64)
-   )
- end
+# app/controllers/users/invitations_controller.rb
+class Users::InvitationsController < Vouch::InvitationsController
+  private
+
+  def build_invited_account(identifier)
+    email = identifier.to_s.strip.downcase
+    User.find_by(email_address: email) || User.new(
+      email_address: email,
+      registration_required: true
+    )
+  end
+end
 ```
 
-Customize this method if your model requires additional fields or uses another login identifier. The temporary random password is replaced when the new user accepts and completes registration. Existing users keep their password.
+For a multi-tenant application, this method targets the model holding the sign-in credentials, such as `Account`. Customize it if that model requires additional fields or uses another identifier. A pending account has no password until registration completes; an existing account keeps its credentials.
 
 ### Customize delivery
 
@@ -131,13 +137,14 @@ The invitation is attached to the `User` membership. The generated lookup finds 
 
 ```ruby
 Vouch.routes(self) do |auth|
-  auth.scope :account, model: "Account" do
+  auth.scope model: "Account" do
     auth.sessions
     auth.registrations
-  end
-  auth.scope :user, account_scope: :account, identity: "User", tenant: "Organisation" do
-    auth.sessions
-    auth.invitations
+
+    auth.scope identity: "User", tenant: "Organisation" do
+      auth.sessions
+      auth.invitations
+    end
   end
 end
 ```
@@ -147,6 +154,52 @@ A new account chooses its password while retaining the invited membership and it
 Invitation acceptance and registration have [transactional hooks](#registration-customization) for accompanying records. Pending memberships are not ordinary sign-in choices: Vouch requires their valid invitation before granting access.
 
 Tenant assignment is automatic through the configured associations. Override `assign_tenant_to_invitee(identity, inviter)` only when your invitation policy needs different assignment rules.
+
+## Resend an invitation
+
+Creating another invitation for the same pending membership returns `:already_invited`. An existing joined membership returns `:already_joined`. Neither case sends another email or changes the invitation token.
+
+Use the separate resend action to send a replacement link:
+
+```erb
+<%# app/views/users/invitations/index.html.erb — inside your invitation list %>
+<%= button_to "Resend invitation", resend_user_invitation_path,
+  params: { invitation_token: invitation.invitation_token } %>
+```
+
+The controller loads `@invitation` through `revocable_invitations` before your action. Resending rotates the token and restarts its expiry, so the previous link stops working. The inviter stays unchanged unless your action assigns a replacement:
+
+```ruby
+# app/controllers/users/invitations_controller.rb
+class Users::InvitationsController < Vouch::InvitationsController
+  def resend
+    # Authorize @invitation using your application's permissions.
+    @invitation.inviter = current_user
+    super
+  end
+end
+```
+
+Omit the assignment to retain the original inviter. Changing it also changes which user's default `revocable_invitations` relation contains the invitation.
+
+Both `create` and `resend` accept a response block. You can display a resend link in your own error view instead of the default alert:
+
+```ruby
+# app/controllers/users/invitations_controller.rb
+class Users::InvitationsController < Vouch::InvitationsController
+  def create
+    # Authorize @invitation using your application's permissions.
+    super do |result|
+      if result.metadata[:reason] == :already_invited
+        @invitation = result.error.invitation
+        render :already_invited, status: :conflict
+      end
+    end
+  end
+end
+```
+
+> Supply `app/views/users/invitations/already_invited.html.erb` when using this override. Rendering or redirecting in the block suppresses the default response; otherwise Vouch continues with its normal notice or alert.
 
 ## Revoke an invitation
 
@@ -174,6 +227,7 @@ Revocation removes the invited membership in a multi-tenant setup. For a single-
 | --- | --- | --- |
 | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
 | `POST /users/invitation` | `user_invitation_path` | `Users::InvitationsController#create` |
+| `POST /users/invitation/resend` | `resend_user_invitation_path` | `Users::InvitationsController#resend` |
 | `GET /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |
 | `DELETE /users/invitation` | `user_invitation_path` | `Users::InvitationsController#destroy` |
 

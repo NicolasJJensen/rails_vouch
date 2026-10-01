@@ -160,6 +160,27 @@ RSpec.describe Vouch::Invitable::Concern do
     end
   end
 
+  describe "#reissue_invitation!" do
+    it "rejects a stale instance after another request accepts the invitation" do
+      invitation = create(:user, :invited, inviter: inviter, organisation: organisation)
+      stale = User.find(invitation.id)
+      invitation.accept_invitation!
+      expect { stale.reissue_invitation! }.to raise_error(Vouch::Invitable::InvitationExpiredError)
+      expect(invitation.reload.invitation_token).to be_nil
+    end
+
+    it "persists only the intended inviter change when reloading under its lock" do
+      invitation = create(:user, :invited, inviter: inviter, organisation: organisation)
+      original_account = invitation.account
+      replacement = create(:user, organisation: organisation)
+      invitation.inviter = replacement
+      invitation.account = create(:account)
+      invitation.reissue_invitation!
+      expect(invitation.reload.inviter).to eq(replacement)
+      expect(invitation.account).to eq(original_account)
+    end
+  end
+
   describe ".find_by_invitation_token" do
     it "finds a user by token" do
       user = create(:user, :invited, organisation: organisation)

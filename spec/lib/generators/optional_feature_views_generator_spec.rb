@@ -241,7 +241,7 @@ RSpec.describe "optional feature view generators" do
     expect(controller).to include("class Members::InvitationsController < Vouch::InvitationsController")
     expect(controller).not_to include("auth_scope :member")
     expect(controller).to include("Member.find_by")
-    expect(controller).to include("raise Vouch::ConfigurationError")
+    expect(controller).to include("def create", "def resend", "Authorize @invitation")
   end
 
   it "uses the invitation controller's conventional namespace when options are omitted" do

@@ -27,6 +27,9 @@ en:
       removed: "2FA method removed."
       not_found: "2FA method not found."
     invitations:
+      already_invited: "An invitation already exists. Use resend to send another link."
+      already_joined: "This person has already joined."
+      not_found: "Invitation not found."
       failed: "The invitation could not be created. Please try again."
       sent: "If the recipient is valid, an invitation will be sent."
       could_not_send: "Could not send invitation."

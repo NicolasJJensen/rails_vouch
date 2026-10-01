@@ -33,6 +33,19 @@
 module Vouch
   module Invitable
     class InvitationExpiredError < StandardError; end
+    class InvitationExistsError < StandardError
+      attr_reader :invitation
+
+      def initialize(invitation)
+        @invitation = invitation
+        super("An invitation already exists for this membership")
+      end
+    end
+    class AlreadyJoinedError < InvitationExistsError
+      def message
+        "This membership has already joined"
+      end
+    end
 
     module Concern
       extend ActiveSupport::Concern
@@ -65,15 +78,21 @@ module Vouch
         end
       end
 
-      def reissue_invitation!(invited_by: nil)
+      def reissue_invitation!(**options)
+        expected_token = invitation_token
+        inviter_keys = Array(self.class.reflect_on_association(:inviter).foreign_key).map(&:to_s)
+        inviter_changes = changes.slice(*inviter_keys).transform_values(&:last)
         Vouch::Persistence.transaction(self) do
-          lock!
-          return self unless invitation_token.present? && invitation_accepted_at.nil?
+          reload(lock: true)
+          unless expected_token.present? && invitation_token == expected_token && invitation_accepted_at.nil?
+            raise InvitationExpiredError
+          end
 
+          assign_attributes(inviter_changes)
+          self.inviter = options[:invited_by] if options.key?(:invited_by)
           Vouch::Persistence.update!(self,
             invitation_token: SecureRandom.uuid,
-            invitation_sent_at: Time.current,
-            inviter: invited_by)
+            invitation_sent_at: Time.current)
         end
         self
       end

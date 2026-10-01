@@ -3,16 +3,12 @@
 class Users::InvitationsController < Vouch::InvitationsController
   private
 
-  def authorize_invitation!
-    true
-  end
-
   def build_invited_account(identifier)
     identifier = identifier.to_s.strip.downcase
     existing = Account.find_by(email_address: identifier)
     return existing if existing
 
-    Account.create!(
+    Account.new(
       email_address: identifier,
       registration_required: true
     )
