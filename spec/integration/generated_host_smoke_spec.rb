@@ -453,7 +453,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           if #{variant == :namespaced}
             columns = ActiveRecord::Base.connection.columns(#{owner_name}.table_name).map(&:name)
             abort "recoverable columns were not migrated" unless columns.include?("recovery_attempts") && columns.include?("recovery_locked_at")
-            abort "password reset columns were not migrated" unless columns.include?("password_reset_token_digest") && columns.include?("password_reset_sent_at")
+            abort "password reset nonce was not migrated" unless columns.include?("password_reset_nonce")
         end
         puts "generated host migration passed"
       RUBY
@@ -468,7 +468,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           blank = account.class.new(email_address: " ", password: "secret123")
           abort "blank email was accepted" if blank.valid? || !blank.errors.of_kind?(:email_address, :blank)
         end
-        #{"tenant = #{tenant_name}.create!(name: \"Generated tenant\")" if variant == :tenant}
+        #{"tenant = #{tenant_name}.create!" if variant == :tenant}
         #{"#{model_name}.create!(#{owner_name.demodulize.underscore}: account#{", #{Vouch::ModelMetadata.new(tenant_name).association_key}: tenant" if variant == :tenant})" unless variant == :single}
         OauthIdentity.create!(#{Vouch::ModelMetadata.new(variant == :single ? model_name : owner_name).association_key}: account,
           provider: "generated_provider", uid: "generated-oauth")
@@ -556,7 +556,7 @@ RSpec.describe "generated host smoke test", :generated_host do
             exception = request.env["action_dispatch.exception"]
             abort "password reset request status: \#{password_session.response.status}; location=\#{password_session.response.headers['Location'].inspect}; body=\#{password_session.response.body.to_s[0, 1000].inspect}; exception=\#{exception&.class}: \#{exception&.message}; backtrace=\#{exception&.backtrace&.first(10).inspect}"
           end
-          abort "password reset request did not persist delivery token" unless account.reload.password_reset_token_digest.present?
+          abort "password reset request did not persist revocation nonce" unless account.reload.password_reset_nonce.present?
           delivered_reset_token = File.read(Rails.root.join("tmp/password_reset_delivery")) if File.exist?(Rails.root.join("tmp/password_reset_delivery"))
           abort "password reset delivery hook did not run" unless delivered_reset_token&.length.to_i >= 20
           delivered_mail = ActionMailer::Base.deliveries.last
@@ -580,8 +580,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           expected_fields = [
             "\#{account_param_key}[email_address]",
             "\#{account_param_key}[password]",
-            "\#{account_param_key}[password_confirmation]",
-            "\#{tenant_param_key}[name]"
+            "\#{account_param_key}[password_confirmation]"
           ]
           abort "tenant registration form did not expose its route" unless registration_action && registration_method
           abort "tenant registration form fields changed" unless expected_fields.all? { |field| registration_fields.include?(field) }
@@ -591,17 +590,15 @@ RSpec.describe "generated host smoke test", :generated_host do
               email_address: "tenant-registered@example.test",
               password: "secret123",
               password_confirmation: "secret123"
-            },
-            tenant_param_key => {name: "Tenant registration"}
+            }
           })
           abort "tenant registration form submission status: \#{session.response.status}" unless session.response.redirect?
           registered_account = #{owner_name}.find_by(email_address: "tenant-registered@example.test")
-          registered_tenant = #{tenant_name || "Object"}.find_by(name: "Tenant registration")
           generated_mapping = Vouch.mapping_for(:#{route_scope})
           registered_identity = #{model_name}.find_by(
-            generated_mapping.account_association => registered_account,
-            generated_mapping.identity_tenant_association.name => registered_tenant
+            generated_mapping.account_association => registered_account
           )
+          registered_tenant = registered_identity&.public_send(generated_mapping.identity_tenant_association.name)
           abort "tenant registration did not persist the account, tenant, and identity links" unless registered_account && registered_tenant && registered_identity
           session.get("/#{path_name}/sign_in", params: { format: :html })
           signed_identity = session.response.request.env.fetch("warden").user(:#{route_scope})
@@ -703,13 +700,16 @@ RSpec.describe "generated host smoke test", :generated_host do
           abort "custom identifier was not normalized" unless account.reload.login == "generated-login"
           target_account = #{owner_name}.create!(email_address: "impersonated@example.test", login: "impersonated-login", password: "secret123")
           target = #{model_name}.create!(#{owner_name.demodulize.underscore}: target_account)
-          reset_login_session.post("/#{path_name}/impersonations/\#{target.id}")
-          abort "generated impersonation controller did not deny by default" unless reset_login_session.response.forbidden?
           #{namespace}::ImpersonationsController.class_eval do
-            private
-
-            def authorize_impersonation!
-              true
+            def create
+              head :forbidden
+            end
+          end
+          reset_login_session.post("/#{path_name}/impersonations/\#{target.id}")
+          abort "host impersonation authorization did not deny access" unless reset_login_session.response.forbidden?
+          #{namespace}::ImpersonationsController.class_eval do
+            def create
+              super
             end
           end
           reset_login_session.post("/#{path_name}/impersonations/\#{target.id}")
