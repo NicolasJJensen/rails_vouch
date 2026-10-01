@@ -187,28 +187,43 @@ end
 
 Updating the baseline `email_address` revokes outstanding reset links automatically. If your application selects an associated contact, override `password_reset_recipient` to return that selected address. Revoke links when the selection changes, or when that contact changes or is deleted, in the same database transaction as the change.
 
-For example, a controller using a host-defined `primary_email` association can select the recipient with:
+This example lets each `User` choose one of their verified `Email` records. The foreign key identifies the selected record; the ownership check prevents selecting another person's email.
 
 ```ruby
-# app/controllers/users/password_resets_controller.rb
-class Users::PasswordResetsController < Vouch::PasswordResetsController
-  private
+# db/migrate/20261001000000_add_recovery_contacts.rb
+class AddRecoveryContacts < ActiveRecord::Migration[8.1]
+  def change
+    create_table :emails do |t|
+      t.references :user, null: false, foreign_key: true
+      t.citext :address, null: false
+      t.datetime :verified_at
+      t.timestamps
+    end
 
-  def password_reset_recipient
-    @account.primary_email&.address
+    add_reference :users, :primary_email, foreign_key: { to_table: :emails }
   end
 end
 ```
 
-For an application with `User#primary_email` and `Email#user`, these callbacks revoke the link in the update or deletion transaction:
+The application models enforce selection ownership and revoke outstanding links when the destination stops being usable:
 
 ```ruby
 # app/models/user.rb
 class User < ApplicationRecord
+  has_many :emails, dependent: :destroy
+  belongs_to :primary_email, class_name: "Email", optional: true
+
+  validate :primary_email_belongs_to_user
   after_update :revoke_reset_after_destination_selection,
     if: :saved_change_to_primary_email_id?
 
   private
+
+  def primary_email_belongs_to_user
+    return if primary_email_id.nil?
+    errors.add(:primary_email, "must be one of your verified emails") unless
+      emails.where.not(verified_at: nil).exists?(id: primary_email_id)
+  end
 
   def revoke_reset_after_destination_selection
     clear_password_reset!
@@ -219,20 +234,49 @@ end
 ```ruby
 # app/models/email.rb
 class Email < ApplicationRecord
-  before_update :revoke_owner_reset, if: :will_save_change_to_address?
-  before_destroy :revoke_owner_reset
+  belongs_to :user
+  normalizes :address, with: ->(value) { value.strip.downcase }
+
+  before_update :revoke_selected_reset_links, if: :recovery_contact_changed?
+  before_destroy { revoke_selected_reset_links(clear_selection: true) }
 
   private
 
-  def revoke_owner_reset
-    user.with_lock do
-      user.clear_password_reset! if user.primary_email_id == id
+  def recovery_contact_changed?
+    will_save_change_to_address? || will_save_change_to_verified_at? ||
+      will_save_change_to_user_id?
+  end
+
+  def revoke_selected_reset_links(clear_selection: false)
+    User.where(primary_email_id: id).order(:id).each do |owner|
+      owner.with_lock do
+        next unless owner.primary_email_id == id
+        if clear_selection || will_save_change_to_user_id?
+          owner.update!(primary_email: nil)
+        else
+          owner.clear_password_reset!
+        end
+      end
     end
   end
 end
 ```
 
-The associations and their ownership constraints belong to your application. All participating records must use the same writing connection. Adapt the callbacks to the fields that identify your selected contact; changing an unrelated contact need not revoke the link.
+```ruby
+# app/controllers/users/password_resets_controller.rb
+class Users::PasswordResetsController < Vouch::PasswordResetsController
+  private
+
+  def password_reset_recipient
+    @account.emails.where.not(verified_at: nil)
+      .find_by(id: @account.primary_email_id)&.address
+  end
+end
+```
+
+Changing the selection, address, owner, or verification state revokes existing links. Deleting a selected email also clears the selection. Changing an unrelated email does not revoke the selected destination’s link. These callbacks work with both signed and opaque tokens and must use the same writing connection as `User`.
+
+The controller captures the selected address while holding the user lock. Pass that captured `recipient:` to the generated mailer even if delivery runs later; never look up `primary_email` again in the mailer. A later contact change revokes the old token without redirecting its queued message to another address.
 
 > `update_columns`, `update_all`, direct SQL and other callback-bypassing changes also bypass revocation. Revoke the token explicitly in the same transaction when using them.
 
