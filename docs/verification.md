@@ -86,7 +86,7 @@ Configure the model and the recipient field:
 ```ruby
 class EmailConfirmation < ApplicationRecord
   include Vouch::TokenVerifiable::Concern
-  self.token_subject_attribute = :email_address
+  self.verifiable_subject_attribute = :email_address
   self.token_validity = 1.day
 end
 ```
@@ -110,7 +110,9 @@ class EmailConfirmationsController < ApplicationController
 
   def update
     result = EmailConfirmation.consume_token(params.require(:token))
-    if result.ok?
+    if result.already_verified?
+      redirect_to root_path, notice: "Email is already confirmed"
+    elsif result.ok?
       redirect_to root_path, notice: "Email confirmed"
     else
       redirect_to root_path, alert: "The confirmation link is invalid or expired"
@@ -128,3 +130,5 @@ Vouch checks the signature, expiry, recipient and record nonce. Successful consu
 
 
 To also use a verified credential during sign-in, follow [MFA setup](mfa.md).
+
+Code and signed-link verification use the same `verifiable_subject_attribute` declaration. Changing an identifying field clears its verification and outstanding verification/passwordless challenges; assigning an equivalent normalized value does not. Successfully verifying a saved record clears its other outstanding verification challenges. An `already_verified?` result means the current subject was previously verified and saved; it is not a new proof.

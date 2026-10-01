@@ -61,10 +61,10 @@ RSpec.describe Vouch::TokenVerifiable::Concern do
       expect(updates.length).to eq(1)
     end
 
-    it "returns nil on a replayed token" do
+    it "reports an already verified record on replay without fresh proof" do
       token = record.confirmation_token
       InvitationLink.consume_token(token)
-      expect(InvitationLink.consume_token(token)).to be_invalid
+      expect(InvitationLink.consume_token(token)).to be_already_verified
     end
 
     it "returns nil on a tampered token" do

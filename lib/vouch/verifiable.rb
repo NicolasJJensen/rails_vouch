@@ -38,17 +38,10 @@ module Vouch
     extend ActiveSupport::Concern
     include Vouch::LockoutCounter
     include Vouch::ChallengeNonce
+    include Vouch::VerificationSubject
 
     included do
-      class_attribute :verifiable_subject_attribute, instance_writer: false
-
       attr_accessor :challenge_token
-
-      # A credential subject is mutable in many host applications.  Track
-      # changes before persistence as well as on persisted rows so a draft
-      # cannot be verified with a challenge issued for an earlier value.
-      after_initialize :mark_verifiable_subject_ready
-      before_update :synchronize_verification_subject_version
 
       scope :verified,   -> { where.not(verified_at: nil) }
       scope :unverified, -> { where(verified_at: nil) }
@@ -73,6 +66,8 @@ module Vouch
     # session serialization for drafts. Delivery exceptions bubble.
     def start_verification!
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:verifiable, self.class))
+      reload if persisted? && !has_changes_to_save?
+      return Vouch::Result.already_verified(self) if persisted? && verified?
       return Vouch::Result.locked if verification_locked?
 
       nonce = issue_nonce!(:verification_nonce)
@@ -97,6 +92,8 @@ module Vouch
     # caller persists later (e.g. atomically alongside the parent record).
     def complete_verification!(code, token: challenge_token)
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:verifiable, self.class))
+      reload if persisted? && !has_changes_to_save?
+      return Vouch::Result.already_verified(self) if persisted? && verified?
       return Vouch::Result.locked if verification_locked?
 
       code = code.to_s.strip
@@ -107,15 +104,18 @@ module Vouch
         if persisted?
           transaction_result = Vouch::Persistence.transaction(self) do
             lock!
+            next Vouch::Result.already_verified(self) if verified?
             next Vouch::Result.invalid if verification_locked?
             next Vouch::Result.invalid unless verifiable_payload_valid?(payload)
 
-            Vouch::Persistence.update!(self,
+            attrs = {
               verification_nonce:     nil,
               verified_at:            Time.current,
               verification_attempts:  0,
               verification_locked_at: nil
-            )
+            }
+            attrs[:confirmation_nonce] = nil if has_attribute?(:confirmation_nonce)
+            Vouch::Persistence.update!(self, attrs)
           end
           transaction_result.is_a?(Vouch::Result) ? transaction_result : Vouch::Result.ok
         else
@@ -140,33 +140,12 @@ module Vouch
       Vouch::Persistence.transaction(self) do
         lock!
         attrs = {verified_at: nil, verification_nonce: nil}
+        attrs[:confirmation_nonce] = nil if has_attribute?(:confirmation_nonce)
         attrs[:two_factor_nonce] = nil if has_attribute?(:two_factor_nonce)
         attrs[:sign_in_nonce] = nil if has_attribute?(:sign_in_nonce)
         Vouch::Persistence.update!(self, attrs)
       end
       self
-    end
-
-    # The current natural identifier for both persisted and draft records.
-    # The row id remains part of the OTP purpose for persisted records, while
-    # the payload binds a challenge to the mutable subject value itself.
-    def verifiable_subject
-      attr = self.class.verifiable_subject_attribute
-      # Persisted hosts that do not declare a natural subject keep the
-      # historical id-bound behavior. Mutable credentials should declare the
-      # subject attribute so edits invalidate their challenges.
-      return id.to_s if !attr && persisted?
-
-      raise NotImplementedError, <<~MSG.squish unless attr
-        #{self.class.name} cannot compute a verifiable subject. Declare the
-        natural identifier with `self.verifiable_subject_attribute = :your_attr`
-        (e.g. :address for Email, :e164 for Phone, :label for Totp).
-      MSG
-
-      return public_send(attr).to_s unless attr.is_a?(Array)
-
-      raise ArgumentError, "verification subject attributes cannot be empty" if attr.empty?
-      attr.map { |name| [name.to_s, public_send(name)] }.to_json
     end
 
     # Host delivery hook. Override in the including model.
@@ -176,82 +155,6 @@ module Vouch
     end
 
     private
-
-    # Keep the challenge version in the token payload. The migration supplied
-    # by the generator adds this required column; drafts use the same row
-    # attribute before they are persisted.
-    def verifiable_subject_version
-      self[:verification_version].to_i
-    end
-
-    def mark_verifiable_subject_ready
-      @verifiable_subject_ready = true
-    end
-
-    # Active Record calls this method for every generated attribute writer. It
-    # lets drafts detect A -> B -> A changes before a save callback runs.
-    public
-    # `record[:subject] = value` goes through `write_attribute`, while
-    # generated setters and `assign_attributes` may call `_write_attribute`
-    # directly depending on the Active Record version. Track both entry
-    # points while suppressing the nested callback.
-    def write_attribute(attr_name, value)
-      track_verifiable_subject_write(attr_name, value)
-      @verifiable_subject_write_tracked = true
-      super
-    ensure
-      @verifiable_subject_write_tracked = false
-    end
-
-    def _write_attribute(attr_name, value)
-      track_verifiable_subject_write(attr_name, value) unless @verifiable_subject_write_tracked
-      super
-    end
-
-    private
-
-    def track_verifiable_subject_write(attr_name, value)
-      subject_attributes = canonical_verifiable_subject_attributes
-      return unless @verifiable_subject_ready && subject_attributes.any?
-      canonical_attribute = self.class.attribute_aliases[attr_name.to_s] || attr_name.to_s
-      return unless subject_attributes.include?(canonical_attribute)
-      return if read_attribute(canonical_attribute).to_s == value.to_s
-
-      invalidate_verification_for_subject_change!
-    end
-
-    def canonical_verifiable_subject_attributes
-      Array(self.class.verifiable_subject_attribute).map do |attribute|
-        self.class.attribute_aliases[attribute.to_s] || attribute.to_s
-      end.uniq
-    end
-
-    def invalidate_verification_for_subject_change!
-      return if @invalidating_verifiable_subject
-
-      @invalidating_verifiable_subject = true
-      self[:verification_version] = verifiable_subject_version + 1
-
-      self[:verified_at] = nil if has_attribute?("verified_at")
-    ensure
-      @invalidating_verifiable_subject = false
-    end
-
-    # A stale object may be saved concurrently with another subject update.
-    # Lock the current row before choosing the next version so both updates
-    # advance the persisted counter instead of writing the same N + 1 value.
-    def synchronize_verification_subject_version
-      subject_changed = canonical_verifiable_subject_attributes.any? { |name| will_save_change_to_attribute?(name) }
-      version_changed = will_save_change_to_attribute?(:verification_version)
-      return true unless subject_changed || version_changed
-
-      database_version = attribute_in_database(:verification_version).to_i
-      local_delta = [self[:verification_version].to_i - database_version, 1].max
-      latest_version = Vouch::RecordKey.find(self.class.lock, Vouch::RecordKey.serialize(self)).verification_version.to_i
-      self[:verification_version] = latest_version + local_delta
-      self[:verified_at] = nil if subject_changed
-      true
-    end
 
     # Subject-based payload check. Differs from LockoutCounter#payload_valid?
     # (which compares by id) so drafts, which have no id, can be verified by

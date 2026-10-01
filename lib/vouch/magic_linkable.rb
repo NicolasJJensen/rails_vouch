@@ -32,6 +32,7 @@ module Vouch
     extend ActiveSupport::Concern
     include Vouch::LockoutCounter
     include Vouch::ChallengeNonce
+    include Vouch::VerificationSubject
 
     def sign_in_locked?
       locked_window_open?(

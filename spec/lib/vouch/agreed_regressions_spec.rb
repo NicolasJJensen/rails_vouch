@@ -3,7 +3,7 @@ require 'rails_helper'
 RSpec.describe 'Agreed model and mapping contracts' do
   it 'binds signed verification to the configured recipient' do
     stub_const('ContactLink', Class.new(InvitationLink))
-    ContactLink.token_subject_attribute = :recipient_email
+    ContactLink.verifiable_subject_attribute = :recipient_email
     link = ContactLink.create!(recipient_email: 'first@example.com')
     token = link.confirmation_token
     link.update!(recipient_email: 'second@example.com')

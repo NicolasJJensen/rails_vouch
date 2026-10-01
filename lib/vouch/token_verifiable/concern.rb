@@ -32,11 +32,9 @@ module Vouch
   module TokenVerifiable
     module Concern
       extend ActiveSupport::Concern
+      include Vouch::VerificationSubject
 
       included do
-        class_attribute :token_subject_attribute, default: nil
-        before_update :invalidate_confirmation_subject
-
         class_attribute :token_validity, default: 1.day
         class_attribute :token_purpose,  default: nil
 
@@ -63,7 +61,7 @@ module Vouch
       end
 
       def confirmation_subject
-        public_send(token_subject_attribute).to_s if token_subject_attribute
+        verifiable_subject
       end
 
       def rotate_confirmation_nonce!
@@ -82,27 +80,29 @@ module Vouch
           expected = (payload[:nonce] || payload["nonce"]).to_s
           return Vouch::Result.invalid if expected.empty?
 
-          # A concurrent revocation can delete the record between an unlocked
-          # lookup and lock acquisition.
-          result = transaction(requires_new: true) do
-            record = begin
-              Vouch::RecordKey.find(lock, payload[:id] || payload["id"])
-            rescue ActiveRecord::RecordNotFound, ArgumentError
-              nil
-            end
-            next Vouch::Result.invalid unless record
+          record = begin
+            Vouch::RecordKey.find(self, payload[:id] || payload["id"])
+          rescue ActiveRecord::RecordNotFound, ArgumentError
+            return Vouch::Result.invalid
+          end
+          Vouch::Persistence.transaction(record) do
+            record = Vouch::RecordKey.find(lock, payload[:id] || payload["id"])
+            next Vouch::Result.invalid unless record.confirmation_subject == (payload[:subject] || payload["subject"])
+            next Vouch::Result.already_verified(record) if record.verified?
 
             actual = record.confirmation_nonce.to_s
             next Vouch::Result.invalid if actual.empty?
             next Vouch::Result.invalid unless ActiveSupport::SecurityUtils.secure_compare(expected, actual)
 
-            next Vouch::Result.invalid unless record.confirmation_subject == (payload[:subject] || payload['subject'])
-            Vouch::Persistence.update!(record, verified_at: Time.current, confirmation_nonce: SecureRandom.hex(16))
+            attrs = { verified_at: Time.current, confirmation_nonce: SecureRandom.hex(16) }
+            attrs[:verification_nonce] = nil if record.has_attribute?(:verification_nonce)
+            Vouch::Persistence.update!(record, attrs)
             Vouch::Result.ok(record)
           end
-          result || Vouch::Result.invalid
-        rescue ActiveSupport::MessageVerifier::InvalidSignature, Vouch::Persistence::Cancelled
+        rescue ActiveSupport::MessageVerifier::InvalidSignature, ActiveRecord::RecordNotFound
           Vouch::Result.invalid
+        rescue Vouch::Persistence::Cancelled => error
+          Vouch::Result.cancelled(record: error.record, error: error)
         end
 
         def token_verifier
@@ -115,12 +115,6 @@ module Vouch
       end
 
       private
-
-      def invalidate_confirmation_subject
-        return unless token_subject_attribute && will_save_change_to_attribute?(token_subject_attribute)
-        self.confirmation_nonce = SecureRandom.hex(16)
-        self.verified_at = nil
-      end
 
       def assign_confirmation_nonce
         self.confirmation_nonce ||= SecureRandom.hex(16)

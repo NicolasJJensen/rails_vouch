@@ -34,6 +34,7 @@ end
 | `invalid?` | The proof or submitted attributes were rejected. |
 | `locked?` | Attempt protection prevents another attempt now. |
 | `cancelled?` | A required write or lifecycle callback cancelled the operation. |
+| `already_verified?` | Verification is already saved for this subject; no new proof was accepted. |
 | `pending?` | A controller flow needs another step, such as MFA; sign-in is not complete. |
 
 For a bang operation, rescue `Vouch::OperationFailed` at the boundary where you handle that expected failure. Its `result` retains the status and metadata. Where available, `result.metadata[:record].errors` contains field errors and `result.error` is the underlying expected exception. Unexpected exceptions, including an unavailable database, retain their original types.
