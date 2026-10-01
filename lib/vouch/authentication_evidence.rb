@@ -16,6 +16,7 @@ module Vouch
         result["credential_id"] = Vouch::RecordKey.serialize(credential)
         result["credential_version"] = credential.try(:verification_version)
         result["credential_verified_at"] = credential.try(:verified_at)&.utc&.iso8601(6)
+        result["credential_enabled_at"] = credential.try(:two_factor_enabled_at)&.utc&.iso8601(6)
       end
       if owner
         result["owner_type"] = owner.class.name
@@ -80,7 +81,8 @@ module Vouch
         credential && credential.two_factor_enabled? && credential.verified? && !credential.two_factor_locked? &&
           credential.try(:verification_version) == evidence["credential_version"] &&
           credential.try(:authentication_method).to_s == evidence["credential_method"].to_s &&
-          credential.verified_at&.utc&.iso8601(6) == evidence["credential_verified_at"]
+          credential.verified_at&.utc&.iso8601(6) == evidence["credential_verified_at"] &&
+          credential.two_factor_enabled_at&.utc&.iso8601(6) == evidence["credential_enabled_at"]
       end
     end
   end

@@ -24,6 +24,17 @@ RSpec.describe Vouch::AuthenticationEvidence do
     expect(described_class.qualifies?(evidence, requirements, account: account, mapping: mapping)).to be(false)
   end
 
+  it "does not revive old evidence when a factor is enabled again" do
+    evidence = described_class.build(method: :two_factor, account: account, credential: credential)
+    credential.disable_two_factor!
+    travel 1.second do
+      credential.enable_two_factor!
+      expect(described_class.qualifies?(evidence, requirements, account: account, mapping: mapping)).to be(false)
+      fresh = described_class.build(method: :two_factor, account: account, credential: credential)
+      expect(described_class.qualifies?(fresh, requirements, account: account, mapping: mapping)).to be(true)
+    end
+  end
+
   it "does not let a valid factor satisfy a different credential type requirement" do
     evidence = described_class.build(method: :two_factor, account: account, credential: credential)
     expect(described_class.qualifies?(evidence, {credential_types: ["EmailCredential"]}, account: account, mapping: mapping)).to be(false)

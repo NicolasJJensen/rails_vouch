@@ -264,6 +264,32 @@ RSpec.describe Vouch::TwoFactorable do
   end
 
   describe "#disable_two_factor!" do
+    it "keeps repeated enable calls in the same enabled period" do
+      credential.update!(verified_at: Time.current)
+      credential.enable_two_factor!
+      enabled_at = credential.reload.two_factor_enabled_at
+      travel 1.minute do
+        credential.enable_two_factor!
+        expect(credential.reload.two_factor_enabled_at).to eq(enabled_at)
+      end
+    end
+
+    it "invalidates an old challenge after disabling and enabling again" do
+      credential.update!(otp_secret: nil)
+      credential.update!(verified_at: Time.current, two_factor_enabled_at: Time.current)
+      code = nil
+      allow(credential).to receive(:deliver_two_factor_code) { |value| code = value }
+      challenge = credential.challenge!
+      credential.disable_two_factor!
+      expect(credential.reload.two_factor_nonce).to be_nil
+      travel 1.second do
+        credential.enable_two_factor!
+        expect(credential.verify_challenge(code, token: challenge.token)).to be_invalid
+        fresh = credential.challenge!
+        expect(credential.verify_challenge(code, token: fresh.token)).to be_ok
+      end
+    end
+
     it "clears two_factor_enabled_at" do
       credential.update!(verified_at: Time.current, two_factor_enabled_at: Time.current)
       credential.disable_two_factor!

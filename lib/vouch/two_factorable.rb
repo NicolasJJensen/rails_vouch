@@ -112,7 +112,7 @@ module Vouch
           MSG
         end
 
-        Vouch::Persistence.update!(self, two_factor_enabled_at: Time.current)
+        Vouch::Persistence.update!(self, two_factor_enabled_at: Time.current) unless two_factor_enabled?
       end
 
       self
@@ -126,10 +126,10 @@ module Vouch
           if owner.respond_to?(:two_factor_enabled?) && owner.two_factor_enabled?
             ensure_not_last_usable_factor!(owner)
           end
-          Vouch::Persistence.update!(self, two_factor_enabled_at: nil)
+          Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil)
         end
       else
-        Vouch::Persistence.transaction(self) { Vouch::Persistence.update!(self, two_factor_enabled_at: nil) }
+        Vouch::Persistence.transaction(self) { Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil) }
       end
       self
     end
@@ -320,7 +320,8 @@ module Vouch
     end
 
     def two_factor_payload
-      payload = { "id" => Vouch::RecordKey.value(self), "klass" => self.class.name }
+      payload = { "id" => Vouch::RecordKey.value(self), "klass" => self.class.name,
+        "enabled_at" => two_factor_enabled_at&.utc&.iso8601(6) }
       if respond_to?(:verifiable_subject)
         payload["subject"] = verifiable_subject
         payload["version"] = verifiable_subject_version
@@ -330,6 +331,7 @@ module Vouch
 
     def two_factor_payload_valid?(payload)
       return false unless payload_valid?(payload) && nonce_matches?(payload, :two_factor_nonce)
+      return false unless payload["enabled_at"] == two_factor_enabled_at&.utc&.iso8601(6)
       return true unless respond_to?(:verifiable_subject)
 
       payload["subject"] == verifiable_subject &&
