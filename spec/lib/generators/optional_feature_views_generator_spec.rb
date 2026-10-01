@@ -32,9 +32,9 @@ RSpec.describe "optional feature view generators" do
     expect(File.read(File.join(directory, "app/controllers/users/password_resets_controller.rb"))).not_to include("auth_scope :user")
     new_view = File.read(File.join(directory, "app/views/users/password_resets/new.html.erb"))
     edit_view = File.read(File.join(directory, "app/views/users/password_resets/edit.html.erb"))
-    expect(new_view).to include("form_with url: user_password_reset_path, method: :post")
+    expect(new_view).to include("form_with url: vouch_route_path(:password_resets, :create), method: :post")
     expect(new_view).to include("email_field_tag :email_address")
-    expect(edit_view).to include("form_with url: user_password_reset_path, scope: :account, method: :patch")
+    expect(edit_view).to include("form_with url: vouch_route_path(:password_resets, :update), scope: :account, method: :patch")
     expect(edit_view).to include("hidden_field_tag :token, params[:token]")
   end
 
@@ -229,7 +229,7 @@ RSpec.describe "optional feature view generators" do
     controller = File.read(File.join(directory, "app/controllers/users/invitations_controller.rb"))
     view = File.read(File.join(directory, "app/views/users/invitations/new.html.erb"))
     expect(controller).to include("Account.find_by")
-    expect(view).to include("form_with url: user_invitation_path, method: :post")
+    expect(view).to include("form_with url: vouch_route_path(:invitations, :create), method: :post")
     expect(view).to include("email_field_tag :email_address")
   end
 

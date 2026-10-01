@@ -531,7 +531,7 @@ RSpec.describe "Vouch generators" do
       view = File.read(File.join(@generator_directory, "app/views/#{namespace}/invitation_mailer/invitation.text.erb"))
       expect(mailer).to include("class #{namespace.camelize}::InvitationMailer < ApplicationMailer")
       expect(controller).to include("#{namespace.camelize}::InvitationMailer.invitation")
-      expect(view).to include("accept_#{namespace.singularize}_invitation_url")
+      expect(view).to include("Vouch.mapping_for(:#{namespace.singularize}).route_url(:invitations, :accept, self")
     end
   end
 

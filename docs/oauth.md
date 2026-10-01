@@ -358,6 +358,8 @@ Rendering or redirecting in the block replaces Vouch's response. Doing neither k
 | `GET /users/auth/:provider/callback` | `Users::OmniAuthsController#callback` | Link, sign in, or start registration after provider verification. |
 | `GET /users/auth/failure` | `Users::OmniAuthsController#failure` | Return to sign-in after provider failure. |
 
+The callback helpers are `user_oauth_callback_path(provider: :github)` and `user_oauth_failure_path`. Rename these with `path_names:` or change their URLs with `paths:`; see [route customization](controllers.md#routes).
+
 Providers that POST their callback require that HTTP method on the callback route:
 
 ```ruby

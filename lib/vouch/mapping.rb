@@ -158,10 +158,19 @@ module Vouch
       end
     end
 
+    def route_url(feature, action, context, **options)
+      helper = :"#{route_name(feature, action)}_url"
+      context.public_send(helper, **options)
+    end
+
     def default_route_names
       {
         sessions: {new: :"new_#{helper_prefix}_session", create: :"#{helper_prefix}_session", destroy: :"#{helper_prefix}_sign_out"},
-        registrations: {new: :"new_#{helper_prefix}_registration", create: :"#{helper_prefix}_registration"}
+        registrations: {new: :"new_#{helper_prefix}_registration", create: :"#{helper_prefix}_registration"},
+        password_resets: {new: :"new_#{helper_prefix}_password_reset", create: :"#{helper_prefix}_password_reset", edit: :"edit_#{helper_prefix}_password_reset", update: :"#{helper_prefix}_password_reset"},
+        invitations: {new: :"new_#{helper_prefix}_invitation", create: :"#{helper_prefix}_invitation", destroy: :"#{helper_prefix}_invitation", accept: :"accept_#{helper_prefix}_invitation", reject: :"reject_#{helper_prefix}_invitation", resend: :"resend_#{helper_prefix}_invitation"},
+        impersonation: {create: :"#{helper_prefix}_impersonate", destroy: :"#{helper_prefix}_stop_impersonation", destroy_all: :"#{helper_prefix}_stop_all_impersonations"},
+        oauth_callbacks: {callback: :"#{helper_prefix}_oauth_callback", failure: :"#{helper_prefix}_oauth_failure"}
       }
     end
 

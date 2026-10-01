@@ -195,6 +195,30 @@ usual `account_` helper prefix. Use the generated form helpers or
 `vouch_route_path(:registrations, :create)` when an application configures
 nonstandard paths.
 
+`auth.password_resets`, `auth.invitations`, and `auth.impersonation` accept the same options, keyed by their controller actions. For example:
+
+```ruby
+# config/routes.rb, inside auth.scope model: "User"
+auth.invitations(
+  paths: { accept: "join", resend: "resend-invitation" },
+  path_names: { accept: :join_team, resend: :resend_invitation }
+)
+```
+
+This creates `join_team_path` at `/users/join` for both viewing and accepting an invitation. Generated forms and mailers follow the configured names. When two actions normally share a helper, such as password-reset `create` and `update`, give them different `path_names` if their paths differ.
+
+OAuth callback paths are full paths, including the scope prefix:
+
+```ruby
+# config/routes.rb, inside auth.scope model: "User"
+auth.oauth_callbacks(
+  paths: { callback: "/users/providers/:provider/return" },
+  path_names: { callback: :provider_return }
+)
+```
+
+The provider middleware and registered provider callback URL must use that same path. `auth.two_factor` currently uses its standard route names.
+
 These routes use `auth.scope model: "User"` with the corresponding feature declarations. Optional feature generators add their declarations. Every named `_path` helper also has a Rails `_url` variant.
 
 | Declaration | Request | Helper | Action |
@@ -209,6 +233,7 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `GET /users/password_reset/edit?token=…` | `edit_user_password_reset_path(token: token)` | `Users::PasswordResetsController#edit` |
 | | `PATCH/PUT /users/password_reset` | `user_password_reset_path` | `Users::PasswordResetsController#update` |
 | `auth.two_factor` | `GET /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#index` |
+| | `DELETE /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#destroy` |
 | | `GET /users/two_factor_challenges/:id` | `user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#show` |
 | | `POST /users/two_factor_challenges/:id/send_code` | `send_code_user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#send_code` |
 | | `PATCH/PUT /users/two_factor_challenges/:id` | `user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#update` |
@@ -221,8 +246,8 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `POST /users/recovery` | `user_consume_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#consume_recovery` |
 | | `GET /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#show` |
 | | `POST /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#create` |
-| `auth.oauth_callbacks` | `GET /users/auth/:provider/callback` | No named helper | `Users::OmniAuthsController#callback` |
-| | `GET /users/auth/failure` | `users_auth_failure_path` | `Users::OmniAuthsController#failure` |
+| `auth.oauth_callbacks` | `GET /users/auth/:provider/callback` | `user_oauth_callback_path(provider: :github)` | `Users::OmniAuthsController#callback` |
+| | `GET /users/auth/failure` | `user_oauth_failure_path` | `Users::OmniAuthsController#failure` |
 | `auth.invitations` | `GET /users/invitation/new` | `new_user_invitation_path` | `Users::InvitationsController#new` |
 | | `POST /users/invitation` | `user_invitation_path` | `Users::InvitationsController#create` |
 | | `GET/POST /users/invitation/accept?token=…` | `accept_user_invitation_path(token: token)` | `Users::InvitationsController#accept` |
@@ -235,7 +260,6 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 
 For a linked membership scope, the three session routes use `Users::SessionsController < Vouch::MembershipSessionsController`. Credential routes such as password reset belong to its parent account scope and use `/accounts` and `account_` prefixes. See [model mapping](model-mapping.md).
 
-| | `DELETE /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#destroy` |
 OAuth request URLs are provided by OmniAuth; [the OAuth guide](oauth.md) shows the sign-in button and provider configuration. Callback methods can vary by provider.
 
 Use `bin/rails routes` to inspect your enabled routes. [Custom prefixes](model-mapping.md) change URLs and route helper names independently.

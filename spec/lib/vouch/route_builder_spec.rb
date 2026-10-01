@@ -197,6 +197,53 @@ RSpec.describe Vouch::RouteBuilder do
       expect(routes.url_helpers.member_registration_path).to eq("/members/sign_up")
     end
 
+    it "customizes optional endpoint paths and complete helper names independently" do
+      routes = ActionDispatch::Routing::RouteSet.new
+      routes.draw do
+        Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+          auth.password_resets controller: "users/password_resets", paths: {new: "forgot", create: "request-reset", update: "replace-password"},
+            path_names: {new: :forgot_password, create: :request_reset, update: :replace_password}
+          auth.invitations controller: "users/invitations", paths: {accept: "join", resend: "send-again"},
+            path_names: {accept: :join_team, resend: :resend_invite}
+          auth.impersonation paths: {create: "act-as/:id"}, path_names: {create: :act_as}
+          auth.oauth_callbacks paths: {callback: "/providers/:provider/return"}, path_names: {callback: :provider_return}
+        end
+      end
+      expect(routes.url_helpers.forgot_password_path).to eq("/members/forgot")
+      expect(routes.url_helpers.request_reset_path).to eq("/members/request-reset")
+      expect(routes.url_helpers.replace_password_path).to eq("/members/replace-password")
+      expect(routes.url_helpers.join_team_path).to eq("/members/join")
+      expect(routes.url_helpers.resend_invite_path).to eq("/members/send-again")
+      expect(routes.url_helpers.act_as_path(id: 7)).to eq("/members/act-as/7")
+      expect(routes.url_helpers.provider_return_path(provider: "github")).to eq("/providers/github/return")
+      expect(routes.recognize_path("/members/join", method: :post)).to include(action: "accept")
+      expect(routes.recognize_path("/members/replace-password", method: :put)).to include(action: "update")
+      mapping = Vouch.mapping_for(:member)
+      expect(mapping.route_path(:invitations, :accept, routes.url_helpers, token: "abc")).to eq("/members/join?token=abc")
+      expect(mapping.route_url(:invitations, :accept, routes.url_helpers, host: "example.test", token: "abc")).to eq("http://example.test/members/join?token=abc")
+    end
+
+    it "rejects unknown optional actions and conflicting shared helper paths" do
+      %i[password_resets invitations impersonation oauth_callbacks].each do |feature|
+        routes = ActionDispatch::Routing::RouteSet.new
+        expect do
+          routes.draw do
+            Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+              auth.public_send(feature, paths: {missing: "unknown"})
+            end
+          end
+        end.to raise_error(Vouch::ConfigurationError, /Unknown/)
+      end
+      routes = ActionDispatch::Routing::RouteSet.new
+      expect do
+        routes.draw do
+          Vouch::RouteBuilder.new(self).scope(:member, model: "Account") do |auth|
+            auth.password_resets paths: {update: "replace"}
+          end
+        end
+      end.to raise_error(Vouch::ConfigurationError, /distinct path_names/)
+    end
+
     it "rejects unknown route actions and helper suffixes" do
       [{paths: {login: "login"}}, {path_names: {login: :sign_in}},
        {path_names: {new: :sign_in_path}}].each do |options|

@@ -148,15 +148,14 @@ module Vouch
       end
     end
 
-    def password_resets(controller: nil)
+    def password_resets(controller: nil, paths: {}, path_names: {})
       require_credentials_scope!
-      m = @current_mapping
-      ctrl = controller || "#{m.scope_name.to_s.pluralize}/password_resets"
-
-      router.scope m.path, as: m.helper_prefix do
-        router.resource :password_reset, only: [:new, :create, :edit, :update],
-                        controller: ctrl
-      end
+      draw_feature_routes(:password_resets, controller, paths, path_names, {
+        new: [[:get], "password_reset/new"],
+        create: [[:post], "password_reset"],
+        edit: [[:get], "password_reset/edit"],
+        update: [[:patch, :put], "password_reset"]
+      })
     end
 
     def two_factor(challenge_controller: nil, credentials_controller: nil, recovery_controller: nil)
@@ -180,35 +179,29 @@ module Vouch
       end
     end
 
-    def invitations(controller: nil)
-      m = @current_mapping
-      ctrl = controller || "#{m.scope_name.to_s.pluralize}/invitations"
-
-      router.scope m.path, as: m.helper_prefix do
-        router.resource :invitation, only: [:new, :create, :destroy],
-                        controller: ctrl do
-          router.match :accept, via: [:get, :post], on: :collection
-          router.post :reject, on: :collection
-          router.post :resend, on: :collection
-        end
-      end
+    def invitations(controller: nil, paths: {}, path_names: {})
+      draw_feature_routes(:invitations, controller, paths, path_names, {
+        new: [[:get], "invitation/new"],
+        create: [[:post], "invitation"],
+        destroy: [[:delete], "invitation"],
+        accept: [[:get, :post], "invitation/accept"],
+        reject: [[:post], "invitation/reject"],
+        resend: [[:post], "invitation/resend"]
+      })
     end
 
-    def impersonation(controller: nil)
-      m = @current_mapping
-      ctrl = controller || "#{m.scope_name.to_s.pluralize}/impersonations"
-
-      router.scope m.path, as: m.helper_prefix do
-        router.post   "impersonations/:id", to: "#{ctrl}#create",      as: :impersonate
-        router.delete "impersonations",     to: "#{ctrl}#destroy",      as: :stop_impersonation
-        router.delete "impersonations/all", to: "#{ctrl}#destroy_all",  as: :stop_all_impersonations
-      end
-
-      @pending_impersonation_mappings << m
+    def impersonation(controller: nil, paths: {}, path_names: {})
+      controller ||= "#{@current_mapping.scope_name.to_s.pluralize}/impersonations"
+      draw_feature_routes(:impersonation, controller, paths, path_names, {
+        create: [[:post], "impersonations/:id"],
+        destroy: [[:delete], "impersonations"],
+        destroy_all: [[:delete], "impersonations/all"]
+      })
+      @pending_impersonation_mappings << @current_mapping
     end
 
     def oauth_callbacks(controller: nil, callback_path: nil, failure_path: nil,
-                        callback_methods: nil, failure_methods: nil, registration: :form)
+                        callback_methods: nil, failure_methods: nil, registration: :form, paths: {}, path_names: {})
       require_credentials_scope!
       m = @current_mapping
       ctrl = controller || "#{m.scope_name.to_s.pluralize}/omni_auths"
@@ -216,6 +209,10 @@ module Vouch
         raise Vouch::ConfigurationError, "OAuth registration must be :form or :automatic"
       end
       m.oauth_registration = registration
+      overrides = validate_paths!(:oauth_callbacks, paths)
+      m.configure_route_names(:oauth_callbacks, path_names)
+      callback_path = overrides[:callback] if overrides.key?(:callback)
+      failure_path = overrides[:failure] if overrides.key?(:failure)
 
       callback_path ||= m.oauth_callback_path || "/#{m.path}/auth/:provider/callback"
       m.oauth_callback_path = callback_path
@@ -224,11 +221,11 @@ module Vouch
       callback_methods = Array(callback_methods || m.oauth_callback_methods)
       failure_methods  = Array(failure_methods || m.oauth_failure_methods)
 
-      callback_methods.each do |method|
-        add_route(method, callback_path, to: "#{ctrl}#callback")
+      callback_methods.each_with_index do |method, index|
+        add_route(method, callback_path, to: "#{ctrl}#callback", as: (m.route_name(:oauth_callbacks, :callback) if index.zero?))
       end
-      failure_methods.each do |method|
-        add_route(method, failure_path, to: "#{ctrl}#failure")
+      failure_methods.each_with_index do |method, index|
+        add_route(method, failure_path, to: "#{ctrl}#failure", as: (m.route_name(:oauth_callbacks, :failure) if index.zero?))
       end
     end
 
@@ -236,8 +233,27 @@ module Vouch
 
     attr_reader :router
 
+    def draw_feature_routes(feature, controller, paths, path_names, definitions)
+      mapping = @current_mapping
+      overrides = validate_paths!(feature, paths)
+      mapping.configure_route_names(feature, path_names)
+      controller ||= "#{mapping.scope_name.to_s.pluralize}/#{feature}"
+      helpers = {}
+      router.scope mapping.path do
+        definitions.each do |action, (methods, default_path)|
+          path = overrides.fetch(action, default_path)
+          name = mapping.route_name(feature, action)
+          if helpers.key?(name) && helpers[name] != path
+            raise Vouch::ConfigurationError, "#{feature} actions sharing #{name.inspect} need the same path or distinct path_names"
+          end
+          router.match path, via: methods, to: "#{controller}##{action}", as: (name unless helpers.key?(name))
+          helpers[name] = path
+        end
+      end
+    end
+
     def validate_paths!(feature, paths)
-      allowed = feature == :sessions ? %i[new create destroy] : %i[new create]
+      allowed = @current_mapping.default_route_names.fetch(feature).keys
       values = paths.transform_keys(&:to_sym)
       unknown = values.keys - allowed
       raise Vouch::ConfigurationError, "Unknown #{feature} paths: #{unknown.join(', ')}" if unknown.any?
@@ -355,13 +371,13 @@ module Vouch
       end
     end
 
-    def add_route(method, path, to:)
+    def add_route(method, path, to:, as: nil)
       method = method.to_s.downcase
       unless router.respond_to?(method)
         raise ArgumentError, "Unsupported OAuth route HTTP method: #{method.inspect}"
       end
 
-      router.public_send(method, path, to: to)
+      router.public_send(method, path, to: to, as: as)
     end
 
     def session_fingerprint(account)

@@ -430,10 +430,8 @@ RSpec.describe "generated host smoke test", :generated_host do
       RUBY
       routes_path = File.join(directory, "config/routes.rb")
       routes = File.read(routes_path)
-      oauth_routes = routes.sub(/^([ \t]*)auth\.registrations\n/) do
-        "#{Regexp.last_match(0)}#{Regexp.last_match(0)[/\A[ \t]*/]}auth.oauth_callbacks\n"
-      end
-      raise "generated OAuth route was not inserted" if oauth_routes == routes
+      raise "OAuth generator did not insert callback routes" unless routes.include?("auth.oauth_callbacks")
+      oauth_routes = routes.dup
       oauth_routes.sub!("Rails.application.routes.draw do", "Rails.application.routes.draw do\n  post '/#{account_path_name}/auth/:provider', to: 'oauth_requests#create'")
       write_file(directory, "config/routes.rb", oauth_routes)
 
