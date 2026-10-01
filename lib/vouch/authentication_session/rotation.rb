@@ -4,6 +4,7 @@ module Vouch
   class AuthenticationSession
     module Rotation
       def renew!
+        rails_session[AuthenticationSession::CONTEXT_KEY] = SecureRandom.hex(32)
         mapping = controller.send(:auth_mapping)
         affected = [mapping] + Vouch.dependent_mappings(scope)
         preserved = scoped_keys + [key(:impersonation)]

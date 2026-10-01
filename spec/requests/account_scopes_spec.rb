@@ -145,6 +145,41 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("account" => account.id, "member" => membership.id)
   end
 
+  it "does not fabricate an original account absent from the captured sessions" do
+    reference = Vouch::ImpersonationStack.send(:reference_for, Vouch.mapping_for(:admin), membership)
+    stored = { Vouch::ImpersonationStack::SESSION_KEY => [{ "source" => reference, "contexts" => [] }] }
+
+    expect(Vouch::ImpersonationStack.original(warden: nil, session: stored, scope: :account)).to be_nil
+  end
+
+  it "changes the authentication context across sign-out and another login of the same account" do
+    account_login
+    original = Vouch::AuthenticationSession.context_id_for(request.session)
+    get "/account_page"
+    expect(Vouch::AuthenticationSession.context_id_for(request.session)).to eq(original)
+
+    delete "/linked_accounts/sign_out"
+    expect(request.session[Vouch::AuthenticationSession::CONTEXT_KEY]).to be_nil
+    account_login
+    expect(Vouch::AuthenticationSession.context_id_for(request.session)).not_to eq(original)
+  end
+
+  it "changes the authentication context when entering and leaving impersonation" do
+    target = create(:user)
+    account_login
+    get "/linked_admins/sign_in"
+    original = Vouch::AuthenticationSession.context_id_for(request.session)
+    post "/account_impersonations/#{target.account_id}"
+    impersonating = Vouch::AuthenticationSession.context_id_for(request.session)
+    expect(impersonating).not_to eq(original)
+    LinkedMembers::ImpersonationsController.impersonator_scopes :member
+    get "/linked_members/sign_in"
+    post "/linked_members/impersonations/#{create(:user).id}"
+    nested = Vouch::AuthenticationSession.context_id_for(request.session)
+    delete "/linked_members/impersonations"
+    expect(Vouch::AuthenticationSession.context_id_for(request.session)).not_to eq(nested)
+  end
+
   it "establishes only the account when logging in directly" do
     account_login
     expect(response).to redirect_to("/")

@@ -5,6 +5,15 @@ module Vouch
   # rotation. It deliberately receives the controller only for Rails session,
   # Warden, and mapping access; authentication decisions remain in the controller concern.
   class AuthenticationSession
+    CONTEXT_KEY = "warden.vouch.authentication_context"
+
+    def self.context_id_for(session)
+      session[CONTEXT_KEY] ||= SecureRandom.hex(32)
+    end
+
+    def context_id
+      self.class.context_id_for(session)
+    end
 
     include Rotation
     include Pending

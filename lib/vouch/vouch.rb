@@ -96,6 +96,7 @@ module Vouch
     end
 
     def logout_scope(warden, session, scope)
+      session.delete(AuthenticationSession::CONTEXT_KEY)
       mapping = mapping_for(scope)
       impersonation_scopes = Vouch::ImpersonationStack.logout_scopes(session, scope: scope)
       session.delete(Vouch::ImpersonationStack::SESSION_KEY) if impersonation_scopes.any?
