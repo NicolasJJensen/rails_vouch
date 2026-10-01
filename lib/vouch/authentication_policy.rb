@@ -16,17 +16,9 @@ module Vouch
         end
         return false
       end
-      return false if method.to_s == 'oauth' && Vouch.configuration.oauth_mfa_providers.map(&:to_s).include?(provider.to_s)
 
       account.respond_to?(:two_factor_enabled?) && account.two_factor_enabled?
     end
 
-    # Return nil when a membership accepts ordinary account MFA. Applications
-    # may return { credential_types:, credential_methods:, max_age:,
-    # allow_recovery_codes: } for a
-    # tenant-specific second challenge.
-    def membership_mfa_requirements(_account, identity:, tenant:, controller:)
-      nil
-    end
   end
 end

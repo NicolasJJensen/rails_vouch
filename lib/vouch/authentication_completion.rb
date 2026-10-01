@@ -29,7 +29,7 @@ module Vouch
       context['factor'] = credential_reference(credential) if credential
       if evidence_method
         context['evidence'] = Vouch::AuthenticationEvidence.build(method: evidence_method, account: account,
-          credential: credential, owner: recovery_owner || credential)
+          credential: (credential unless evidence_method.to_sym == :recovery_code), owner: recovery_owner || credential)
       end
       return :denied unless valid_context_factor?(account, context)
 
@@ -63,7 +63,6 @@ module Vouch
           next false unless authentication_allowed?(account, context)
           next false unless pending_candidate_identities(account, context).any? { |candidate| Vouch::RecordKey.same?(candidate, identity) }
           next false unless valid_context_factor?(account, context)
-          next false unless membership_mfa_context_valid?(account, identity, context)
 
           factor = context_credential(account, context)
           factor.lock! if factor
@@ -85,7 +84,7 @@ module Vouch
 
         # A failed authentication operation must not publish a Warden identity.
         renew_authentication_session
-        session[Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)] = context['evidence'] if context['evidence']
+        authentication_session.store_evidence!(context['evidence'], account: account) if context['evidence']
         if invitation
           publish_invitation_acceptance
         end

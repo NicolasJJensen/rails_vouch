@@ -143,4 +143,4 @@ These routes are included by `auth.two_factor`. Edit the generated views for pre
 
 The session records recovery-code authentication and its owner. It never describes the code as proof that the associated authenticator was used.
 
-An organisation can reject recovery-code authentication even when the account permits it. The account remains available for factor management, while organisation access requires an accepted factor. See [membership MFA requirements](authentication-policy.md#mfa-required-by-an-organisation).
+Your application can decide whether recovery proof satisfies its workspace access rules. Vouch identifies it as `recovery_code` in the [MFA evidence collection](authentication-policy.md#mfa-evidence-and-application-permissions); it does not claim that the lost authenticator was used.

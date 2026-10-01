@@ -7,7 +7,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
 
   def index
     @credentials = eligible_credentials
-    @enrollment_required = @credentials.empty? && pending_membership_requirements.present?
+    @enrollment_required = @credentials.empty?
     @recovery_available = recovery_owners.any?
   end
 
@@ -30,22 +30,14 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
 
   def update
     @credential = eligible_credentials.find(params[:id])
-    token       = session[two_factor_token_session_key(@credential)]
-
-    result = if token
-      if membership_challenge? ? !current_membership_allows_recovery_codes? : (pending_membership_requirements && pending_membership_requirements["allow_recovery_codes"] != true)
-        Vouch::BackupCodable.without_recovery_code_fallback { @credential.verify_challenge(params[:code], token: token) }
-      else
-        @credential.verify_challenge(params[:code], token: token)
-      end
-    else
-      Vouch::Result.invalid
-    end
+    challenge = session[two_factor_token_session_key(@credential)]
+    @credential.reload
+    valid_period = challenge.is_a?(Hash) && challenge["enabled_at"] == @credential.two_factor_enabled_at&.utc&.iso8601(6)
+    result = valid_period ? @credential.verify_challenge(params[:code], token: challenge["token"]) : Vouch::Result.invalid
 
     if result.ok? && @credential.reload.two_factor_enabled? && @credential.verified?
       session.delete(two_factor_token_session_key(@credential))
       proof_method = result.recovery_code? ? :recovery_code : :two_factor
-      return resume_membership_challenge!(proof_method, @credential, @credential) if membership_challenge?
 
       case complete_sign_in(@account, context: session[two_factor_session_key], credential: @credential,
         evidence_method: proof_method, recovery_owner: @credential)
@@ -80,15 +72,8 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
 
   def consume_recovery
     owner = recovery_owner_from_params
-    if membership_challenge? && !membership_recovery_owner_allowed?(owner)
-      result = Vouch::Result.invalid
-    elsif pending_membership_requirements && pending_membership_requirements["allow_recovery_codes"] != true
-      result = Vouch::Result.invalid
-    else
-      result = owner ? owner.consume_recovery_code!(params[:recovery_code]) : Vouch::Result.invalid
-    end
+    result = owner ? owner.consume_recovery_code!(params[:recovery_code]) : Vouch::Result.invalid
     if result.ok?
-      return resume_membership_challenge!(:recovery_code, nil, owner) if membership_challenge?
 
       case complete_sign_in(@account, context: session[two_factor_session_key],
         evidence_method: :recovery_code, recovery_owner: owner)
@@ -117,7 +102,8 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   def issue_challenge!(credential)
     result = credential.challenge!
     if result.ok?
-      session[two_factor_token_session_key(credential)] = result.token
+      session[two_factor_token_session_key(credential)] = { "token" => result.token,
+        "enabled_at" => credential.two_factor_enabled_at&.utc&.iso8601(6) }
       true
     else
       session.delete(two_factor_session_key)
@@ -128,100 +114,14 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   def recovery_owners
-    return [] if pending_membership_requirements && pending_membership_requirements["allow_recovery_codes"] != true
-
     owners = []
     owners << @account if @account.respond_to?(:consume_recovery_code!)
-    credentials = two_factor_credentials_for(@account).enabled.select { |credential| credential.respond_to?(:consume_recovery_code!) }
-    types = Array(pending_membership_requirements&.fetch("credential_types", nil)).map { |type| type.respond_to?(:name) ? type.name : type.to_s }
-    credentials.select! { |credential| types.empty? || types.include?(credential.class.name) }
-    owners.concat(credentials)
+    owners.concat(two_factor_credentials_for(@account).enabled.select { |credential| credential.respond_to?(:consume_recovery_code!) })
     owners
   end
 
   def eligible_credentials
-    credentials = two_factor_credentials_for(@account).enabled
-    requirements = pending_membership_requirements
-    return credentials unless requirements
-
-    types = Array(requirements["credential_types"]).map { |type| type.respond_to?(:name) ? type.name : type.to_s }
-    methods = Array(requirements["credential_methods"]).map(&:to_s)
-    return credentials if types.empty? && methods.empty?
-
-    credentials.reject do |credential|
-      (types.any? && !types.include?(credential.class.name)) ||
-        (methods.any? && !methods.include?(credential.authentication_method.to_s))
-    end
-  end
-
-  def pending_membership_requirements
-    pending = session[two_factor_session_key]
-    pending.is_a?(Hash) ? pending["membership_mfa"] : nil
-  end
-
-  def membership_challenge?
-    session[two_factor_session_key].is_a?(Hash) && session[two_factor_session_key]["membership_scope"].present?
-  end
-
-  # Linked membership scopes use the parent account's MFA routes. On success
-  # we retain the account Warden session, save evidence under its namespace,
-  # then return to the membership controller to bind the selected identity.
-  def resume_membership_challenge!(method, credential, owner)
-    context = session[two_factor_session_key]
-    mapping = Vouch.mapping_for(context.fetch("membership_scope"))
-    identity = mapping.identities_for(@account).detect do |candidate|
-      context.fetch("identity_ids", []).include?(Vouch::RecordKey.serialize(candidate))
-    end
-    evidence = Vouch::AuthenticationEvidence.build(method: method, account: @account,
-      credential: credential, owner: owner)
-    unless identity && membership_evidence_qualifies?(mapping, identity, evidence)
-      flash.now[:alert] = I18n.t("vouch.two_factor.invalid_code")
-      @recovery_owners = recovery_owners if method == :recovery_code
-      return render(method == :recovery_code ? :recovery : :show, status: :unprocessable_entity)
-    end
-
-    context["evidence"] = evidence
-    session[Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)] = evidence
-    session[Vouch::Session.key_for(mapping.scope_name, :selection)] = context
-    session.delete(two_factor_session_key)
-    flash[:notice] = I18n.t("vouch.two_factor.recovery_code_used") if method == :recovery_code
-    redirect_to mapping.route_path(:sessions, :new, self)
-  end
-
-  def membership_evidence_qualifies?(mapping, identity, evidence)
-    return false unless authentication_policy.respond_to?(:membership_mfa_requirements)
-
-    tenant = mapping.tenant? ? identity.public_send(mapping.identity_tenant_association.name) : nil
-    requirements = authentication_policy.membership_mfa_requirements(@account, identity: identity, tenant: tenant, controller: self)
-    Vouch::AuthenticationEvidence.qualifies?(evidence, requirements, account: @account, mapping: mapping)
-  end
-
-  def membership_recovery_owner_allowed?(owner)
-    return false unless owner
-
-    mapping, identity = membership_challenge_mapping_and_identity
-    return false unless mapping && identity
-
-    evidence = Vouch::AuthenticationEvidence.build(method: :recovery_code, account: @account, owner: owner)
-    membership_evidence_qualifies?(mapping, identity, evidence)
-  end
-
-  def current_membership_allows_recovery_codes?
-    mapping, identity = membership_challenge_mapping_and_identity
-    return false unless mapping && identity && authentication_policy.respond_to?(:membership_mfa_requirements)
-
-    tenant = mapping.tenant? ? identity.public_send(mapping.identity_tenant_association.name) : nil
-    authentication_policy.membership_mfa_requirements(@account, identity: identity, tenant: tenant, controller: self)
-      .to_h.stringify_keys["allow_recovery_codes"] == true
-  end
-
-  def membership_challenge_mapping_and_identity
-    context = session[two_factor_session_key]
-    mapping = Vouch.mapping_for(context.fetch("membership_scope"))
-    identity = mapping.identities_for(@account).detect do |candidate|
-      context.fetch("identity_ids", []).include?(Vouch::RecordKey.serialize(candidate))
-    end
-    [mapping, identity]
+    two_factor_credentials_for(@account).enabled
   end
 
   # A host must choose which configured set is being used. This intentionally

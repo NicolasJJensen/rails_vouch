@@ -79,20 +79,9 @@ module Vouch
 
       account = warden.user(mapping.parent_scope_name)
       owner = mapping.account_for(identity)
-      return identity if account && owner && account.class == owner.class && account.id == owner.id &&
-        membership_authentication_valid?(warden, mapping, identity, controller: controller)
+      return identity if account && owner && account.class == owner.class && Vouch::RecordKey.same?(account, owner, model: account.class)
 
       nil
-    end
-
-    def membership_authentication_valid?(warden, mapping, identity, controller: nil)
-      policy = configuration.authentication_policy
-      policy = policy.constantize if policy.is_a?(String)
-      policy = policy.new if policy.is_a?(Class)
-      return true unless policy.respond_to?(:membership_mfa_requirements)
-
-      AuthenticationEvidence.membership_valid?(warden.raw_session, mapping, identity,
-        policy: policy, controller: controller)
     end
 
     def logout_scope(warden, session, scope)

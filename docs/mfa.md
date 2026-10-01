@@ -2,7 +2,7 @@
 
 Verification checks that someone controls a phone number or email address. It does not sign them in.
 
-MFA challenges a verified credential after the person supplies their password. The credential model implements the challenge; its owner controls whether MFA is required for account sign-in. Organisation policies can add [membership-specific requirements](authentication-policy.md#mfa-required-by-an-organisation).
+MFA challenges a verified credential after the person supplies their password. The credential model implements the challenge; its owner controls whether MFA is required for account sign-in. Your application can use [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions) in its own permissions checks.
 
 ## Contents
 
@@ -136,7 +136,7 @@ For a user with MFA enabled:
 
 A correct password alone does not establish the completed login. An incorrect code redisplays the challenge; an expired challenge needs a new code. Repeated failures can lock the factor. Disabled or unverified credentials cannot complete MFA.
 
-When account MFA is required, the account is not signed in until that challenge succeeds. An organisation may require an additional factor before granting membership access; see [organisation MFA policies](authentication-policy.md#mfa-required-by-an-organisation).
+When account MFA is required, the account is not signed in until that challenge succeeds. Organisation-specific access requirements belong to your application; see [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions).
 
 [Password reset](password-reset.md) does not disable this requirement. [Recovery codes](recovery-codes.md) can replace the MFA challenge after password authentication. Applications can enable account-owned codes, credential-owned codes, or both.
 

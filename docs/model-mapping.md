@@ -85,7 +85,7 @@ create_table :users do |t|
 end
 ```
 
-After account authentication and any required MFA, Vouch checks the account's memberships. With one eligible membership it continues automatically; with several it shows a selector; with none it denies membership access. An organisation may require an additional [MFA challenge](authentication-policy.md#mfa-required-by-an-organisation).
+After account authentication and any required MFA, Vouch checks the account's memberships. With one eligible membership it continues automatically; with several it shows a selector; with none it denies membership access. Workspace permissions, including any requirements based on [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions), belong to your application.
 
 `authenticate_user!` requires both account authentication and a selected membership. Use `authenticate_account!` for settings available before an organisation is selected.
 

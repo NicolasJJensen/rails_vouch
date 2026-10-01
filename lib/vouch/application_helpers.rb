@@ -6,12 +6,22 @@ module Vouch
 
     included do
       Vouch::ApplicationHelpers.register_controller(self)
-      helper_method :impersonation_context if respond_to?(:helper_method)
+      helper_method :impersonation_context, :authentication_evidence if respond_to?(:helper_method)
       before_action :validate_impersonation_context
     end
 
     def impersonation_context
       Vouch::ImpersonationStack.context(session)
+    end
+
+    def authentication_evidence(scope:)
+      mapping = Vouch.mapping_for(scope)
+      credentials_mapping = Vouch.mapping_for(mapping.evidence_scope_name)
+      principal = Vouch.authenticated_identity(request.env.fetch("warden"), credentials_mapping.scope_name, controller: self)
+      account = credentials_mapping.account_for(principal) if principal
+      Vouch::AuthenticationEvidence.current(
+        session[Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)],
+        account: account, mapping: mapping)
     end
 
     private

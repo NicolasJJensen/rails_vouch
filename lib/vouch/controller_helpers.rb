@@ -261,32 +261,6 @@ module Vouch
       Vouch::Session.key_for(auth_scope_name, :selection)
     end
 
-    def authentication_evidence
-      session[Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)]
-    end
-
-    def membership_mfa_requirements(account, identity)
-      return nil unless authentication_policy.respond_to?(:membership_mfa_requirements)
-
-      tenant = auth_mapping.tenant? ? identity.public_send(auth_mapping.identity_tenant_association.name) : nil
-      authentication_policy.membership_mfa_requirements(account, identity: identity, tenant: tenant, controller: self)
-    end
-
-    def membership_mfa_context_valid?(account, identity, context)
-      scope = context["membership_scope"]
-      return true unless scope
-
-      mapping = Vouch.mapping_for(scope)
-      return true unless authentication_policy.respond_to?(:membership_mfa_requirements)
-      tenant = mapping.tenant? ? identity.public_send(mapping.identity_tenant_association.name) : nil
-      requirements = authentication_policy.membership_mfa_requirements(account, identity: identity, tenant: tenant, controller: self)
-      Vouch::AuthenticationEvidence.qualifies?(context["evidence"], requirements, account: account, mapping: mapping)
-    end
-
-    def membership_mfa_satisfied?(account, identity)
-      Vouch::AuthenticationEvidence.qualifies?(authentication_evidence, membership_mfa_requirements(account, identity), account: account, mapping: auth_mapping)
-    end
-
     def context_credential(account, context)
       reference = context['factor']
       return nil unless reference
@@ -302,6 +276,7 @@ module Vouch
       {'type' => credential.class.name, 'id' => Vouch::RecordKey.serialize(credential),
         'version' => credential.try(:verification_version),
         'verified_at' => credential.verified_at&.utc&.iso8601(6),
+        'enabled_at' => credential.two_factor_enabled_at&.utc&.iso8601(6),
         'used_at' => credential.two_factor_last_used_at&.utc&.iso8601(6)}
     end
 

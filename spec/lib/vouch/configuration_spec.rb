@@ -20,7 +20,6 @@ RSpec.describe Vouch::Configuration do
       expect(config.pending_authentication_ttl).to eq(10.minutes)
       expect(config).not_to respond_to(:preserved_session_keys)
       expect(config).not_to respond_to(:preserved_auth_scopes)
-      expect(config.oauth_mfa_providers).to eq([])
       expect(config.authentication_policy).to eq("Vouch::AuthenticationPolicy")
       expect(config.install_middleware).to be(true)
     end

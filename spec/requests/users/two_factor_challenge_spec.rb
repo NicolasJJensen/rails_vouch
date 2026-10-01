@@ -52,6 +52,19 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
   end
 
   describe "with 2FA session" do
+    it "requires a fresh TOTP challenge after the factor is disabled and enabled again" do
+      establish_2fa_session
+      get "/users/two_factor_challenges/#{credential.id}"
+      credential.update!(two_factor_enabled_at: nil)
+      travel 1.second do
+        credential.enable_two_factor!
+        patch "/users/two_factor_challenges/#{credential.id}",
+          params: { code: ROTP::TOTP.new(credential.otp_secret).now }
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(credential.reload.two_factor_last_used_at).to be_nil
+      end
+    end
+
     describe "POST /users/recovery" do
       it "consumes an account recovery code in the pending MFA flow and signs in" do
         code = account.generate_recovery_codes!.value.first

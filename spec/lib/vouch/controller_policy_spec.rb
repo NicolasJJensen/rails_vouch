@@ -95,12 +95,11 @@ RSpec.describe 'Controller integration policy' do
     expect(auth_session.load_oauth_registration).to include('provider' => 'google', 'uid' => '123')
   end
 
-  it 'policy allows an explicitly trusted OAuth provider to satisfy MFA' do
+  it 'requires configured local MFA after OAuth regardless of provider name' do
     account = create(:account)
     allow(account).to receive(:two_factor_enabled?).and_return(true)
-    allow(Vouch.configuration).to receive(:oauth_mfa_providers).and_return(['company'])
     policy = Vouch::AuthenticationPolicy.new
-    expect(policy.two_factor_required?(account, method: :oauth, provider: 'company', controller: controller)).to be false
+    expect(policy.two_factor_required?(account, method: :oauth, provider: 'company', controller: controller)).to be true
     expect(policy.two_factor_required?(account, method: :oauth, provider: 'public', controller: controller)).to be true
   end
 

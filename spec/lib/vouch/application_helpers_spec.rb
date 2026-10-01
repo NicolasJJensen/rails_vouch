@@ -36,6 +36,22 @@ RSpec.describe Vouch::ApplicationHelpers, type: :controller do
     expect(controller.respond_to?(:build_registration, true)).to be(false)
   end
 
+  it "exposes current MFA proofs without endpoint controller helpers" do
+    account = identity.account
+    credential = account.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
+      verified_at: Time.current, two_factor_enabled_at: Time.current)
+    proof = Vouch::AuthenticationEvidence.build(method: :two_factor, account: account, credential: credential)
+    session[Vouch::Session.key_for(:user, :evidence)] = [proof]
+    expect(controller.authentication_evidence(scope: :user)).to eq([])
+    allow(proxy).to receive(:user).with(:user).and_return(identity)
+    expect(controller.authentication_evidence(scope: :user)).to eq([proof])
+    expect(controller.respond_to?(:auth_mapping, true)).to be(false)
+    expect(controller.class._helper_methods).to include(:authentication_evidence)
+
+    credential.update!(two_factor_enabled_at: nil)
+    expect(controller.authentication_evidence(scope: :user)).to eq([])
+  end
+
   it "allows a host parent to opt into callbacks without an authentication filter" do
     expect(ApplicationController).to respond_to(:before_sign_in)
     expect(ApplicationController.new.respond_to?(:complete_sign_in, true)).to be(true)

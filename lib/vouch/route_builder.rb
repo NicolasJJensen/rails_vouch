@@ -285,9 +285,6 @@ module Vouch
           parent = env["warden"]&.user(mapping.parent_scope_name)
           next nil unless parent && parent.class == account.class &&
             Vouch::RecordKey.same?(parent, account, model: account.class)
-          next nil unless Vouch.membership_authentication_valid?(
-            env["warden"], mapping, identity, controller: env["action_controller.instance"]
-          )
         end
 
         identity

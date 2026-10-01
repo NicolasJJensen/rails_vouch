@@ -274,16 +274,7 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("account" => account.id, "member" => membership.id)
   end
 
-  it "uses the parent challenge route for a membership-specific MFA requirement and only binds the membership after proof" do
-    policy = Class.new(Vouch::AuthenticationPolicy) do
-      def membership_mfa_requirements(_account, identity:, tenant:, controller:)
-        {credential_types: ["TwoFactorCredential"], credential_methods: [:totp], allow_recovery_codes: false}
-      end
-    end
-    stub_const("LinkedMembershipMfaPolicy", policy)
-    original_policy = Vouch.configuration.authentication_policy
-    Vouch.configuration.authentication_policy = LinkedMembershipMfaPolicy
-
+  it "publishes MFA as a list and leaves additional membership requirements to the application" do
     credential = account.two_factor_credentials.create!(otp_secret: ROTP::Base32.random,
       verified_at: Time.current, two_factor_enabled_at: Time.current)
     account.enable_two_factor!
@@ -291,22 +282,14 @@ RSpec.describe "Account and membership sessions", type: :request do
     get "/linked_accounts/two_factor_challenges/#{credential.id}"
     patch "/linked_accounts/two_factor_challenges/#{credential.id}", params: {code: ROTP::TOTP.new(credential.otp_secret).now}
     expect(response).to redirect_to("/")
+    evidence = request.session[Vouch::Session.key_for(:account, :evidence)]
+    expect(evidence).to be_an(Array)
+    expect(evidence.size).to eq(1)
+    expect(evidence.first).to include("method" => "two_factor", "credential_type" => "TwoFactorCredential")
 
-    TwoFactorCredential.two_factor_auth_name :totp
     get "/linked_members/sign_in"
-    expect(response).to redirect_to("/linked_accounts/two_factor_challenges")
-    expect(status).to include("account" => account.id, "member" => nil)
-
-    get "/linked_accounts/two_factor_challenges/#{credential.id}"
-    travel 31.seconds do
-      patch "/linked_accounts/two_factor_challenges/#{credential.id}", params: {code: ROTP::TOTP.new(credential.otp_secret).now}
-      expect(response).to redirect_to("/linked_members/sign_in")
-      follow_redirect!
-      expect(status).to include("account" => account.id, "member" => membership.id)
-    end
-  ensure
-    Vouch.configuration.authentication_policy = original_policy
-    TwoFactorCredential.two_factor_authentication_method = nil
+    expect(response).to redirect_to("/")
+    expect(status).to include("account" => account.id, "member" => membership.id)
   end
 
   it "keeps registration intent through MFA and membership selection" do

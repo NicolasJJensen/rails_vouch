@@ -12,12 +12,15 @@ module Vouch
         session[key(:two_factor)] = context
       end
 
-      def store_evidence!(evidence)
-        session[key(:evidence)] = evidence
+      def store_evidence!(proof, account:)
+        mapping = controller.send(:auth_mapping)
+        evidence_key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
+        session[evidence_key] = Vouch::AuthenticationEvidence.record(session[evidence_key], proof,
+          account: account, mapping: mapping)
       end
 
       def evidence
-        session[key(:evidence)]
+        controller.authentication_evidence(scope: controller.send(:auth_scope_name))
       end
 
       def load_second_factor
