@@ -118,6 +118,20 @@ RSpec.describe "Users::Impersonations", type: :request do
     end
   end
 
+  it "keeps the original same-scope login when stop-all finds the first grant expired" do
+    sign_in_via_login
+    post "/users/impersonations/#{target_user.id}"
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?).and_return(false)
+
+    delete "/users/impersonations/all"
+
+    expect(response).to redirect_to("/")
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+    get "/users/two_factor_credentials"
+    expect(response).to have_http_status(:ok)
+    expect(request.env.fetch("warden").user(:user)).to eq(admin)
+  end
+
   describe "POST /users/impersonations/:id" do
     it "requires authentication" do
       post "/users/impersonations/#{target_user.id}"

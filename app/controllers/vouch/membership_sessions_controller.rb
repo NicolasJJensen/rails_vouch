@@ -2,6 +2,7 @@
 
 class Vouch::MembershipSessionsController < ::ApplicationController
   include Vouch::Authentication
+  skip_before_action :validate_impersonation_context, only: :destroy
 
   allow_unauthenticated_access
   before_action :require_unimpersonated_selection!, only: %i[new create]

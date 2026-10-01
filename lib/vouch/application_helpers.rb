@@ -46,6 +46,7 @@ module Vouch
       end
       return unless changed
 
+      request.session_options[:renew] = true
       redirect_to after_impersonation_expired_path, alert: I18n.t("vouch.impersonations.expired")
     end
 

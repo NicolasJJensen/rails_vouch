@@ -30,6 +30,14 @@ RSpec.describe "Account and membership sessions", type: :request do
         render plain: "Second factor"
       end
     end)
+    stub_const("LinkedAccounts::TwoFactorCredentialsController", Class.new(Vouch::TwoFactorCredentialsController) do
+      auth_scope :account
+
+      def index
+        super
+        render json: { account: current_account.id, credentials: @credentials.map(&:id) }
+      end
+    end)
     stub_const("LinkedAccounts::OmniAuthsController", Class.new(Vouch::OmniAuthsController) do
       auth_scope :account
       private
@@ -93,7 +101,8 @@ RSpec.describe "Account and membership sessions", type: :request do
           auth.sessions controller: "linked_accounts/sessions"
           auth.registrations controller: "linked_accounts/registrations"
           auth.oauth_callbacks controller: "linked_accounts/omni_auths", registration: :automatic
-          auth.two_factor challenge_controller: "linked_accounts/two_factor_challenge"
+          auth.two_factor challenge_controller: "linked_accounts/two_factor_challenge",
+            credentials_controller: "linked_accounts/two_factor_credentials"
         end
         auth.scope :member, account_scope: :account, identity: "User", tenant: "Organisation", path: "linked_members" do
           auth.sessions controller: "linked_members/sessions"
@@ -613,6 +622,34 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("account" => account.id, "member" => nil, "admin" => membership.id)
   end
 
+  it "honors sign-out when a nested grant has expired instead of leaving the earlier session active" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?).and_return(false)
+
+    delete "/linked_members/sign_out"
+
+    expect(response).to redirect_to("/linked_members/sign_in")
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+    expect(status).to include("account" => nil, "member" => nil, "admin" => nil)
+  end
+
+  it "honors stop-all when only a nested grant has expired" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?) do |_controller, context|
+      context.target != nested
+    end
+
+    delete "/linked_members/impersonations/all"
+
+    expect(response).to redirect_to("/")
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+    expect(status).to include("account" => account.id, "member" => nil, "admin" => membership.id)
+  end
+
   it "does not swallow an application's unexpected permission exception" do
     start_member_impersonation(create(:user))
     allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?).and_raise(ArgumentError, "policy defect")
@@ -635,6 +672,23 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(response.parsed_body).to eq("restored" => first.id)
     expect(restored).to eq([first.id])
     expect(status).to include("member" => first.id)
+  end
+
+  it "lets full account impersonation manage only the effective account's MFA credentials" do
+    target = create(:account)
+    target_factor = target.two_factor_credentials.create!
+    original_factor = account.two_factor_credentials.create!
+    account_login
+    get "/linked_admins/sign_in"
+    post "/account_impersonations/#{target.id}"
+
+    get "/linked_accounts/two_factor_credentials"
+    expect(response.parsed_body).to eq("account" => target.id, "credentials" => [target_factor.id])
+    delete "/linked_accounts/two_factor_credentials/#{target_factor.id}"
+    expect(response).to redirect_to("/linked_accounts/two_factor_credentials")
+    expect(TwoFactorCredential.exists?(target_factor.id)).to be(false)
+    expect(TwoFactorCredential.exists?(original_factor.id)).to be(true)
+    expect(status).to include("account" => target.id, "true_account" => account.id, "member" => nil)
   end
 
   it "does not let a restricted membership impersonation escalate to an account" do

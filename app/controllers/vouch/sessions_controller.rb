@@ -1,5 +1,6 @@
 class Vouch::SessionsController < ::ApplicationController
   include Vouch::Authentication
+  skip_before_action :validate_impersonation_context, only: :destroy
   prepend_before_action :require_unimpersonated_authentication!, only: %i[new create]
 
   only_allow_unauthenticated_access only: %i[new create]

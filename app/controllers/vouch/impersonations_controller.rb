@@ -1,6 +1,7 @@
 class Vouch::ImpersonationsController < ::ApplicationController
   include Vouch::Authentication
   skip_before_action :authenticate_auth_scope!
+  skip_before_action :validate_impersonation_context, only: :destroy_all
   before_action :authenticate_impersonator!, only: :create
   before_action :authenticate_impersonation_termination!, only: %i[destroy destroy_all]
   before_action :set_identity, only: :create
@@ -60,11 +61,19 @@ class Vouch::ImpersonationsController < ::ApplicationController
     end
 
     previous_url = Vouch::ImpersonationStack.return_to(session)
+    Vouch::ImpersonationStack.revalidate!(warden: warden, session: session) do |context|
+      impersonation_allowed?(context)
+    end
     changed = run_authentication_hooks(:impersonation_end, current_identity, original) do |env|
       committed = run_commit_hooks(:impersonation_end, *env.args, **env.kwargs) { true }
       env.abort! unless committed
-      renew_authentication_session
-      Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping).present?
+      if Vouch::ImpersonationStack.active?(session)
+        renew_authentication_session
+        Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping).present?
+      else
+        request.session_options[:renew] = true
+        true
+      end
     end
     result = changed ? Vouch::Result.ok(original) : Vouch::Result.cancelled(record: original)
     respond_with_authentication_result(result, response_handler) do
