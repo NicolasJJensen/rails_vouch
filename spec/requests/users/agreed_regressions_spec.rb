@@ -43,9 +43,9 @@ RSpec.describe 'Review: authentication integration boundaries', type: :request d
     phone = PhoneVerification.create!(e164: '+61400009992')
     issued = phone.start_verification!
     code = phone.last_delivered_code
-    expect(phone.complete_verification!(code, token: issued.token)).to be_ok
+    expect(phone.complete_verification(code, token: issued.token)).to be_ok
     phone.unverify!
-    expect(phone.complete_verification!(code, token: issued.token)).to be_invalid
+    expect(phone.complete_verification(code, token: issued.token)).to be_invalid
   end
 
   it 'consumes a second-factor code at most once' do

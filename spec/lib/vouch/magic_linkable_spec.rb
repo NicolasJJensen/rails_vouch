@@ -174,7 +174,7 @@ RSpec.describe Vouch::MagicLinkable do
 
     it "wrong verify codes don't bump sign_in_attempts" do
       result = record.start_verification!
-      record.complete_verification!("000000", token: result.token)
+      record.complete_verification("000000", token: result.token)
       expect(record.reload.sign_in_attempts).to eq(0)
     end
   end

@@ -336,7 +336,7 @@ RSpec.describe "single-use authentication concurrency" do
     expect(results).to all(be true)
     phone.reload
     expect(phone.verification_version).to eq(2)
-    expect(phone.complete_verification!(code, token: challenge.token)).to be_invalid
+    expect(phone.complete_verification(code, token: challenge.token)).to be_invalid
   ensure
     phone&.destroy!
   end
@@ -354,7 +354,7 @@ RSpec.describe "single-use authentication concurrency" do
     stale.save!
 
     expect(stale.reload.verification_version).to eq(3)
-    expect(PhoneVerification.find(phone.id).complete_verification!(code, token: challenge.token)).to be_invalid
+    expect(PhoneVerification.find(phone.id).complete_verification(code, token: challenge.token)).to be_invalid
   ensure
     phone&.destroy!
   end
@@ -363,10 +363,10 @@ RSpec.describe "single-use authentication concurrency" do
     challenge = phone.start_verification!
     code = phone.last_delivered_code
     results = concurrently_after_lock_precheck(PhoneVerification, phone.id) do |candidate|
-      candidate.complete_verification!(code, token: challenge.token)
+      candidate.complete_verification(code, token: challenge.token)
     end
     expect(results.count(&:ok?)).to eq(1)
-    expect(results.count(&:invalid?)).to eq(1)
+    expect(results.count(&:already_verified?)).to eq(1)
   ensure
     phone&.destroy!
   end

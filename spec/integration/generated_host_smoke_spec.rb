@@ -244,13 +244,6 @@ RSpec.describe "generated host smoke test", :generated_host do
           RUBY
         ))
 
-        invitations_path = "app/controllers/#{path_name}/invitations_controller.rb"
-        invitation_source = File.read(File.join(directory, invitations_path))
-        write_file(directory, invitations_path, invitation_source.sub(
-          /  def authorize_invitation!\n.*?^  end/m,
-          "  def authorize_invitation!\n    true\n  end"
-        ))
-
         routes_path = File.join(directory, "config/routes.rb")
         routes = File.read(routes_path)
         updated_routes = routes.sub(/^([ \t]*)auth\.registrations\n([ \t]*)end\b/) do
@@ -397,14 +390,6 @@ RSpec.describe "generated host smoke test", :generated_host do
               File.write(Rails.root.join("tmp/password_reset_delivery"), token.to_s)
             end
 
-            #{namespace}::InvitationsController.class_eval do
-              private
-
-              def authorize_invitation!
-                true
-              end
-            end
-
             #{namespace}::InvitationsController.on_invitation_token_generation do |_identifier, invitee|
               FileUtils.mkdir_p(Rails.root.join("tmp"))
               File.write(Rails.root.join("tmp/invitation_delivery"), invitee.id.to_s)
@@ -502,7 +487,7 @@ RSpec.describe "generated host smoke test", :generated_host do
           proof = account.start_verification!
           code = account.instance_variable_get(:@delivered_code)
       abort "installed verification failed" unless account.complete_verification!(code, token: proof.token).ok?
-      abort "installed verification replayed" if account.reload.complete_verification!(code, token: proof.token).ok?
+      abort "installed verification replayed" unless account.reload.complete_verification(code, token: proof.token).already_verified?
         end
         session = ActionDispatch::Integration::Session.new(Rails.application)
         unless #{variant == :single}
@@ -713,6 +698,15 @@ RSpec.describe "generated host smoke test", :generated_host do
           reset_login_session.get("/#{path_name}/sign_in")
           reset_login_session.get("/")
           abort "two-factor completion did not retain the signed-in session" unless reset_login_session.response.successful?
+          reset_login_session.get("/#{account_path_name}/two_factor_challenges", params: { format: :html })
+          abort "additional challenge Cancel control missing" unless reset_login_session.response.body.include?("Cancel")
+          reset_login_session.get("/#{account_path_name}/recovery", params: { format: :html })
+          abort "recovery Cancel control missing" unless reset_login_session.response.successful? && reset_login_session.response.body.include?("Cancel")
+          reset_login_session.delete("/#{account_path_name}/two_factor_challenges")
+          abort "Cancel did not redirect" unless reset_login_session.response.redirect?
+          reset_login_session.get("/")
+          abort "Cancel ended the authenticated session" unless reset_login_session.response.successful?
+
           abort "custom identifier was not normalized" unless account.reload.login == "generated-login"
           target_account = #{owner_name}.create!(email_address: "impersonated@example.test", login: "impersonated-login", password: "secret123")
           target = #{model_name}.create!(#{owner_name.demodulize.underscore}: target_account)

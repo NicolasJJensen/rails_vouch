@@ -299,6 +299,8 @@ end
 
 Edit either local file. The route still points to `Users::SessionsController`. Keeping the local implementation as its superclass preserves your overrides, `super` calls and generated enrollment customizations. Re-running the generator does not replace the local implementation.
 
+The optional `verifications` and `temporary_verifications` controllers can also be ejected. They use host-prepared records rather than an authentication scope; see the [verification guide](verification.md#results-and-customization) for their shared superclass.
+
 For a linked membership scope, ejecting its generated `SessionsController` copies membership selection rather than password authentication.
 
 The copied actions still use `Vouch::Authentication` and the gem's model/session services. Ejection gives you ownership of the controller implementation; it does not copy the whole gem into your application.

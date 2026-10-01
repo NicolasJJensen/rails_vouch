@@ -6,7 +6,7 @@ module Vouch
       lockable: %i[locked_at failed_attempts consecutive_locks],
       password_resetable: %i[password_reset_nonce],
       recoverable: %i[recovery_attempts recovery_locked_at],
-      verifiable: %i[created_at verified_at verification_attempts verification_locked_at verification_version verification_nonce],
+      verifiable: %i[verified_at verification_attempts verification_locked_at verification_version verification_nonce],
       two_factorable: %i[created_at two_factor_enabled_at two_factor_failed_attempts two_factor_locked_at two_factor_last_used_at two_factor_nonce],
       magic_linkable: %i[created_at sign_in_attempts sign_in_locked_at sign_in_nonce]
     }.freeze

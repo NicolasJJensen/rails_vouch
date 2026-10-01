@@ -1,37 +1,8 @@
 # frozen_string_literal: true
 
-# Verifiable concern — challenge-response verification for contactable
-# channels (Email, Phone) and pairing targets (AuthenticatorCode at
-# enrollment).
-#
-# Supports two flows:
-#
-#   1. Persisted records — the row exists on disk, lockout counters live on
-#      the row, and `complete_verification!` writes verified_at with a lock.
-#
-#   2. Drafts (unpersisted records) — used at registration time when
-#      credentials are stashed in session before the account exists. Lockout
-#      is a no-op (no columns to write). `complete_verification!` sets
-#      verified_at in memory and returns; the caller persists later.
-#
-# State on the row (persisted flow only):
-#   - verified_at:datetime
-#   - verification_attempts:bigint default: 0, null: false
-#   - verification_locked_at:datetime
-#   - verification_version:bigint default: 0, null: false
-#   - verification_nonce:string (nullable)
-#   - created_at:datetime (validated when the feature is used)
-#
-# Public surface:
-#   - .verifiable_subject_attribute        (class DSL — required)
-#   - #verified?, #verification_locked?
-#   - #start_verification!                 => Result.ok(token) | Result.locked
-#   - #complete_verification!(code, token:) => Result
-#   - #unverify!                           (clears verified_at)
-#   - #verifiable_subject                  (id for persisted, natural id for drafts)
-#   - #challenge_token                     (last issued token; survives session round-trip)
-#
-# Hosts may override #deliver_verification_code(code).
+# Contact verification for saved records and unsaved registration credentials.
+# Saved challenges use row locks; temporary challenges retain attempts in their
+# trusted serialized state and require shared controller rate limits.
 #
 module Vouch
   module Verifiable
@@ -39,6 +10,7 @@ module Vouch
     include Vouch::LockoutCounter
     include Vouch::ChallengeNonce
     include Vouch::VerificationSubject
+    include Vouch::VerificationState
 
     included do
       attr_accessor :challenge_token
@@ -51,20 +23,14 @@ module Vouch
       verified_at.present?
     end
 
-    # Drafts have no columns to lock against — always false.
     def verification_locked?
-      return false unless persisted?
-
       locked_window_open?(
         locked_at_attr:   :verification_locked_at,
         lockout_duration: verifiable_config.lockout_duration
       )
     end
 
-    # Issue a fresh verification challenge. Works for drafts and persisted
-    # records. Sets `challenge_token` on the model so the token survives
-    # session serialization for drafts. Delivery exceptions bubble.
-    def start_verification!
+    def start_verification
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:verifiable, self.class))
       reload if persisted? && !has_changes_to_save?
       return Vouch::Result.already_verified(self) if persisted? && verified?
@@ -84,13 +50,20 @@ module Vouch
 
       deliver_verification_code(issued.code)
 
-      Vouch::Result.ok(issued.token)
+      Vouch::Result.ok(issued.token, record: self)
+    rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
     end
 
-    # Verify a submitted code. Persisted records get row-locked writes and
-    # attempt-counter bumps. Drafts set verified_at in memory only — the
-    # caller persists later (e.g. atomically alongside the parent record).
-    def complete_verification!(code, token: challenge_token)
+    def start_verification!
+      result = start_verification
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
+    end
+
+    def complete_verification(code, token: challenge_token)
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:verifiable, self.class))
       reload if persisted? && !has_changes_to_save?
       return Vouch::Result.already_verified(self) if persisted? && verified?
@@ -117,35 +90,58 @@ module Vouch
             attrs[:confirmation_nonce] = nil if has_attribute?(:confirmation_nonce)
             Vouch::Persistence.update!(self, attrs)
           end
-          transaction_result.is_a?(Vouch::Result) ? transaction_result : Vouch::Result.ok
+          transaction_result.is_a?(Vouch::Result) ? transaction_result : Vouch::Result.ok(self)
         else
           self[:verification_nonce] = nil
           self.verified_at = Time.current
           @verification_verified_subject = verifiable_subject
-          Vouch::Result.ok
+          @verification_verified_version = verifiable_subject_version
+          Vouch::Result.ok(self)
         end
       else
         # Do not attempt a lockout write while the caller has unpersisted
         # subject/version changes; Active Record cannot reload a dirty row
         # under a row lock, and the mismatch is already a failed challenge.
         return Vouch::Result.invalid if persisted? && has_changes_to_save?
-        bump_verification_lockout! if persisted?
+        bump_verification_lockout!
         Vouch::Result.invalid
       end
-    rescue Vouch::Persistence::Cancelled
-      Vouch::Result.cancelled
+    rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
+    end
+
+    def complete_verification!(code, token: challenge_token)
+      result = complete_verification(code, token: token)
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
+    end
+
+    def unverify
+      attrs = { verified_at: nil }
+      %i[verification_nonce confirmation_nonce two_factor_nonce sign_in_nonce].each do |name|
+        attrs[name] = nil if has_attribute?(name)
+      end
+      if persisted?
+        Vouch::Persistence.transaction(self) do
+          lock!
+          Vouch::Persistence.update!(self, attrs)
+        end
+      else
+        assign_attributes(attrs)
+      end
+      Vouch::Result.ok(self)
+    rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
     end
 
     def unverify!
-      Vouch::Persistence.transaction(self) do
-        lock!
-        attrs = {verified_at: nil, verification_nonce: nil}
-        attrs[:confirmation_nonce] = nil if has_attribute?(:confirmation_nonce)
-        attrs[:two_factor_nonce] = nil if has_attribute?(:two_factor_nonce)
-        attrs[:sign_in_nonce] = nil if has_attribute?(:sign_in_nonce)
-        Vouch::Persistence.update!(self, attrs)
-      end
-      self
+      result = unverify
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
     end
 
     # Host delivery hook. Override in the including model.
@@ -169,6 +165,12 @@ module Vouch
     end
 
     def bump_verification_lockout!
+      unless persisted?
+        self.verification_attempts = verification_attempts.to_i + 1
+        self.verification_locked_at = Time.current if verification_attempts >= verifiable_config.max_attempts
+        return
+      end
+
       bump_lockout_counter!(
         counter_attr:     :verification_attempts,
         locked_at_attr:   :verification_locked_at,

@@ -67,6 +67,8 @@ module Vouch
     private
 
     def track_verifiable_subject_write(attr_name, value)
+      return if @restoring_verification_state
+
       subject_attributes = canonical_verifiable_subject_attributes
       return unless @verifiable_subject_ready && subject_attributes.any?
       canonical_attribute = self.class.attribute_aliases[attr_name.to_s] || attr_name.to_s

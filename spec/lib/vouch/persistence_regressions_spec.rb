@@ -13,17 +13,17 @@ RSpec.describe 'Authentication persistence failures' do
     context "when a host #{timing} callback cancels persistence" do
       it 'does not consume or verify an OTP' do
         phone = create(:phone_verification)
-        issued = phone.start_verification!
+        issued = phone.start_verification
         code = phone.last_delivered_code
         nonce = phone.verification_nonce
         cancelling(PhoneVerification, :update, timing) do
           2.times do
-            expect(phone.reload.complete_verification!(code, token: issued.token)).to be_cancelled
+            expect(phone.reload.complete_verification(code, token: issued.token)).to be_cancelled
             expect(phone.reload.verified?).to be false
             expect(phone.verification_nonce).to eq(nonce)
           end
         end
-        expect(phone.complete_verification!(code, token: issued.token)).to be_ok
+        expect(phone.complete_verification(code, token: issued.token)).to be_ok
       end
 
       it 'does not consume a magic-link proof' do
@@ -57,7 +57,7 @@ RSpec.describe 'Authentication persistence failures' do
         token = link.confirmation_token
         nonce = link.confirmation_nonce
         cancelling(InvitationLink, :update, timing) do
-          expect(InvitationLink.consume_token(token)).to be_invalid
+          expect(InvitationLink.consume_token(token)).to be_cancelled
           expect(link.reload.verified?).to be false
           expect(link.confirmation_nonce).to eq(nonce)
         end

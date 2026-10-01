@@ -140,7 +140,9 @@ end
 | `on_password_reset_token_generation` | Credentials record, raw reset token, captured recipient |
 | `on_password_change` | Credentials record |
 | `on_invitation_token_generation` | Submitted identifier, invitation identity |
-| `on_two_factor_verification` | Credentials record, selected identity, verified credential |
+| `on_two_factor_verification` | Credentials record, selected identity, verified credential; `evidence:` and `additional:` keywords |
+
+`on_two_factor_verification` runs after an MFA proof is accepted. `additional: false` means it completed the sign-in challenge; `additional: true` means an already signed-in person completed another challenge. `evidence:` describes the accepted proof. Account recovery can supply no credential record, so handle a nil third argument. Ordinary contact verification does not fire this authentication event.
 
 `on_invitation_acceptance` is a convenient spelling of `after_invitation_acceptance`; both run inside the acceptance transaction.
 

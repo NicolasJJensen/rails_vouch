@@ -22,6 +22,8 @@ module Vouch
                                 desc: "Authentication scope for the emitted controller (independent of its namespace)"
 
       CONTROLLERS = {
+        "verifications"          => "VerificationsController",
+        "temporary_verifications" => "TemporaryVerificationsController",
         "sessions"               => "SessionsController",
         "membership_sessions"    => "MembershipSessionsController",
         "registrations"          => "RegistrationsController",
@@ -37,6 +39,9 @@ module Vouch
       desc "Copy a gem controller into app/controllers/<scope>/ for customisation."
 
       def validate!
+        if %w[verifications temporary_verifications].include?(controller_name) && options[:auth_scope].present?
+          raise Thor::Error, "Generic verification controllers use host-owned record lookup, not --auth-scope"
+        end
         return if CONTROLLERS.key?(controller_name)
 
         raise Thor::Error,

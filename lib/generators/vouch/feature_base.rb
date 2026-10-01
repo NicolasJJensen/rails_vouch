@@ -115,6 +115,13 @@ module Vouch
         missing = expected.keys - actual.keys
         return if missing.empty? || missing.length == expected.length
 
+        if %w[verifiable token_verifiable].include?(template_name.to_s) && (expected.keys & actual.keys) == ["verified_at"]
+          unless database_column_type_matches?(actual.fetch("verified_at"), expected.fetch("verified_at"))
+            raise Thor::Error, "Existing #{table_name} is incompatible with #{template_name}; wrong type for verified_at"
+          end
+          return
+        end
+
         # An existing table is a host contract.  A partial feature table is
         # unsafe to paper over with a second migration; make the missing
         # columns explicit so the host can reconcile its schema deliberately.

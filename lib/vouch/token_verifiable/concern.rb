@@ -4,30 +4,8 @@ require "active_support/security_utils"
 require "securerandom"
 require_relative "../persistence"
 
-# Signed-token verification for clickable links (invitations, magic links,
-# unsubscribe URLs, etc.). Builds on Verifiable.
-#
-# Tokens are produced by `Rails.application.message_verifier(purpose)` and
-# carry the record id plus a per-row nonce. Consuming a token verifies the
-# row AND rotates the nonce in the same UPDATE, which:
-#   - enforces single-use (a replay of the old token finds a new nonce)
-#   - invalidates any sibling tokens issued before the consume
-#   - lets you force-rotate to revoke in-flight tokens out-of-band
-#
-# Required columns:
-#   - verified_at         (datetime, nullable)
-#   - confirmation_nonce  (string,   nullable; unique index recommended)
-#
-# Per-model tunables (class_attribute, override per-class):
-#   - token_validity      (default: 1.day)
-#   - token_purpose       (default: nil — falls back to model_name.singular)
-#
-# Public surface:
-#   - #confirmation_token             => signed String
-#   - #rotate_confirmation_nonce!     => invalidates outstanding tokens
-#   - .consume_token(token)           => Result(record) on success
-#   - .token_verifier                 => the MessageVerifier instance
-#
+# Signed confirmation links for saved records. Nonce rotation provides
+# explicit revocation; confirmation also clears any outstanding code challenge.
 module Vouch
   module TokenVerifiable
     module Concern
@@ -64,13 +42,31 @@ module Vouch
         verifiable_subject
       end
 
-      def rotate_confirmation_nonce!
+      def rotate_confirmation_nonce
         Vouch::Persistence.transaction(self) do
+          lock!
           Vouch::Persistence.update!(self, confirmation_nonce: SecureRandom.hex(16))
         end
+        Vouch::Result.ok(self)
+      rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+        Vouch::Result.cancelled(record: self, error: error)
+      rescue ActiveRecord::RecordInvalid => error
+        Vouch::Result.invalid(record: self, error: error)
+      end
+
+      def rotate_confirmation_nonce!
+        result = rotate_confirmation_nonce
+        raise Vouch::OperationFailed, result unless result.ok?
+        result
       end
 
       class_methods do
+        def consume_token!(token)
+          result = consume_token(token)
+          raise Vouch::OperationFailed, result unless result.ok?
+          result
+        end
+
         def consume_token(token)
           return Vouch::Result.invalid unless token.is_a?(String)
 

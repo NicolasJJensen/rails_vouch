@@ -40,6 +40,17 @@ RSpec.describe Vouch::Generators::EjectGenerator do
     File.read(File.join(tmpdir, path))
   end
 
+  describe "generic verification ejection" do
+    %w[verifications temporary_verifications].each do |endpoint|
+      it "copies #{endpoint} without an authentication scope" do
+        run_generator(["contacts", endpoint])
+        source = written("app/controllers/contacts/#{endpoint}_controller.rb")
+        expect(source).not_to include("auth_scope")
+        expect(written("app/controllers/contacts/#{endpoint}_implementation_controller.rb")).to include("def create")
+      end
+    end
+  end
+
   describe "eject" do
     it "copies the controller verbatim with the class declaration rewritten" do
       run_generator(["users", "sessions"], {})

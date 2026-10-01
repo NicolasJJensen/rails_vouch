@@ -409,13 +409,13 @@ RSpec.describe Vouch::TwoFactorable do
 
     it "invalidates verification when an authenticator secret changes" do
       credential.update!(otp_secret: SecureRandom.hex(20))
-      credential.update!(verified_at: Time.current)
       code = nil
       allow(credential).to receive(:deliver_verification_code) { |value| code = value }
       result = credential.start_verification!
+      credential.update!(verified_at: Time.current)
       credential.update!(otp_secret: SecureRandom.hex(20))
 
-      expect(credential.complete_verification!(code, token: result.token)).to be_invalid
+      expect(credential.complete_verification(code, token: result.token)).to be_invalid
       expect(credential.reload).not_to be_verified
     end
 

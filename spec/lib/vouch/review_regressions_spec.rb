@@ -7,7 +7,7 @@ RSpec.describe 'Credential review regressions' do
     result = phone.start_verification!
     code = phone.last_delivered_code
     phone.update!(e164: '+61400000002')
-    expect(phone.complete_verification!(code, token: result.token)).to be_invalid
+    expect(phone.complete_verification(code, token: result.token)).to be_invalid
   end
 
   it 'R5 invalidates verification when the subject changes' do
@@ -21,20 +21,20 @@ RSpec.describe 'Credential review regressions' do
     code = phone.last_delivered_code
     phone.update!(e164: '+61400000002')
     phone.update!(e164: '+61400000001')
-    expect(phone.complete_verification!(code, token: result.token)).to be_invalid
+    expect(phone.complete_verification(code, token: result.token)).to be_invalid
   end
 
   it 'R5 checks a stale object against the locked current subject' do
     result = phone.start_verification!
     code = phone.last_delivered_code
     PhoneVerification.find(phone.id).update!(e164: '+61400000002')
-    expect(phone.complete_verification!(code, token: result.token)).to be_invalid
+    expect(phone.complete_verification(code, token: result.token)).to be_invalid
   end
 
   it 'R5 invalidates verified drafts when edited before saving' do
     draft = PhoneVerification.new(e164: '+61400000003')
     draft.start_verification!
-    expect(draft.complete_verification!(draft.last_delivered_code)).to be_ok
+    expect(draft.complete_verification(draft.last_delivered_code)).to be_ok
     draft.e164 = '+61400000004'
     draft.save!
     expect(draft.reload).not_to be_verified
@@ -43,7 +43,7 @@ RSpec.describe 'Credential review regressions' do
   it 'R5 preserves a verified draft when it is saved without subject changes' do
     draft = PhoneVerification.new(e164: '+61400000003')
     draft.start_verification!
-    draft.complete_verification!(draft.last_delivered_code)
+    draft.complete_verification(draft.last_delivered_code)
     draft.save!
     expect(draft.reload).to be_verified
   end
