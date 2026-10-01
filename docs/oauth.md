@@ -211,7 +211,15 @@ For multi-tenant registration, that transaction also saves the organisation and 
 
 With form registration, another `purpose: :register` provider button returns to the same pending registration. Each new provider identity is verified separately and passed to `apply_oauth_registration` on the restored account. The default mapping fills an empty email; your override can fill, replace or combine other attributes. All connected providers become sign-in methods after the final submission. Vouch does not choose a primary provider.
 
-Connect providers before entering the remaining form details. A provider button does not submit unsaved browser inputs to the registration controller. Custom multistep forms must retain their own edited fields before leaving for a provider; Vouch does not supply a wizard or infer permitted fields from that POST.
+A provider button does not submit unsaved browser inputs to the registration controller. For the standard generated form, connect providers before entering the remaining details.
+
+For a multi-step form, declare the same [registration form](registration.md#custom-registration-forms) on your registration and OAuth controllers, or their shared parent:
+
+1. Your form action assigns permitted fields and calls `save_registration_form` before leaving for another provider.
+2. The callback restores the form around the mapped account before applying the new provider information.
+3. Vouch retains the updated form for the next registration step.
+
+Your application supplies the steps and decides which fields each step accepts. The provider POST does not infer or save browser inputs.
 
 `pending_oauth_providers` returns entries such as:
 

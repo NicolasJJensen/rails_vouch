@@ -305,7 +305,7 @@ class PhoneSelection
 end
 ```
 
-This is credential serialization, not a registration wizard or persistence adapter. Your form remains responsible for validation and saving. Keep its data in trusted session storage and enforce the application's flow ownership and session-size limits.
+`PhoneSelection` above is a standalone form illustrating credential serialization. To retain verified contacts during registration, include the encrypted string in your registration form's serialized data and use the [custom registration form integration](registration.md#custom-registration-forms). A registered form receives the mapped credentials record as a positional argument to `.new(record)` or `.deserialize(data, record)`. Your form validates and saves its contacts; Vouch opens the registration transaction.
 
 > Encrypted credential state still counts toward the session size. Several contacts and TOTP enrollment data can exceed CookieStore's limit and raise `ActionDispatch::Cookies::CookieOverflow`. Use a suitable server-side session store or bound the records your form retains; do not discard proof silently.
 
