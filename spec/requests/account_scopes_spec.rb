@@ -691,6 +691,36 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("account" => target.id, "true_account" => account.id, "member" => nil)
   end
 
+  it "links a provider only to the effective account during full account impersonation" do
+    target = create(:account)
+    account_login
+    get "/linked_admins/sign_in"
+    post "/account_impersonations/#{target.id}"
+    auth = OmniAuth::AuthHash.new(provider: "github", uid: "impersonated-link", info: {email: "support@example.test"})
+
+    oauth_callback "/linked_accounts/auth/github/callback", auth: auth, purpose: :link
+
+    expect(response).to redirect_to("/")
+    expect(target.omni_auth_identities.find_by(uid: "impersonated-link")).to be_present
+    expect(account.omni_auth_identities.find_by(uid: "impersonated-link")).to be_nil
+    expect(status).to include("account" => target.id, "true_account" => account.id)
+    %i[sign_in register].each do |purpose|
+      oauth_callback "/linked_accounts/auth/github/callback", auth: auth, purpose: purpose
+      expect(response).to have_http_status(:forbidden)
+    end
+  end
+
+  it "denies provider linking during restricted membership impersonation" do
+    target = create(:user)
+    start_member_impersonation(target)
+    auth = OmniAuth::AuthHash.new(provider: "github", uid: "restricted-link", info: {email: "support@example.test"})
+
+    expect do
+      oauth_callback "/linked_accounts/auth/github/callback", auth: auth, purpose: :link
+    end.not_to change(OmniAuthIdentity, :count)
+    expect(response).to have_http_status(:forbidden)
+  end
+
   it "does not let a restricted membership impersonation escalate to an account" do
     target = create(:user)
     start_member_impersonation(target)

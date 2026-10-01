@@ -134,6 +134,8 @@ Use a separate linking button on your account settings page:
 
 Vouch binds this request to the account, scope and signed-in session that started it. Switching accounts, signing out and back in, or entering impersonation before the callback returns prevents linking. A provider identity already attached to the same account is harmless; one owned by another account cannot be reassigned.
 
+During full account impersonation, a linking request started from the impersonated account can add a provider to that account. Membership-only impersonation cannot link providers. Sign-in and registration callbacks are also refused while impersonating. Your action authorization can further restrict who may link providers.
+
 > Vouch retains the purpose in session state associated with the provider request. Callback URL parameters cannot turn registration into linking or change the destination account. OmniAuth's own provider response and state validation remain required.
 
 ## Prefill and extend the registration form

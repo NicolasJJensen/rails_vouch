@@ -1,6 +1,5 @@
 class Vouch::OmniAuthsController < ::ApplicationController
   include Vouch::Authentication
-  prepend_before_action :require_unimpersonated_authentication!, only: :callback
   allow_unauthenticated_access
 
   def callback(&response_handler)
@@ -22,8 +21,13 @@ class Vouch::OmniAuthsController < ::ApplicationController
     unless @auth_hash && @auth_hash['provider'].present? && @auth_hash['uid'].present?
       return oauth_request_failed(:failed)
     end
+    Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
     @oauth_initiation = authentication_session.consume_oauth_initiation(@auth_hash)
     return oauth_request_failed(:invalid_request) unless @oauth_initiation
+    if Vouch::ImpersonationStack.active?(session) &&
+        (Vouch::ImpersonationStack.membership_restricted?(session) || @oauth_initiation['purpose'] != 'link')
+      return Vouch::Result.invalid(reason: :impersonating, forbidden: true)
+    end
 
     oauth_identity = auth_mapping.oauth_identity_class&.find_from_omniauth(@auth_hash)
     case @oauth_initiation['purpose']
@@ -137,6 +141,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   def render_oauth_result(result)
+    return head(:forbidden) if result.metadata[:forbidden]
     reason = result.metadata[:reason]
     if result.metadata[:request_failure]
       authentication_session.clear_oauth_initiation_return_to
