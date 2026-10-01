@@ -63,17 +63,30 @@ RSpec.describe Vouch::ImpersonationStack do
 
   it "keeps MFA evidence with the impersonated context and restores the operator's evidence" do
     evidence_key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
-    session[evidence_key] = {"method" => "totp", "credential" => "operator"}
+    original = [Vouch::AuthenticationEvidence.build(method: :recovery_code, account: operator.account, owner: operator.account)]
+    session[evidence_key] = original.deep_dup
 
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: mapping, target: first_target)
-    expect(session[evidence_key]).to eq({"method" => "totp", "credential" => "operator"})
+    expect(session[evidence_key]).to eq(original)
 
     session[evidence_key] = {"method" => "recovery_code", "credential" => "target"}
     described_class.stop!(warden: warden, session: session, target_mapping: mapping)
 
-    expect(session[evidence_key]).to eq({"method" => "totp", "credential" => "operator"})
+    expect(session[evidence_key]).to eq(original)
   end
+  it "does not retain invalid MFA proof in either the stack or the active session" do
+    key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
+    proof = Vouch::AuthenticationEvidence.build(method: :recovery_code, account: first_target.account, owner: first_target.account)
+    session[key] = [proof]
+
+    described_class.start!(warden: warden, session: session, source_mapping: mapping,
+      target_mapping: mapping, target: first_target)
+
+    expect(session[key]).to be_nil
+    expect(session.fetch(described_class::SESSION_KEY).last.fetch("evidence")).not_to have_key(key)
+  end
+
   it "restores the original first-factor reference separately from MFA evidence" do
     key = Vouch::Session.key_for(mapping.evidence_scope_name, :signed_in_via)
     original = { "type" => "Phone", "id" => "operator-phone", "account_fingerprint" => "operator" }
@@ -94,7 +107,8 @@ RSpec.describe Vouch::ImpersonationStack do
     primary_key = Vouch::Session.key_for(mapping.evidence_scope_name, :signed_in_via)
     evidence_key = Vouch::Session.key_for(mapping.evidence_scope_name, :evidence)
     session[primary_key] = { "type" => "Phone", "id" => "operator-phone" }
-    session[evidence_key] = [{ "method" => "totp" }]
+    original = [Vouch::AuthenticationEvidence.build(method: :recovery_code, account: operator.account, owner: operator.account)]
+    session[evidence_key] = original.deep_dup
 
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: account_mapping, target: first_target.account)
@@ -103,7 +117,7 @@ RSpec.describe Vouch::ImpersonationStack do
     expect(session[evidence_key]).to be_nil
     described_class.stop_all!(warden: warden, session: session, target_mapping: account_mapping)
     expect(session[primary_key]).to eq("type" => "Phone", "id" => "operator-phone")
-    expect(session[evidence_key]).to eq([{ "method" => "totp" }])
+    expect(session[evidence_key]).to eq(original)
   ensure
     Vouch.mappings.delete(:credentials)
   end

@@ -119,7 +119,7 @@ module Vouch
           "mode" => target_mapping.split_model? ? "membership" : "account",
           "return_to" => safe_return_path(return_to),
           "contexts" => active_contexts(warden),
-          "evidence" => active_evidence(session)
+          "evidence" => active_evidence(warden, session)
         }
         stack << entry
         write(session, stack)
@@ -245,12 +245,25 @@ module Vouch
         end
       end
 
-      def active_evidence(session)
-        Vouch.each_mapping.each_with_object({}) do |mapping, evidence|
-          %i[evidence signed_in_via].each do |purpose|
-            key = Vouch::Session.key_for(mapping.evidence_scope_name, purpose)
-            evidence[key] = session[key].deep_dup if session[key]
+      def active_evidence(warden, session)
+        Vouch.each_mapping.map(&:evidence_scope_name).uniq.each_with_object({}) do |scope, evidence|
+          mapping = Vouch.mapping_for(scope)
+          principal = Vouch.authenticated_identity(warden, scope)
+          account = if principal && mapping.split_model? && !mapping.membership_scope? && active?(session)
+            retained_account(session)
+          elsif principal
+            mapping.account_for(principal)
           end
+          key = Vouch::Session.key_for(scope, :evidence)
+          proofs = Vouch::AuthenticationEvidence.current(session[key], account: account, mapping: mapping)
+          if proofs.empty?
+            session.delete(key)
+          else
+            session[key] = proofs
+            evidence[key] = proofs.deep_dup
+          end
+          primary_key = Vouch::Session.key_for(scope, :signed_in_via)
+          evidence[primary_key] = session[primary_key].deep_dup if session[primary_key]
         end
       end
 
