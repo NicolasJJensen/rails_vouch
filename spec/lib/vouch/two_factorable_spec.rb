@@ -114,6 +114,34 @@ RSpec.describe Vouch::TwoFactorable do
   end
 
   describe "per-account configuration" do
+    it "selects an explicitly declared owner without loading unrelated associations" do
+      stub_const("ExplicitOwnerCredential", Class.new(TwoFactorCredential) do
+        belongs_to :creator, class_name: "Account", foreign_key: :account_id
+        authentication_owner :account
+      end)
+      factor = ExplicitOwnerCredential.new(account: account)
+      allow(factor).to receive(:creator).and_raise("must not load unrelated owner")
+      expect(factor.send(:two_factor_account)).to eq(account)
+      expect(factor.send(:two_factor_account_class)).to eq(Account)
+    end
+
+    it "rejects an explicit association that does not exist" do
+      stub_const("InvalidOwnerCredential", Class.new(TwoFactorCredential) do
+        authentication_owner :missing
+      end)
+      expect { InvalidOwnerCredential.new.send(:two_factor_account_class) }
+        .to raise_error(Vouch::ConfigurationError, /must name a belongs_to association/)
+    end
+
+    it "rejects an explicit owner without the account MFA feature" do
+      stub_const("WrongOwnerCredential", Class.new(TwoFactorCredential) do
+        belongs_to :organisation
+        authentication_owner :organisation
+      end)
+      expect { WrongOwnerCredential.new.send(:two_factor_account_class) }
+        .to raise_error(Vouch::ConfigurationError, /authenticates_with :two_factorable/)
+    end
+
     it "raises when distinct MFA-enabled owner records are ambiguous" do
       owner = create(:account)
       creator = create(:account)

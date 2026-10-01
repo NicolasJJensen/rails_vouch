@@ -45,6 +45,7 @@ module Vouch
       # can override for a different display name.
       class_attribute :two_factor_label_attribute, instance_writer: false
       class_attribute :two_factor_authentication_method, instance_writer: false
+      class_attribute :authentication_owner_association, instance_writer: false
 
       install_two_factor_challenge_wrapper! if ancestors.include?(Vouch::BackupCodable)
     end
@@ -53,6 +54,12 @@ module Vouch
       # Declare the stable name this credential contributes to authentication
       # evidence. The declaration is inherited by subclasses unless they
       # provide their own name.
+      def authentication_owner(name = TWO_FACTOR_AUTH_NAME_UNSET)
+        return authentication_owner_association if name.equal?(TWO_FACTOR_AUTH_NAME_UNSET)
+
+        self.authentication_owner_association = name.to_sym
+      end
+
       def two_factor_auth_name(name = TWO_FACTOR_AUTH_NAME_UNSET)
         return two_factor_authentication_method || model_name.singular.to_sym if name.equal?(TWO_FACTOR_AUTH_NAME_UNSET)
 
@@ -203,7 +210,31 @@ module Vouch
 
     private
 
+    def authentication_owner_reflection
+      name = self.class.authentication_owner_association
+      return unless name
+
+      reflection = self.class.reflect_on_association(name)
+      unless reflection&.macro == :belongs_to
+        raise Vouch::ConfigurationError, "#{self.class.name}.authentication_owner :#{name} must name a belongs_to association"
+      end
+      reflection
+    end
+
+    def validate_authentication_owner_class!(owner_class)
+      return unless owner_class
+      return owner_class if owner_class.respond_to?(:auth_feature_enabled?) && owner_class.auth_feature_enabled?(:two_factorable)
+
+      raise Vouch::ConfigurationError, "#{owner_class.name} must declare authenticates_with :two_factorable to own #{self.class.name}"
+    end
+
     def two_factor_account
+      if (reflection = authentication_owner_reflection)
+        owner = public_send(reflection.name)
+        validate_authentication_owner_class!(reflection.polymorphic? ? owner&.class : reflection.klass)
+        return owner
+      end
+
       owners = self.class.reflect_on_all_associations(:belongs_to).filter_map do |candidate|
         if candidate.polymorphic?
           owner = public_send(candidate.name)
@@ -225,6 +256,11 @@ module Vouch
     end
 
     def two_factor_account_class
+      if (reflection = authentication_owner_reflection)
+        owner_class = reflection.polymorphic? ? public_send(reflection.name)&.class : reflection.klass
+        return validate_authentication_owner_class!(owner_class)
+      end
+
       candidates = self.class.reflect_on_all_associations(:belongs_to).filter_map do |reflection|
         if reflection.polymorphic?
           owner_class = public_send(reflection.name)&.class

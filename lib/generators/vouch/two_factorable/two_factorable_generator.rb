@@ -25,6 +25,11 @@ module Vouch
         validate_optional_ui!
       end
 
+      def create_feature_migration
+        authentication_owner_options if credential_model?
+        super
+      end
+
       def create_optional_ui
         return if options[:model_only]
         return unless auth_scope_name.present?
@@ -49,6 +54,7 @@ module Vouch
         if credential
           wiring << "  include Vouch::Verifiable\n" unless contents.include?("include Vouch::Verifiable")
           wiring << "  include Vouch::TwoFactorable\n" unless contents.include?("include Vouch::TwoFactorable")
+          wiring << "  authentication_owner :#{authentication_owner_association}\n" unless contents.match?(/\bauthentication_owner\s/)
           if options[:subject].any? && !contents.include?("verifiable_subject_attribute")
             value = options[:subject].length == 1 ? ":#{options[:subject].first}" : "[#{options[:subject].map { |a| ":#{a}" }.join(", ")}]"
             wiring << "  self.verifiable_subject_attribute = #{value}\n"
@@ -73,7 +79,7 @@ module Vouch
         owner_wiring = +"\n"
         owner_wiring << "  include Vouch::Authenticatable\n" unless owner_contents.include?("include Vouch::Authenticatable")
         owner_wiring << "  authenticates_with :two_factorable\n" unless owner_contents.include?("authenticates_with :two_factorable")
-        owner_wiring << "  has_many :#{credential_association_name}, dependent: :destroy\n" unless owner_contents.include?("has_many :#{credential_association_name}")
+        owner_wiring << "  has_many :#{credential_association_name}, class_name: \"#{model_metadata.class_name}\", #{authentication_owner_options}, dependent: :destroy\n" unless owner_contents.include?("has_many :#{credential_association_name}")
         inject_model_code(owner_path, Vouch::ModelMetadata.new(owner_model), owner_wiring) unless owner_wiring == "\n"
       end
 
@@ -134,7 +140,7 @@ module Vouch
 
       def owner_model
         return @owner_model if defined?(@owner_model)
-        return @owner_model = options[:owner] if options[:owner].present?
+        return @owner_model = Vouch::ModelMetadata.new(options[:owner].to_s.delete_prefix("::")).class_name if options[:owner].present?
         path = File.join(destination_root, model_metadata.model_path)
         source = File.file?(path) ? File.read(path) : ""
         # Accept conventional, parenthesized, and multiline Rails association
@@ -142,6 +148,11 @@ module Vouch
         # possible: guessing the wrong authentication owner wires routes and
         # foreign keys to the wrong model.
         associations = belongs_to_associations(source)
+        declared = source[/^\s*authentication_owner\s*(?:\(\s*)?:([a-z_]+)/, 1]
+        if declared
+          associations.select! { |name, _| name == declared }
+          raise Thor::Error, "#{model_metadata.class_name}.authentication_owner :#{declared} must name an existing belongs_to association" if associations.empty?
+        end
         @owner_model = if associations.empty?
                          model_metadata.class_name
                        elsif associations.length == 1
@@ -151,10 +162,41 @@ module Vouch
                        end
       end
 
+      def authentication_owner_association
+        path = File.join(destination_root, model_metadata.model_path)
+        source = File.file?(path) ? File.read(path) : ""
+        associations = belongs_to_associations(source)
+        declared = source[/^\s*authentication_owner\s*(?:\(\s*)?:([a-z_]+)/, 1]
+        candidates = associations.select { |name, class_name| (class_name.presence || name.classify) == owner_model }
+        candidates.select! { |name, _| name == declared } if declared
+        return candidates.first.first if candidates.length == 1
+
+        raise Thor::Error, "#{model_metadata.class_name} needs one belongs_to association for #{owner_model}; declare authentication_owner :association when several match"
+      end
+
+      def authentication_owner_options
+        name = authentication_owner_association
+        source = File.read(File.join(destination_root, model_metadata.model_path))
+        declaration = belongs_to_associations(source).find { |association, _| association == name }.last
+        options = Vouch::ModelMetadata.new(owner_model).association_options(name).split(", primary_key: ", 2)
+        foreign_key = association_key_literal(declaration, :foreign_key)
+        primary_key = association_key_literal(declaration, :primary_key)
+        "#{foreign_key ? "foreign_key: #{foreign_key}" : options.first}, primary_key: #{primary_key || options.last}"
+      end
+
+      def association_key_literal(declaration, key)
+        return unless declaration.match?(/\b#{key}:/)
+        literal = declaration[/\b#{key}:\s*(\[[^\]]*\]|:[a-z_][a-z0-9_]*|"[a-z_][a-z0-9_]*"|'[a-z_][a-z0-9_]*')/, 1]
+        unless literal && literal.match?(/\A(?:\[\s*(?:(?::[a-z_][a-z0-9_]*|["'][a-z_][a-z0-9_]*["'])\s*,?\s*)*\]|:[a-z_][a-z0-9_]*|["'][a-z_][a-z0-9_]*["'])\z/)
+          raise Thor::Error, "Use literal #{key} names for #{model_metadata.class_name}'s authentication owner association"
+        end
+        literal
+      end
+
       def belongs_to_associations(source)
         source.scan(/^\s*belongs_to\s*(?:\(\s*)?:([a-z_]+)(.*?)(?=^\s*(?:belongs_to|has_one|has_many|def|class|end)\b|\z)/m).map do |name, declaration|
           class_name = declaration[/\bclass_name:\s*["']([^"']+)["']/, 1]
-          [name, class_name]
+          [name, class_name, declaration]
         end
       end
 

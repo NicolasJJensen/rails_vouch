@@ -16,18 +16,31 @@ MFA challenges a verified credential after the person supplies their password. T
 
 ## Add phone-based MFA
 
-Starting with a Vouch `User` model:
+Start with a `Phone` model that belongs to the model your users sign in with. For example:
 
-```sh
-bin/rails generate model Phone user:references e164:string
-bin/rails generate vouch:two_factorable Phone --subject e164
-bin/rails db:migrate
+```ruby
+# app/models/phone.rb
+class Phone < ApplicationRecord
+  belongs_to :user
+  normalizes :e164, with: ->(value) { value.strip }
+end
 ```
 
-The first command creates `Phone` with `belongs_to :user`. Vouch uses that relationship to identify `User` as the credential owner. If the credential belongs to multiple models, specify the owner:
+The `phones` table needs its owner reference and the phone number:
+
+```ruby
+create_table :phones do |t|
+  t.references :user, null: false, foreign_key: true
+  t.string :e164
+  t.timestamps
+end
+```
+
+Add MFA:
 
 ```sh
-bin/rails generate vouch:two_factorable Phone --owner User --subject e164
+bin/rails generate vouch:two_factorable Phone --subject e164
+bin/rails db:migrate
 ```
 
 Vouch adds:
@@ -37,16 +50,6 @@ Vouch adds:
 - Verification and MFA concerns to `Phone`, with delivery methods for you to implement.
 - Challenge and credential-management controllers under `app/controllers/users`.
 - Their forms under `app/views/users`, and `auth.two_factor` routes.
-
-The Rails model migration creates:
-
-```ruby
-create_table :phones do |t|
-  t.references :user, null: false, foreign_key: true
-  t.string :e164
-  t.timestamps
-end
-```
 
 Vouch's migrations add:
 
@@ -68,23 +71,49 @@ change_table :phones do |t|
 end
 ```
 
-`--subject e164` identifies the field whose value is verified. The generator adds this declaration:
+`--subject e164` identifies the field being verified. The generated model declarations connect the credential to its owner:
 
 ```ruby
 # app/models/phone.rb
-self.verifiable_subject_attribute = :e164
+class Phone < ApplicationRecord
+  include Vouch::Verifiable
+  include Vouch::TwoFactorable
+
+  belongs_to :user
+  authentication_owner :user
+  self.verifiable_subject_attribute = :e164
+end
 ```
 
-Vouch clears verification and invalidates outstanding codes when that field changes. The replacement number must be verified before it can be used for MFA; changing the value back does not restore its earlier verification.
+Changing the phone number clears verification and invalidates outstanding codes. The replacement number must be verified before use as an MFA method. Existing verification columns are retained; the migration adds only missing fields and indexes.
 
-For a **multi-tenant application**, attach the phone to `Account`:
+If the model has several `belongs_to` associations, select its authentication owner:
 
 ```sh
-bin/rails generate model Phone account:references e164:string
+bin/rails generate vouch:two_factorable Phone --owner User --subject e164
+```
+
+For `belongs_to :user` and `belongs_to :organisation`, this adds `authentication_owner :user`. If several associations point to `User`, declare the one you intend before generating:
+
+```ruby
+# app/models/phone.rb
+class Phone < ApplicationRecord
+  belongs_to :holder, class_name: "User"
+  belongs_to :added_by, class_name: "User"
+  include Vouch::TwoFactorable
+  authentication_owner :holder
+end
+```
+
+> The declaration selects an existing Rails association. A missing association or an owner without `authenticates_with :two_factorable` produces a configuration error when the feature is used.
+
+For a **multi-tenant application**, the owner is the model that holds sign-in credentials, such as `Account`. With `Phone belongs_to :account`, run:
+
+```sh
 bin/rails generate vouch:two_factorable Phone --owner Account --subject e164
 ```
 
-The phone migration uses `account_id` instead of `user_id`, referencing `accounts`; the owner flag is added to `accounts`. Its challenge and management pages use the account routes.
+This adds `authentication_owner :account` to `Phone` and the boolean `two_factor_enabled` column to `accounts`. The phone's verification and challenge fields remain the same as above. The generated challenge and management controllers use the account scope.
 
 For a custom controller namespace:
 
@@ -92,7 +121,7 @@ For a custom controller namespace:
 bin/rails generate vouch:two_factorable Phone --owner User --subject e164 --auth-scope user --controller-path portal
 ```
 
-For model support and the same schema without pages:
+To add the model declarations, owner association and migrations without generating controllers, views or routes:
 
 ```sh
 bin/rails generate vouch:two_factorable Phone --owner User --subject e164 --model-only

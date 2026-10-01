@@ -120,6 +120,7 @@ RSpec.describe "optional feature view generators" do
     user = File.read(File.join(directory, "app/models/user.rb"))
     expect(phone).to include("include Vouch::Verifiable")
     expect(phone).to include("include Vouch::TwoFactorable")
+    expect(phone).to include("authentication_owner :user")
     expect(phone).to include("self.verifiable_subject_attribute = :e164")
     expect(phone).to include("def deliver_verification_code")
     expect(phone).to include("def deliver_two_factor_code")
@@ -146,10 +147,80 @@ RSpec.describe "optional feature view generators" do
     Dir.chdir(directory) { generator.invoke_all }
 
     expect(File.read(File.join(directory, "app/models/account.rb"))).to include("has_many :phones")
+    expect(File.read(File.join(directory, "app/models/phone.rb"))).to include("authentication_owner :holder")
+    expect(File.read(File.join(directory, "app/models/account.rb"))).to include("foreign_key: :holder_id")
 
     explicit = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], owner: "Account")
     explicit.destination_root = directory
     expect { Dir.chdir(directory) { explicit.invoke_all } }.not_to raise_error
+  end
+
+  it "wires the selected owner association when another belongs_to exists" do
+    directory = Dir.mktmpdir("vouch-two-factor-selected-owner")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/phone.rb"), <<~RUBY)
+      class Phone < ApplicationRecord
+        belongs_to :account
+        belongs_to :organisation
+      end
+    RUBY
+    File.write(File.join(directory, "app/models/account.rb"), "class Account < ApplicationRecord\nend\n")
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], owner: "Account", model_only: true)
+    generator.destination_root = directory
+    Dir.chdir(directory) { generator.invoke_all }
+    expect(File.read(File.join(directory, "app/models/phone.rb"))).to include("authentication_owner :account")
+  end
+
+  it "preserves custom owner keys in the generated inverse association" do
+    directory = Dir.mktmpdir("vouch-two-factor-owner-keys")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/phone.rb"), <<~RUBY)
+      class Phone < ApplicationRecord
+        belongs_to :holder, class_name: "Account", foreign_key: [:realm, :owner_key], primary_key: [:realm, :key]
+      end
+    RUBY
+    File.write(File.join(directory, "app/models/account.rb"), "class Account < ApplicationRecord\nend\n")
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], owner: "Account", model_only: true)
+    generator.destination_root = directory
+    Dir.chdir(directory) { generator.invoke_all }
+    expect(File.read(File.join(directory, "app/models/account.rb")))
+      .to include("foreign_key: [:realm, :owner_key], primary_key: [:realm, :key]")
+  end
+
+  it "rejects an owner with no matching association before generating a migration" do
+    directory = Dir.mktmpdir("vouch-two-factor-wrong-owner")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/phone.rb"), "class Phone < ApplicationRecord\n  belongs_to :user\nend\n")
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], owner: "Account", model_only: true)
+    generator.destination_root = directory
+    expect { Dir.chdir(directory) { generator.invoke_all } }.to raise_error(Thor::Error, /belongs_to association/)
+    expect(Dir[File.join(directory, "db/migrate/*")]).to be_empty
+  end
+
+  it "rejects a missing declared owner instead of treating the credential as its own owner" do
+    directory = Dir.mktmpdir("vouch-two-factor-missing-declaration")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    File.write(File.join(directory, "app/models/phone.rb"), "class Phone < ApplicationRecord\n  belongs_to :user\n  authentication_owner :missing\nend\n")
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], model_only: true)
+    generator.destination_root = directory
+    expect { Dir.chdir(directory) { generator.invoke_all } }.to raise_error(Thor::Error, /must name an existing belongs_to/)
+    expect(Dir[File.join(directory, "db/migrate/*")]).to be_empty
+  end
+
+  it "names the actual credential class in the inverse association" do
+    directory = Dir.mktmpdir("vouch-two-factor-namespaced-credential")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models/contacts"))
+    File.write(File.join(directory, "app/models/contacts/phone.rb"), "class Contacts::Phone < ApplicationRecord\n  belongs_to :account\nend\n")
+    File.write(File.join(directory, "app/models/account.rb"), "class Account < ApplicationRecord\nend\n")
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Contacts::Phone"], owner: "::Account", model_only: true)
+    generator.destination_root = directory
+    Dir.chdir(directory) { generator.invoke_all }
+    expect(File.read(File.join(directory, "app/models/account.rb"))).to include('class_name: "Contacts::Phone"')
   end
 
   it "adds an invitation view beside the existing invitation controller" do
