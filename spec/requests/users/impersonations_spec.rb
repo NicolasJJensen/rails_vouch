@@ -19,8 +19,75 @@ RSpec.describe "Users::Impersonations", type: :request do
     post "/users/sign_in", params: { email_address: "admin@example.com", password: "password123" }
   end
 
-  before do
-    allow_any_instance_of(Users::ImpersonationsController).to receive(:authorize_impersonation!).and_return(true)
+  it "prepares the actual target before host action authorization and does not switch after denial" do
+    target_id = target_user.id
+    Users::ImpersonationsController.define_method(:create) do
+      raise "Target was not prepared" unless @identity.id == target_id
+      head :forbidden
+    end
+    sign_in_via_login
+
+    post "/users/impersonations/#{target_user.id}"
+
+    expect(response).to have_http_status(:forbidden)
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+    get "/users/two_factor_credentials"
+    expect(response).to have_http_status(:ok)
+  ensure
+    Users::ImpersonationsController.remove_method(:create)
+  end
+
+  it "yields a completed switch for a host response without a second redirect" do
+    Users::ImpersonationsController.define_method(:create) do
+      super() do |result|
+        render json: { status: result.status, identity_id: result.value.id }
+      end
+    end
+    sign_in_via_login
+
+    post "/users/impersonations/#{target_user.id}"
+
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body).to eq("status" => "ok", "identity_id" => target_user.id)
+    expect(response.headers["Location"]).to be_nil
+  ensure
+    Users::ImpersonationsController.remove_method(:create)
+  end
+
+  it "yields a cancelled switch without creating impersonation state" do
+    hooks = Users::ImpersonationsController.__hooks
+    Users::ImpersonationsController.before_impersonation_start { throw :abort }
+    Users::ImpersonationsController.define_method(:create) do
+      super() { |result| render json: { status: result.status } }
+    end
+    sign_in_via_login
+
+    post "/users/impersonations/#{target_user.id}"
+
+    expect(response.parsed_body).to eq("status" => "cancelled")
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+  ensure
+    Users::ImpersonationsController.remove_method(:create)
+    Users::ImpersonationsController.__hooks = hooks if hooks
+  end
+
+  %i[destroy destroy_all].each do |action|
+    it "yields #{action} after restoring the operator" do
+      Users::ImpersonationsController.define_method(action) do
+        super() do |result|
+          render json: { status: result.status, restored_id: current_identity.id }
+        end
+      end
+      sign_in_via_login
+      post "/users/impersonations/#{target_user.id}"
+
+      delete(action == :destroy ? "/users/impersonations" : "/users/impersonations/all")
+
+      expect(response.parsed_body).to eq("status" => "ok", "restored_id" => admin.id)
+      expect(response.headers["Location"]).to be_nil
+    ensure
+      Users::ImpersonationsController.remove_method(action)
+    end
   end
 
   describe "POST /users/impersonations/:id" do

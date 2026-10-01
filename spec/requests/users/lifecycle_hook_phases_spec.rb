@@ -79,7 +79,6 @@ RSpec.describe "Users lifecycle hook phases", type: :request do
     admin = create(:user, organisation: organisation)
     target = create(:user, organisation: organisation)
     observed = []
-    allow_any_instance_of(Users::ImpersonationsController).to receive(:authorize_impersonation!).and_return(true)
     preserve_hooks(Users::ImpersonationsController, :impersonation_start) do
       Users::ImpersonationsController.after_commit_of_impersonation_start do |_original, target_identity|
         observed << (current_identity == target_identity)

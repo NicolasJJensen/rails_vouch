@@ -171,7 +171,7 @@ RSpec.describe "Vouch generators" do
     expect(Ripper.sexp(routes)).not_to be_nil
   end
 
-  it "adds impersonation to an existing scope and writes a safely denying host controller" do
+  it "adds impersonation with an action override for application authorization" do
     @generator_directory = run_generator(
       Vouch::Generators::ImpersonationGenerator,
       ["users"],
@@ -193,7 +193,8 @@ RSpec.describe "Vouch generators" do
     expect(routes).to include("auth.sessions\n      auth.impersonation controller: \"users/impersonations\"")
     expect(controller).to include("class Users::ImpersonationsController < Vouch::ImpersonationsController")
     expect(controller).not_to include("auth_scope :user")
-    expect(controller).to include("head :forbidden")
+    expect(controller).to include("def create", "@identity", "super")
+    expect(controller).not_to include("authorize_impersonation!", "head :forbidden")
   end
 
   it "uses the scope block variable, does not duplicate the route, and preserves an existing controller" do
@@ -444,8 +445,12 @@ RSpec.describe "Vouch generators" do
 
     expect(controller).to include("def build_tenant(_account)")
     expect(controller).to include("def build_identity(account, tenant: nil)")
-    expect(controller).to include("params.require(:organisation).permit(:name)")
-    expect(view).to include('text_field_tag "organisation[name]"')
+    migration = File.read(Dir[File.join(@generator_directory, "db/migrate/*organisations.rb")].first)
+    expect(controller).to include("Organisation.new")
+    expect(controller).not_to include("permit(:name)")
+    expect(view).not_to include('organisation[name]')
+    expect(migration).not_to include("t.string :name")
+    expect(view).to include("if invitation_registration?")
   end
 
   it "generates matching auth_data and UUID OAuth columns" do

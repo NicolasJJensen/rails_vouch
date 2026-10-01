@@ -44,7 +44,6 @@ RSpec.describe "Account and membership sessions", type: :request do
       auth_scope :account
       impersonator_scope :admin
       private
-      def authorize_impersonation! = true
     end)
     stub_const("LinkedMembers::SessionsController", Class.new(Vouch::MembershipSessionsController) do
       auth_scope :member
@@ -58,7 +57,6 @@ RSpec.describe "Account and membership sessions", type: :request do
 
       private
 
-      def authorize_impersonation! = true
     end)
     stub_const("LinkedAdmins::ImpersonationsController", Class.new(Vouch::ImpersonationsController) do
       auth_scope :admin
@@ -66,7 +64,6 @@ RSpec.describe "Account and membership sessions", type: :request do
 
       private
 
-      def authorize_impersonation! = true
     end)
     stub_const("LinkedStatusController", Class.new(ApplicationController) do
       def show
@@ -473,8 +470,9 @@ RSpec.describe "Account and membership sessions", type: :request do
     LinkedMembers::ImpersonationsController.impersonator_scopes :admin, :member
     target, nested = create_list(:user, 2)
     seen = []
-    allow_any_instance_of(LinkedMembers::ImpersonationsController).to receive(:authorize_impersonation!) do |controller|
-      seen << controller.send(:impersonator).id
+    LinkedMembers::ImpersonationsController.define_method(:create) do
+      seen << impersonator.id
+      super()
     end
     start_member_impersonation(target)
     post "/linked_members/impersonations/#{nested.id}", params: {impersonator_scope: "member"}
@@ -491,7 +489,7 @@ RSpec.describe "Account and membership sessions", type: :request do
     allow_any_instance_of(LinkedMembers::ImpersonationsController).to receive(:impersonatable_identities).and_return(User.where(id: first.id))
     start_member_impersonation(first)
     post "/linked_members/impersonations/#{forbidden.id}"
-    expect(response).to redirect_to("/")
+    expect(response).to have_http_status(:not_found)
     expect(status).to include("member" => first.id, "account" => account.id)
     delete "/linked_members/impersonations"
     expect(status).to include("admin" => membership.id)

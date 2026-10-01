@@ -11,6 +11,7 @@ In a single-model `:user` setup, `current_user` is the target and `true_user` is
 - [Start and stop](#start-and-stop)
 - [Composite primary keys](#composite-primary-keys)
 - [Edit the switching actions](#edit-the-switching-actions)
+- [Customize action responses](#customize-action-responses)
 
 ## Add impersonation
 
@@ -20,16 +21,19 @@ For an existing `:user` scope:
 bin/rails generate vouch:impersonation users
 ```
 
-The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. The generated controller denies every request until the host supplies an authorization rule and a constrained target relation:
+The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. Add your application’s permission check to the generated action. Vouch prepares `@identity` before the action runs:
 
 ```ruby
 # app/controllers/users/impersonations_controller.rb
 class Users::ImpersonationsController < Vouch::ImpersonationsController
-  private
+  def create
+    # Authorize impersonator's access to @identity here.
+    return head :forbidden unless impersonator.support_access?
 
-  def authorize_impersonation!
-    head :forbidden unless impersonator.support_access?
+    super
   end
+
+  private
 
   def impersonatable_identities
     User.where(organisation_id: impersonator.organisation_ids, global_admin: false)
@@ -39,7 +43,11 @@ end
 
 `support_access?`, `organisation_ids`, and `global_admin` are host application rules in this example. Vouch finds the submitted target only within `impersonatable_identities`, so the relation is the boundary that prevents an operator from choosing another organisation or another administrator.
 
-An explicitly authorized impersonation does not require the target to complete MFA. If support access needs fresh MFA, add that check to `authorize_impersonation!` using the host application's own policy or predicate on `impersonator`.
+> Permission checks belong to your application. The generated comment does not enforce authorization. Use your normal action override or authorization callbacks before switching identities.
+
+`set_identity` looks up the target through `impersonatable_identities` before `create`. A missing target raises `ActiveRecord::RecordNotFound`, which Rails handles as a not-found response; your application can use its normal `rescue_from` handling. Permission exceptions also propagate normally.
+
+An explicitly authorized impersonation does not require the target to complete MFA. If support access needs fresh MFA, add that check to your `create` action before `super` using the host application's own policy or predicate on `impersonator`.
 
 ## Choose the operator scope
 
@@ -49,11 +57,13 @@ By default, an impersonation controller accepts the scope it serves. Use `impers
 class Users::ImpersonationsController < Vouch::ImpersonationsController
   impersonator_scopes :support_operator, :employee
 
-  private
+  def create
+    return head :forbidden unless impersonator.can_support_users?
 
-  def authorize_impersonation!
-    head :forbidden unless impersonator.can_support_users?
+    super
   end
+
+  private
 
   def impersonatable_identities
     User.where(organisation_id: impersonator.supported_organisation_ids)
@@ -126,3 +136,23 @@ bin/rails generate vouch:eject users impersonations
 ```
 
 This copies the actions into your controller while preserving its authorization rules. [Ejection](controllers.md#eject-a-controller) explains the shared runtime that remains supplied by Vouch.
+
+## Customize action responses
+
+The switching actions yield a result before their default redirect. This block runs after the operation; put authorization before `super`.
+
+```ruby
+# app/controllers/users/impersonations_controller.rb
+class Users::ImpersonationsController < Vouch::ImpersonationsController
+  def create
+    # Authorize impersonator's access to @identity here.
+    super do |result|
+      next unless request.format.json?
+
+      render json: { status: result.status }, status: result.ok? ? :ok : :unprocessable_content
+    end
+  end
+end
+```
+
+Use the same pattern in `destroy` or `destroy_all` to customize one-level or complete restoration. An operation cancelled by a lifecycle callback yields `result.cancelled?`; invalid restoration yields `result.invalid?`. Rendering or redirecting suppresses the default response. Record lookup and authentication filters run before the action, so their boundary failures use the normal Rails response handling instead of this result block.

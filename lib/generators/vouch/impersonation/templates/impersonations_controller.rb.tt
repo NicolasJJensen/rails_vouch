@@ -3,10 +3,8 @@ class <%= controller_class_name %> < Vouch::ImpersonationsController
   auth_scope :<%= auth_scope_name %>
 <% end -%>
 
-  private
-
-  # The host must explicitly authorize impersonation.
-  def authorize_impersonation!
-    head :forbidden
+  def create
+    # Authorize impersonator's access to @identity here.
+    super
   end
 end

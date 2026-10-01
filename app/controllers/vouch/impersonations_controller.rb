@@ -3,10 +3,10 @@ class Vouch::ImpersonationsController < ::ApplicationController
   skip_before_action :authenticate_auth_scope!
   before_action :authenticate_impersonator!, only: :create
   before_action :authenticate_impersonation_termination!, only: %i[destroy destroy_all]
-  before_action :authorize_impersonation!, only: :create
+  before_action :set_identity, only: :create
 
-  def create
-    target = Vouch::RecordKey.find(impersonatable_identities, params[:id])
+  def create(&response_handler)
+    target = @identity
     original = current_impersonator
     return_path = local_referer_path
     changed = run_authentication_hooks(:impersonation_start, original, target) do |env|
@@ -21,16 +21,19 @@ class Vouch::ImpersonationsController < ::ApplicationController
         end
       true
     end
-    changed ? redirect_to(root_path) : head(:forbidden)
-  rescue ActiveRecord::RecordNotFound
-    redirect_to root_path, alert: I18n.t('vouch.impersonations.not_found')
+    result = changed ? Vouch::Result.ok(target) : Vouch::Result.cancelled(record: target)
+    respond_with_authentication_result(result, response_handler) do
+      changed ? redirect_to(root_path) : head(:forbidden)
+    end
   end
 
-  def destroy
+  def destroy(&response_handler)
     original = Vouch::ImpersonationStack.current_source(warden: warden, session: session, scope: impersonator_scope_name)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
-      return head(:unprocessable_entity)
+      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_impersonation), response_handler) do
+        head :unprocessable_entity
+      end
     end
     previous_url = Vouch::ImpersonationStack.return_to(session)
     changed = run_authentication_hooks(:impersonation_end, current_identity, original) do |env|
@@ -41,14 +44,19 @@ class Vouch::ImpersonationsController < ::ApplicationController
       renew_authentication_session
       Vouch::ImpersonationStack.stop!(warden: warden, session: session, target_mapping: auth_mapping).present?
     end
-    changed ? redirect_to(previous_url || root_path) : head(:forbidden)
+    result = changed ? Vouch::Result.ok(original) : Vouch::Result.cancelled(record: original)
+    respond_with_authentication_result(result, response_handler) do
+      changed ? redirect_to(previous_url || root_path) : head(:forbidden)
+    end
   end
 
-  def destroy_all
+  def destroy_all(&response_handler)
     original = Vouch::ImpersonationStack.current_source(warden: warden, session: session, scope: impersonator_scope_name)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
-      return head(:unprocessable_entity)
+      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_impersonation), response_handler) do
+        head :unprocessable_entity
+      end
     end
 
     previous_url = Vouch::ImpersonationStack.return_to(session)
@@ -58,7 +66,10 @@ class Vouch::ImpersonationsController < ::ApplicationController
       renew_authentication_session
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping).present?
     end
-    changed ? redirect_to(previous_url || root_path) : head(:forbidden)
+    result = changed ? Vouch::Result.ok(original) : Vouch::Result.cancelled(record: original)
+    respond_with_authentication_result(result, response_handler) do
+      changed ? redirect_to(previous_url || root_path) : head(:forbidden)
+    end
   end
 
   private
@@ -67,8 +78,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
     auth_mapping.identity_class.all
   end
 
-  def authorize_impersonation!
-    head :forbidden
+  def set_identity
+    @identity = Vouch::RecordKey.find(impersonatable_identities, params[:id])
   end
 
   def local_referer_path

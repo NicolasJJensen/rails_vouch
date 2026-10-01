@@ -108,25 +108,27 @@ RSpec.describe 'Authentication boundaries', type: :request do
   it 'R12 restores the original identity across real requests' do
     operator = create(:user)
     target = create(:user)
-    allow_any_instance_of(Users::ImpersonationsController).to receive(:authorize_impersonation!).and_return(true)
     login(operator.account)
     post "/users/impersonations/#{target.id}"
     delete '/users/impersonations'
     expect(signed_in_identity).to eq(operator)
   end
 
-  it 'R12 denies impersonation unless the host authorizes it' do
+  it 'R12 lets ordinary host action authorization prevent impersonation' do
+    Users::ImpersonationsController.define_method(:create) { head :forbidden }
     operator = create(:user)
     target = create(:user)
     login(operator.account)
     post "/users/impersonations/#{target.id}"
     expect(response).to have_http_status(:forbidden)
+    expect(signed_in_identity).to eq(operator)
+  ensure
+    Users::ImpersonationsController.remove_method(:create)
   end
 
   it 'R12 refuses restoration after the original operators password is revoked' do
     operator = create(:user)
     target = create(:user)
-    allow_any_instance_of(Users::ImpersonationsController).to receive(:authorize_impersonation!).and_return(true)
     login(operator.account)
     post "/users/impersonations/#{target.id}"
     operator.account.update!(password: 'rotated-password', password_confirmation: 'rotated-password')
@@ -137,7 +139,6 @@ RSpec.describe 'Authentication boundaries', type: :request do
 
   it 'R12 retains the original operator when switching impersonation targets' do
     operator, first, second = Array.new(3) { create(:user) }
-    allow_any_instance_of(Users::ImpersonationsController).to receive(:authorize_impersonation!).and_return(true)
     login(operator.account)
     post "/users/impersonations/#{first.id}"
     post "/users/impersonations/#{second.id}"

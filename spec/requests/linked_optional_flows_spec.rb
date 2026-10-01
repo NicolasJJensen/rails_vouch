@@ -34,11 +34,6 @@ RSpec.describe "Linked invitation and impersonation flows", type: :request do
     stub_const("LinkedOptional::MemberImpersonationsController", Class.new(Vouch::ImpersonationsController) do
       auth_scope :member
 
-      private
-
-      def authorize_impersonation!
-        true
-      end
     end)
     stub_const("LinkedOptional::StatusController", Class.new(ApplicationController) do
       def show
