@@ -15,13 +15,20 @@ class Vouch::RegistrationsController < ::ApplicationController
     end
   end
 
-  def create
-    return create_oauth_registration if oauth_registration_context?
+  def create(&response_handler)
+    result = oauth_registration_context? ? create_oauth_registration : create_password_registration
+    respond_with_authentication_result(result, response_handler) { render_registration_result(result) }
+  end
+
+  private
+
+  def create_password_registration
+    saved = false
 
     invitation = pending_invited_identity
     if session[invited_user_session_key].present? && (!invitation || !invitation_requires_registration?(invitation))
       session.delete(invited_user_session_key)
-      return redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
+      return Vouch::Result.invalid(reason: :invalid_invitation)
     end
     @account = invitation ? invitation_account_for(invitation) : auth_mapping.account_class.new(account_params)
     validate_submitted_registration_password!(@account, invitation ? invited_account_params : account_params)
@@ -49,6 +56,7 @@ class Vouch::RegistrationsController < ::ApplicationController
         true
       end
       env.abort! unless completed
+      saved = true
       if invitation
         session.delete(invited_user_session_key)
         publish_invitation_acceptance
@@ -58,28 +66,20 @@ class Vouch::RegistrationsController < ::ApplicationController
       env.add(identity)
       true
     end
-    return head(:forbidden) unless committed
-
-    case outcome
-    when :signed_in then redirect_after_authentication notice: I18n.t('vouch.registrations.account_created')
-    when :needs_two_factor then redirect_to two_factor_challenges_path
-    when :needs_selection then redirect_to select_path
-    else head :forbidden
-    end
-  rescue ActiveRecord::RecordInvalid, Vouch::Persistence::Cancelled
-    render :new, status: 422
+    registration_result(committed, saved, outcome)
+  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
+    Vouch::Result.invalid(record: @account, error: error, committed: saved)
   rescue Vouch::Invitable::InvitationExpiredError
     session.delete(invited_user_session_key)
-    redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
+    Vouch::Result.invalid(reason: :invalid_invitation)
   end
 
-  private
-
   def create_oauth_registration
+    saved = false
     oauth = pending_oauth_registration
     unless oauth
       authentication_session.clear_oauth_initiation_return_to
-      return redirect_to(new_session_path, alert: I18n.t('vouch.oauth.failed'))
+      return Vouch::Result.invalid(reason: :expired_oauth)
     end
 
     @account = auth_mapping.account_class.new_from_omniauth(oauth)
@@ -100,6 +100,7 @@ class Vouch::RegistrationsController < ::ApplicationController
         true
       end
       env.abort! unless completed
+      saved = true
       clear_oauth_registration
       authentication_session.clear_oauth_initiation_return_to
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
@@ -107,16 +108,40 @@ class Vouch::RegistrationsController < ::ApplicationController
       env.add(@account, identity)
       true
     end
-    return head(:forbidden) unless committed
+    registration_result(committed, saved, outcome)
+  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
+    Vouch::Result.invalid(record: @account, error: error, committed: saved)
+  end
 
-    case outcome
-    when :signed_in then redirect_after_authentication notice: I18n.t('vouch.registrations.account_created')
-    when :needs_two_factor then redirect_to two_factor_challenges_path
-    when :needs_selection then redirect_to select_path
-    else head :forbidden
+  def registration_result(completed, saved, outcome)
+    return Vouch::Result.cancelled(record: @account, committed: false) unless saved
+
+    result = sign_in_result(@account, completed ? outcome : :cancelled)
+    result.metadata[:committed] = true
+    result.metadata[:next_step] = :sign_in if result.invalid?
+    result
+  end
+
+  def render_registration_result(result)
+    if result.ok?
+      redirect_after_authentication notice: registration_created_message
+    elsif result.pending?
+      redirect_to(result.metadata[:next_step] == :two_factor ? two_factor_challenges_path : select_path)
+    elsif result.metadata[:committed]
+      flash[:notice] = registration_created_message
+      redirect_to new_session_path, alert: I18n.t('vouch.registrations.sign_in_failed')
+    elsif result.metadata[:reason] == :invalid_invitation
+      redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
+    elsif result.metadata[:reason] == :expired_oauth
+      redirect_to new_session_path, alert: I18n.t('vouch.oauth.failed')
+    else
+      @account.errors.add(:base, I18n.t('vouch.registrations.failed')) if @account.errors.empty?
+      render :new, status: :unprocessable_entity
     end
-  rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled
-    render :new, status: 422
+  end
+
+  def registration_created_message
+    I18n.t('vouch.registrations.account_created', model: auth_mapping.account_class.model_name.human)
   end
 
   def account_params

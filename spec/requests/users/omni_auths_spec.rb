@@ -129,6 +129,18 @@ RSpec.describe "Users::OmniAuths", type: :request do
         end
       end
 
+      it "keeps automatic registration when subsequent sign-in fails" do
+        allow_any_instance_of(Users::OmniAuthsController).to receive(:complete_sign_in).and_return(:no_identity)
+
+        expect do
+          get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => oauth_hash }
+        end.to change(Account, :count).by(1).and change(OmniAuthIdentity, :count).by(1)
+
+        expect(response).to redirect_to("/users/sign_in")
+        expect(flash[:notice]).to eq("Account created.")
+        expect(flash[:alert]).to eq("Something went wrong signing in, please try again.")
+      end
+
       it "renders the generated OAuth registration form with mapped fields and no password inputs" do
         with_form_registration do
           with_generated_registration_view do
@@ -137,7 +149,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
 
             expect(response.body).to include('action="/users/sign_up"')
             expect(response.body).to include('value="oauth@example.com"')
-            expect(response.body).to include('name="organisation[name]"')
+            expect(response.body).not_to include('name="organisation[name]"')
             expect(response.body).not_to include('name="account[password]"')
             expect(response.body).not_to include('name="account[password_confirmation]"')
           end

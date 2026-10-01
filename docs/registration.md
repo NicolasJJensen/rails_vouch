@@ -7,6 +7,7 @@
 - [OAuth registration continuation](#oauth-registration-continuation)
 - [Construct records transactionally](#construct-records-transactionally)
 - [Invitation registration](#invitation-registration)
+- [Registration responses](#registration-responses)
 - [Send people to onboarding](#send-people-to-onboarding)
 
 ## Standard registration
@@ -142,6 +143,30 @@ end
 ```
 
 > `Preferences` is an example application model. This hook runs inside the registration transaction; a failed write rolls back the account completion and invitation acceptance together. An existing account accepting another membership does not register again; use an invitation-acceptance hook for work needed on every accepted invitation.
+
+## Registration responses
+
+Vouch commits the account and related records before signing the person in. If that sign-in fails, the records remain saved: Vouch sends the person to sign-in with “Account created.” and “Something went wrong signing in, please try again.” Required MFA and membership selection continue to their respective pages instead.
+
+Validation failures and cancelled creation roll back the registration and redisplay the form. Unexpected exceptions still reach Rails error handling.
+
+Override `create` and pass a block to `super` to handle the outcome yourself:
+
+```ruby
+# app/controllers/users/registrations_controller.rb
+class Users::RegistrationsController < Vouch::RegistrationsController
+  def create
+    super do |result|
+      if result.invalid? && result.metadata[:committed]
+        flash[:notice] = "Your account is ready."
+        redirect_to new_user_session_path, alert: "Please sign in to continue."
+      end
+    end
+  end
+end
+```
+
+The block receives `ok`, `pending`, `invalid`, or `cancelled` results. A pending result identifies `:two_factor` or `:selection` in `metadata[:next_step]`. `metadata[:committed]` tells you whether registration was saved, and `result.error` carries an expected failure exception when available. Vouch uses its normal response unless the block renders or redirects. The same `create` override handles ordinary registration and an OAuth registration form submission.
 
 ## Send people to onboarding
 

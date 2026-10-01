@@ -286,7 +286,8 @@ RSpec.describe 'Hook and session contracts', type: :request do
         post '/users/sign_up', params: {account: {email_address: 'aborted@example.com', password: 'password123'}}
       }.not_to change(Account, :count)
     end
-    expect(response).to have_http_status(:forbidden)
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(controller.view_assigns.fetch('account').errors[:base]).not_to be_empty
   end
 
   it 'R25 reports a denied login when a before hook aborts' do

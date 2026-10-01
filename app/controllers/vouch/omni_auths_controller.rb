@@ -79,6 +79,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   def create_account
+    saved = false
     if oauth_registration_required?
       begin_oauth_registration(@auth_hash)
       return redirect_to new_registration_path
@@ -100,13 +101,14 @@ class Vouch::OmniAuthsController < ::ApplicationController
         true
       end
       env.abort! unless completed
+      saved = true
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
       outcome = complete_sign_in(account, hook: :sign_in, method: :oauth,
         auth_hash: @auth_hash)
       env.add(account, identity)
       true
     end
-    return oauth_registration_failed(reason: :aborted) unless committed
+    return saved ? registered_account_sign_in_failed : oauth_registration_failed(reason: :aborted) unless committed
 
     case outcome
     when :signed_in
@@ -118,14 +120,21 @@ class Vouch::OmniAuthsController < ::ApplicationController
     when :needs_selection
       authentication_session.clear_oauth_initiation_return_to
       redirect_to select_path
-    else oauth_registration_failed(reason: :completion)
+    else registered_account_sign_in_failed
     end
   rescue ActiveRecord::RecordInvalid => error
-    oauth_registration_failed(reason: :validation, error: error)
+    saved ? registered_account_sign_in_failed : oauth_registration_failed(reason: :validation, error: error)
   rescue ActiveRecord::RecordNotUnique => error
-    oauth_registration_failed(reason: :conflict, error: error)
+    saved ? registered_account_sign_in_failed : oauth_registration_failed(reason: :conflict, error: error)
   rescue Vouch::Persistence::Cancelled => error
-    oauth_registration_failed(reason: :cancelled, error: error)
+    saved ? registered_account_sign_in_failed : oauth_registration_failed(reason: :cancelled, error: error)
+  end
+
+  def registered_account_sign_in_failed
+    authentication_session.clear_oauth_registration
+    authentication_session.clear_oauth_initiation_return_to
+    flash[:notice] = I18n.t('vouch.registrations.account_created', model: auth_mapping.account_class.model_name.human)
+    redirect_to new_session_path, alert: I18n.t('vouch.registrations.sign_in_failed')
   end
 
   def oauth_registration_failed(reason:, error: nil)
