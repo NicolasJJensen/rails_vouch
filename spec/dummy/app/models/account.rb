@@ -4,9 +4,14 @@ class Account < ApplicationRecord
   include Vouch::Authenticatable
 
   authenticates_with :lockable, :password_resetable, :password_trackable,
-                     :two_factorable, :omniauthable, :recoverable
+                     :two_factorable, :omniauthable, :recoverable,
+                     password_resetable: { token_strategy: :opaque }
 
   has_secure_password
+
+  validate do
+    errors.delete(:password, :blank) if password_digest.nil? && password.nil?
+  end
 
   validates :email_address, presence: true,
     format: { with: URI::MailTo::EMAIL_REGEXP },

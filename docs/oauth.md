@@ -107,7 +107,7 @@ The controller method `oauth_registration_required?` remains an override point f
 
 With `:form`, the callback stores selected provider data in the Rails session. `RegistrationsController#new` builds an **unsaved** record from that data. The generated model-bound form displays its values and omits password fields. Neither the account nor its OAuth link exists in the database yet.
 
-The default mapping supplies `email_address` and an unguessable password. To also prefill an existing `name` attribute:
+The default mapping prefills `email_address` when the provider supplies it. OAuth-only accounts have a null password digest and sign in through their linked provider. To also prefill an existing `name` attribute:
 
 ```ruby
 # app/models/user.rb

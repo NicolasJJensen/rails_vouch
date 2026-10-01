@@ -4,6 +4,10 @@ class <%= @account_class %> < ApplicationRecord
 
   has_secure_password
 
+  validate do
+    errors.delete(:password, :blank) if password_digest.nil? && password.nil?
+  end
+
   normalizes :email_address, with: ->(value) { value.strip.downcase }
   validates :email_address, presence: true, uniqueness: true
 <% unless @single_model -%>

@@ -31,17 +31,15 @@ module Vouch
       end
 
       class_methods do
-        # Build a new account from an OmniAuth callback. Sets a random
-        # password since the user authenticates via the provider.
+        # Build an unsaved account; the verified provider supplies its sign-in method.
         def new_from_omniauth(auth_hash)
           new(oauth_attributes_for_creation(auth_hash))
         end
 
         # Override-tag: host-facing — attributes for a new account from
-        # OAuth. Default captures email when the column exists and assigns
-        # an unguessable password.
+        # OAuth. Default captures email when the column exists.
         def oauth_attributes_for_creation(auth_hash)
-          attrs = { password: SecureRandom.base64(48).truncate_bytes(64) }
+          attrs = {}
           if column_names.include?("email_address") && auth_hash.info.email.present?
             attrs[:email_address] = auth_hash.info.email
           end

@@ -14,8 +14,7 @@ class Users::InvitationsController < Vouch::InvitationsController
 
     Account.create!(
       email_address: identifier,
-      registration_required: true,
-      password:      SecureRandom.base64(48).truncate_bytes(64)
+      registration_required: true
     )
   end
 end

@@ -2,6 +2,28 @@ module Vouch
   module RegistrationHelpers
     private
 
+    def validate_submitted_registration_password!(account, attributes)
+      return unless attributes.key?(:password) && attributes[:password].blank?
+
+      account.errors.add(:password, :blank)
+      raise ActiveRecord::RecordInvalid.new(account)
+    end
+
+    def validate_registration_authentication!(account, oauth: nil)
+      return if registration_authentication_available?(account, oauth: oauth)
+
+      account.errors.add(:base, I18n.t("vouch.registrations.sign_in_method_required"))
+      raise ActiveRecord::RecordInvalid.new(account)
+    end
+
+    def registration_authentication_available?(account, oauth: nil)
+      return true if account.password_digest.present?
+      return false unless oauth && oauth.provider.present? && oauth.uid.present?
+
+      account.public_send(auth_mapping.oauth_identity_association.name)
+        .exists?(provider: oauth.provider, uid: oauth.uid)
+    end
+
     # Builds and saves the records that make up a registration. Host overrides
     # build unsaved records so Vouch can persist every record in one
     # transaction.

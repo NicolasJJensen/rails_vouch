@@ -106,6 +106,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
           .and change(Organisation, :count).by(1)
 
         expect(response).to redirect_to("/")
+        expect(Account.find_by!(email_address: "oauth@example.com").password_digest).to be_nil
       end
 
       it "uses the registration form by default without persisting callback records" do
@@ -192,7 +193,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         expect(OmniAuthIdentity.find_by(provider: "google_oauth2", uid: "12345")).to be_present
       end
 
-      it "keeps the generated OAuth password when blank password fields are submitted" do
+      it "rejects explicitly submitted blank passwords during OAuth registration" do
         with_form_registration do
           get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => oauth_hash}
 
@@ -200,8 +201,8 @@ RSpec.describe "Users::OmniAuths", type: :request do
             email_address: "oauth@example.com", password: "", password_confirmation: ""
           }}
 
-          expect(response).to redirect_to("/")
-          expect(Account.find_by!(email_address: "oauth@example.com").password_digest).to be_present
+          expect(response).to have_http_status(:unprocessable_content)
+          expect(Account.find_by(email_address: "oauth@example.com")).to be_nil
         end
       end
 

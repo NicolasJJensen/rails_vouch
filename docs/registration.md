@@ -3,13 +3,37 @@
 ## Contents
 
 - [Standard registration](#standard-registration)
+- [Accounts without passwords](#accounts-without-passwords)
 - [OAuth registration continuation](#oauth-registration-continuation)
 - [Construct records transactionally](#construct-records-transactionally)
 - [Send people to onboarding](#send-people-to-onboarding)
 
 ## Standard registration
 
-The generated registration form creates an account using an email address and password. It posts permitted account fields to `RegistrationsController`, which validates and persists the account. Add ordinary fields to the form and `account_params`; see [sign-in customization](sign-in-customization.md#customize-the-registration-form).
+The generated registration form creates an account using an email address and password. It posts permitted account fields to `RegistrationsController`, which validates and persists the account. Add ordinary fields to the form and `account_params`; see [sign-in customization](sign-in-customization.md#customize-registration-fields).
+
+## Accounts without passwords
+
+Ordinary registration requires a chosen password. OAuth registration can instead save a verified provider identity in the same transaction, leaving `password_digest` null. An invitation may also create a pending account without either method; completing its registration still requires a usable sign-in method.
+
+The generated model retains Rails password validations and makes only the absent-password case optional:
+
+```ruby
+# app/models/user.rb — relevant declarations from the generated model
+class User < ApplicationRecord
+  has_secure_password
+
+  validate do
+    errors.delete(:password, :blank) if password_digest.nil? && password.nil?
+  end
+end
+```
+
+Rails still checks password confirmation, BCrypt's byte limit and a supplied `password_challenge`. Registration rejects an explicitly submitted empty password; the OAuth form omits password fields entirely. Vouch separately checks the sign-in method when completing registration, rather than requiring a provider association before the account can be saved inside the transaction.
+
+> Existing models keep their own validations. To support OAuth-only accounts or passwordless invitation placeholders, make the digest column nullable and use the optional-absence validation above after `has_secure_password`. Keep any stricter password rules your application requires. A null digest never authenticates a password.
+
+For another verified registration method, the host can override `registration_authentication_available?(account, oauth:)` in its registration controller. Only return true after your registration flow has established the supported alternative; ordinary contact verification and MFA enrollment are not first-factor authentication.
 
 ## OAuth registration continuation
 
@@ -23,7 +47,7 @@ After the provider callback is verified, Vouch retains selected provider data in
 
 On submit, Vouch combines the mapped account fields with permitted form fields and creates the account and OAuth link in one transaction. In a multi-tenant setup, that transaction also includes the organisation and membership. It then continues through MFA and membership selection before redirecting. Validation failures re-render the form. Provider/UID data comes from protected session state, never submitted fields.
 
-The default mapping uses the provider email and an unguessable password. Add another mapped form value through the account model:
+The default mapping uses the provider email when supplied and leaves the password absent. Add another mapped form value through the account model:
 
 ```ruby
 def self.oauth_attributes_for_creation(auth_hash)

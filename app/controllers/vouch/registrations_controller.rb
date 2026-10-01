@@ -24,6 +24,7 @@ class Vouch::RegistrationsController < ::ApplicationController
       return redirect_to new_session_path, alert: I18n.t('vouch.invitations.invalid_token')
     end
     @account = invitation ? invitation_account_for(invitation) : auth_mapping.account_class.new(account_params)
+    validate_submitted_registration_password!(@account, invitation ? invited_account_params : account_params)
     identity = nil
     outcome = nil
     committed = run_authentication_hooks_with_invitation(:sign_up, @account) do |env|
@@ -35,10 +36,12 @@ class Vouch::RegistrationsController < ::ApplicationController
             raise Vouch::Invitable::InvitationExpiredError
           end
           Vouch::Persistence.update!(@account, invited_account_params)
+          validate_registration_authentication!(@account)
           @account.complete_registration!
           accept_pending_invitation_in_transaction(@account, invitation)
           identity = invitation
         else
+          validate_registration_authentication!(@account)
           Vouch::Persistence.save!(@account)
           identity = create_registration_identity!(@account)
         end
@@ -81,6 +84,7 @@ class Vouch::RegistrationsController < ::ApplicationController
 
     @account = auth_mapping.account_class.new_from_omniauth(oauth)
     @account.assign_attributes(account_params)
+    validate_submitted_registration_password!(@account, account_params)
     identity = nil
     outcome = nil
     committed = run_authentication_hooks(:oauth_account_creation, auth_hash: oauth) do |env|
@@ -90,6 +94,7 @@ class Vouch::RegistrationsController < ::ApplicationController
           @account.public_send(auth_mapping.oauth_identity_association.name),
           auth_mapping.oauth_identity_class.oauth_attributes(oauth)
         )
+        validate_registration_authentication!(@account, oauth: oauth)
         identity = create_registration_identity!(@account)
         commit_env.add(@account, identity)
         true
@@ -115,11 +120,7 @@ class Vouch::RegistrationsController < ::ApplicationController
   end
 
   def account_params
-    attributes = params.require(auth_mapping.account_param_key).permit(:email_address, :password, :password_confirmation)
-    if oauth_registration_context?
-      %i[password password_confirmation].each { |name| attributes.delete(name) if attributes[name].blank? }
-    end
-    attributes
+    params.require(auth_mapping.account_param_key).permit(:email_address, :password, :password_confirmation)
   end
 
   def invited_account_params

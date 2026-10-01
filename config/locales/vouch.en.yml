@@ -9,6 +9,7 @@ en:
       password_updated: "Password updated. Sign in."
     registrations:
       account_created: "Account created."
+      sign_in_method_required: "Choose a password or connect a sign-in provider."
     two_factor:
       invalid_method: "Invalid 2FA method."
       invalid_code: "Invalid code."

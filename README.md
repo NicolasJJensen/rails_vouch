@@ -33,7 +33,7 @@ enable_extension "citext" unless extension_enabled?("citext")
 
 create_table :users do |t|
   t.citext :email_address, null: false, index: { unique: true }
-  t.string :password_digest, null: false
+  t.string :password_digest
   t.bigint :auth_session_version, null: false, default: 0
   t.timestamps
 end

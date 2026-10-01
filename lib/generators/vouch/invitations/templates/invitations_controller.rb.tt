@@ -23,8 +23,7 @@ class <%= scope_module %>::InvitationsController < Vouch::InvitationsController
     normalized_identifier = identifier.to_s.strip.downcase
     <%= invitation_account_class %>.find_by(email_address: normalized_identifier) || <%= invitation_account_class %>.create!(
       email_address: normalized_identifier,
-      registration_required: true,
-      password:      SecureRandom.base64(48).truncate_bytes(64)
+      registration_required: true
     )
   end
 end
