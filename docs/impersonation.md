@@ -19,6 +19,7 @@ In a single-model `:user` setup, `current_user` is the target and `true_user` is
 - [Add impersonation](#add-impersonation)
 - [Choose the operator scope](#choose-the-operator-scope)
 - [Start and stop](#start-and-stop)
+- [Expire or revoke impersonation access](#expire-or-revoke-impersonation-access)
 - [Composite primary keys](#composite-primary-keys)
 - [Edit the switching actions](#edit-the-switching-actions)
 - [Customize action responses](#customize-action-responses)
@@ -129,7 +130,51 @@ Stop once: return to Manager
 Stop all: return to Operator
 ```
 
-Stopping once restores the previous target. Stopping all restores the original operator. If a stored target reference no longer resolves with its fingerprint, Vouch denies target access until the operator stops; it does not assume an ordinary target login.
+Stopping once restores the previous target. Stopping all restores the original signed-in context. The `impersonation_end` hooks and action result identify the record being restored. A changed password, revoked session or reassigned membership invalidates its saved reference; Vouch removes that impersonation and dependent steps before serving another target page.
+
+## Expire or revoke impersonation access
+
+Applications that require approval can keep grants in their own database and check them on every request. Vouch does not generate approval records, requests, emails or approval pages.
+
+For example, an account owner could approve a support operator until a particular time:
+
+```ruby
+# app/models/impersonation_grant.rb
+class ImpersonationGrant < ApplicationRecord
+  belongs_to :operator, class_name: "Account"
+  belongs_to :account
+
+  scope :active, -> {
+    where.not(approved_at: nil).where(revoked_at: nil)
+      .where("expires_at > ?", Time.current)
+  }
+end
+```
+
+> This example assumes your application supplies this model and its fields. Your permissions determine who can request, approve and revoke a grant.
+
+Put the continued-access check in your common controller so it also runs on ordinary application pages:
+
+```ruby
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  private
+
+  def impersonation_allowed?(context)
+    return true unless context.mode == :account
+
+    ImpersonationGrant.active.exists?(operator: context.operator, account: context.target)
+  end
+
+  def after_impersonation_expired_path
+    root_path
+  end
+end
+```
+
+Use the same permission rule when authorizing `create`; this check governs subsequent requests. It defaults to `true` when you do not override it. `context` supplies `mode`, `operator`, `target`, `operator_scope` and `target_scope`; the public `impersonation_context` helper returns the current context, or `nil` outside impersonation. It does not replace `true_*` helpers: the operator for a nested switch can differ from the original signed-in person.
+
+Before an action runs, Vouch checks every step in order. A `false` result removes that step and everything after it, restores the preceding authorized context, and redirects with an explanation. If the original login is no longer valid, its sessions are cleared. A permission-check exception propagates through your normal Rails error handling. Saved MFA proof is restored only for its own account; current proof validation still applies.
 
 ## Composite primary keys
 

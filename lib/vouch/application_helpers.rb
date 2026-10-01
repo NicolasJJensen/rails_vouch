@@ -6,6 +6,32 @@ module Vouch
 
     included do
       Vouch::ApplicationHelpers.register_controller(self)
+      helper_method :impersonation_context if respond_to?(:helper_method)
+      before_action :validate_impersonation_context
+    end
+
+    def impersonation_context
+      Vouch::ImpersonationStack.context(session)
+    end
+
+    private
+
+    def impersonation_allowed?(context)
+      true
+    end
+
+    def after_impersonation_expired_path
+      "/"
+    end
+
+    def validate_impersonation_context
+      return unless session[Vouch::ImpersonationStack::SESSION_KEY]
+      changed = Vouch::ImpersonationStack.revalidate!(warden: request.env.fetch("warden"), session: session) do |context|
+        impersonation_allowed?(context)
+      end
+      return unless changed
+
+      redirect_to after_impersonation_expired_path, alert: I18n.t("vouch.impersonations.expired")
     end
 
     class << self

@@ -35,6 +35,7 @@ en:
       expired: "Invitation has expired."
       accepted: "Complete your registration."
     impersonations:
+      expired: "Impersonation access has ended. Your previous authorized session has been restored where possible."
       started: "Impersonation started."
       not_found: "User not found."
       ended: "Impersonation ended."

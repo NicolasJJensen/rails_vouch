@@ -28,7 +28,7 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   def destroy(&response_handler)
-    original = Vouch::ImpersonationStack.current_source(warden: warden, session: session, scope: impersonator_scope_name)
+    original = Vouch::ImpersonationStack.restoration_identity(session)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
       return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_impersonation), response_handler) do
@@ -51,7 +51,7 @@ class Vouch::ImpersonationsController < ::ApplicationController
   end
 
   def destroy_all(&response_handler)
-    original = Vouch::ImpersonationStack.current_source(warden: warden, session: session, scope: impersonator_scope_name)
+    original = Vouch::ImpersonationStack.restoration_identity(session, all: true)
     unless original
       Vouch::ImpersonationStack.stop_all!(warden: warden, session: session, target_mapping: auth_mapping)
       return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_impersonation), response_handler) do

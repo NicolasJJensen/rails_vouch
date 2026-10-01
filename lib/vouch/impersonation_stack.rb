@@ -3,6 +3,7 @@
 module Vouch
   class ImpersonationStack
     SESSION_KEY = "warden.vouch.impersonation_stack"
+    Context = Data.define(:mode, :operator, :target, :operator_scope, :target_scope)
 
     class << self
       def discard_invalid!(warden:, session:)
@@ -130,6 +131,43 @@ module Vouch
         target
       end
 
+      def context(session)
+        context_for(entries(session).last)
+      end
+
+      def restoration_identity(session, all: false)
+        entry = all ? entries(session).first : entries(session).last
+        return unless entry
+        reference = Array(entry["contexts"]).find { |item| item["scope"] == entry.dig("target", "scope") }
+        resolve(reference || entry["source"])&.last
+      end
+
+      def revalidate!(warden:, session:)
+        return false unless session[SESSION_KEY]
+        discard_invalid!(warden: warden, session: session)
+        stack = entries(session)
+        return true if stack.empty?
+        unless resolve(stack.first["source"])
+          clear_contexts!(warden, session)
+          write(session, [])
+          return true
+        end
+
+        invalid_index = stack.index do |entry|
+          current = context_for(entry)
+          !current || (block_given? && !yield(current))
+        end
+        return false unless invalid_index
+
+        previous = stack.fetch(invalid_index)
+        clear_contexts!(warden, session)
+        write(session, stack.take(invalid_index))
+        restore_contexts!(warden, previous["contexts"])
+        restore_evidence!(session, previous)
+        session[AuthenticationSession::CONTEXT_KEY] = SecureRandom.hex(32)
+        true
+      end
+
       def stop!(warden:, session:, target_mapping:)
         restore_previous!(warden, session, all: false)
       end
@@ -143,6 +181,15 @@ module Vouch
       end
 
       private
+
+      def context_for(entry)
+        return unless entry
+        source = resolve(entry["source"])
+        target = resolve(entry["target"])
+        return unless source && target
+        Context.new(mode: entry.fetch("mode").to_sym, operator: source.last, target: target.last,
+          operator_scope: source.first.scope_name, target_scope: target.first.scope_name)
+      end
 
       def restricted_source(session)
         return unless membership_restricted?(session)
@@ -224,6 +271,7 @@ module Vouch
         return if stack.empty?
         operator = resolve(stack.first["source"])
         entry = all ? stack.first : stack.last
+        restored = restoration_identity(session, all: all)
         clear_contexts!(warden, session)
         unless operator
           write(session, [])
@@ -238,10 +286,11 @@ module Vouch
         end
         restore_contexts!(warden, entry["contexts"])
         restore_evidence!(session, entry)
-        operator.last
+        restored
       end
 
       def clear_contexts!(warden, session)
+        session.delete(AuthenticationSession::CONTEXT_KEY)
         Vouch.each_mapping do |mapping|
           warden.logout(mapping.scope_name)
           session.delete(Vouch::Session.key_for(mapping.evidence_scope_name, :evidence))

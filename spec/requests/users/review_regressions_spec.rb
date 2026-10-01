@@ -133,7 +133,8 @@ RSpec.describe 'Authentication boundaries', type: :request do
     post "/users/impersonations/#{target.id}"
     operator.account.update!(password: 'rotated-password', password_confirmation: 'rotated-password')
     delete '/users/impersonations'
-    expect(response).to have_http_status(422)
+    expect(response).to redirect_to("/")
+    expect(flash[:alert]).to include("Impersonation access has ended")
     expect(signed_in_identity).not_to eq(operator)
   end
 

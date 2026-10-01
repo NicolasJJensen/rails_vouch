@@ -388,7 +388,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     account.update!(password: "rotated-password123", password_confirmation: "rotated-password123")
     delete "/linked_members/impersonations"
 
-    expect(response).to have_http_status(:unprocessable_content)
+    expect(response).to redirect_to("/")
+    expect(flash[:alert]).to include("Impersonation access has ended")
     expect(status).to include("account" => nil, "member" => nil, "admin" => nil)
   end
 
@@ -468,8 +469,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     target = create(:user)
     start_member_impersonation(target)
     target.update!(organisation: create(:organisation))
-    expect(status).to include("account" => account.id, "member" => nil)
-    delete "/linked_members/impersonations"
+    get "/linked_status"
+    expect(response).to redirect_to("/")
     expect(status).to include("account" => account.id, "admin" => membership.id)
   end
 
@@ -477,6 +478,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     target = create(:user)
     start_member_impersonation(target)
     target.update!(account: create(:account))
+    get "/linked_status"
+    expect(response).to redirect_to("/")
     expect(status).to include("account" => account.id, "member" => nil)
   end
 
@@ -536,6 +539,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     target = create(:user)
     start_member_impersonation(target)
     account.update!(password: "revoked-password123", password_confirmation: "revoked-password123")
+    get "/linked_status"
+    expect(response).to redirect_to("/")
     expect(status).to include("account" => nil, "member" => nil, "true_admin" => nil)
     get "/protected_page"
     expect(response).to redirect_to("/linked_members/sign_in")
@@ -587,6 +592,65 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(response.parsed_body).to eq("account" => target.account_id)
     delete "/linked_members/impersonations"
     expect(status).to include("account" => target.account_id, "member" => target.id)
+  end
+
+  it "unwinds a revoked nested grant to the preceding authorized target before rendering" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?) do |_controller, context|
+      context.target != nested
+    end
+
+    get "/linked_status"
+
+    expect(response).to redirect_to("/")
+    expect(flash[:alert]).to include("Impersonation access has ended")
+    expect(status).to include("account" => account.id, "member" => first.id)
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY].size).to eq(1)
+  end
+
+  it "removes every dependent frame when the first grant expires" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    observed = []
+    expires_at = 1.minute.from_now
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?) do |_controller, context|
+      observed << [context.mode, context.operator.id, context.target.id]
+      context.target != first || Time.current < expires_at
+    end
+
+    travel_to(expires_at + 1.second) { get "/protected_page" }
+
+    expect(response).to redirect_to("/")
+    expect(observed).to eq([[:membership, membership.id, first.id]])
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+    expect(status).to include("account" => account.id, "member" => nil, "admin" => membership.id)
+  end
+
+  it "does not swallow an application's unexpected permission exception" do
+    start_member_impersonation(create(:user))
+    allow_any_instance_of(ApplicationController).to receive(:impersonation_allowed?).and_raise(ArgumentError, "policy defect")
+
+    expect { get "/linked_status" }.to raise_error(ArgumentError, "policy defect")
+  end
+
+  it "reports the actual preceding membership in the stop hook and response" do
+    first, nested = create_list(:user, 2)
+    start_member_impersonation(first)
+    post "/linked_members/impersonations/#{nested.id}"
+    restored = []
+    LinkedMembers::ImpersonationsController.before_impersonation_end { |_target, previous| restored << previous.id }
+    LinkedMembers::ImpersonationsController.define_method(:destroy) do
+      super() { |result| render json: { restored: result.value.id } }
+    end
+
+    delete "/linked_members/impersonations"
+
+    expect(response.parsed_body).to eq("restored" => first.id)
+    expect(restored).to eq([first.id])
+    expect(status).to include("member" => first.id)
   end
 
   it "does not let a restricted membership impersonation escalate to an account" do
