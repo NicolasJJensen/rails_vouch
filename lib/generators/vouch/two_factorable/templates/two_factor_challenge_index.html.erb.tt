@@ -3,17 +3,19 @@
 <ul>
   <%% @credentials.each do |credential| %>
     <%% credential_param = "#{credential.model_name.singular}-#{Vouch::RecordKey.to_param(credential)}" %>
-    <li><%%= link_to credential.two_factor_label, <%= route_helper_prefix %>_two_factor_challenge_path(credential_param) %></li>
+    <li><%%= link_to credential.two_factor_label, vouch_route_path(:two_factor_challenges, :show, id: credential_param) %></li>
   <%% end %>
 </ul>
 
 <%% if @enrollment_required %>
   <p>No eligible authentication methods are available.</p>
-  <p><%%= link_to "Add an authentication method", <%= route_helper_prefix %>_two_factor_credentials_path %></p>
+  <%% if credential_management_available? %>
+    <p><%%= link_to "Add an authentication method", vouch_route_path(:two_factor_credentials, :index) %></p>
+  <%% end %>
 <%% end %>
 
 <%% if @recovery_available %>
-  <p><%%= link_to "Use a recovery code", <%= route_helper_prefix %>_recovery_two_factor_challenge_path %></p>
+  <p><%%= link_to "Use a recovery code", vouch_route_path(:two_factor_challenges, :recovery) %></p>
 <%% end %>
 
-<%%= button_to "Cancel", <%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>
+<%%= button_to "Cancel", vouch_route_path(:two_factor_challenges, :destroy), method: :delete %>

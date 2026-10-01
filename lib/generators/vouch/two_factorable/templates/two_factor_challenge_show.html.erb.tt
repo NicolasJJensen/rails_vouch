@@ -5,7 +5,7 @@
 <%% end %>
 
 <%% credential_param = "#{@credential.model_name.singular}-#{Vouch::RecordKey.to_param(@credential)}" %>
-<%%= form_with url: <%= route_helper_prefix %>_two_factor_challenge_path(credential_param), method: :patch do %>
+<%%= form_with url: vouch_route_path(:two_factor_challenges, :update, id: credential_param), method: :patch do %>
   <p>
     <%%= label_tag :code, "Verification code" %>
     <%%= text_field_tag :code, nil, autocomplete: "one-time-code", required: true %>
@@ -13,6 +13,6 @@
   <%%= submit_tag "Verify" %>
 <%% end %>
 
-<%%= button_to "Send another code", send_code_<%= route_helper_prefix %>_two_factor_challenge_path(credential_param), method: :post %>
+<%%= button_to "Send another code", vouch_route_path(:two_factor_challenges, :send_code, id: credential_param), method: :post %>
 
-<%%= button_to "Cancel", <%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>
+<%%= button_to "Cancel", vouch_route_path(:two_factor_challenges, :destroy), method: :delete %>

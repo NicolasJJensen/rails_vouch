@@ -168,6 +168,23 @@ module Vouch
         sessions: {new: :"new_#{helper_prefix}_session", create: :"#{helper_prefix}_session", destroy: :"#{helper_prefix}_sign_out", confirmation: :"new_#{helper_prefix}_confirmation", confirm: :"#{helper_prefix}_confirmation", cancel_confirmation: :"cancel_#{helper_prefix}_confirmation"},
         registrations: {new: :"new_#{helper_prefix}_registration", create: :"#{helper_prefix}_registration"},
         password_resets: {new: :"new_#{helper_prefix}_password_reset", create: :"#{helper_prefix}_password_reset", edit: :"edit_#{helper_prefix}_password_reset", update: :"#{helper_prefix}_password_reset"},
+        two_factor_challenges: {
+          index: :"#{helper_prefix}_two_factor_challenges",
+          show: :"#{helper_prefix}_two_factor_challenge",
+          update: :"#{helper_prefix}_two_factor_challenge",
+          send_code: :"send_code_#{helper_prefix}_two_factor_challenge",
+          destroy: :"#{helper_prefix}_two_factor_challenges",
+          recovery: :"#{helper_prefix}_recovery_two_factor_challenge",
+          consume_recovery: :"#{helper_prefix}_consume_recovery_two_factor_challenge"
+        },
+        two_factor_credentials: {
+          index: :"#{helper_prefix}_two_factor_credentials",
+          new: :"new_#{helper_prefix}_two_factor_credential",
+          create: :"#{helper_prefix}_two_factor_credentials",
+          update: :"#{helper_prefix}_two_factor_credential",
+          destroy: :"#{helper_prefix}_two_factor_credential"
+        },
+        recovery_codes: {show: :"#{helper_prefix}_recovery_codes", create: :"#{helper_prefix}_recovery_codes"},
         invitations: {new: :"new_#{helper_prefix}_invitation", create: :"#{helper_prefix}_invitation", destroy: :"#{helper_prefix}_invitation", accept: :"accept_#{helper_prefix}_invitation", reject: :"reject_#{helper_prefix}_invitation", resend: :"resend_#{helper_prefix}_invitation"},
         impersonation: {create: :"#{helper_prefix}_impersonate", destroy: :"#{helper_prefix}_stop_impersonation", destroy_all: :"#{helper_prefix}_stop_all_impersonations"},
         oauth_callbacks: {callback: :"#{helper_prefix}_oauth_callback", failure: :"#{helper_prefix}_oauth_failure"}
@@ -293,7 +310,7 @@ module Vouch
     def failure_path_for(action, helper_context)
       case action.to_s
       when "two_factor_challenges"
-        helper_context.send(:"#{helper_prefix}_two_factor_challenges_path")
+        route_path(:two_factor_challenges, :index, helper_context)
       else
         route_path(:sessions, :new, helper_context)
       end

@@ -2,7 +2,7 @@
 
 <%% @recovery_owners.each_with_index do |owner, index| %>
   <h2><%%= owner == @account ? owner.model_name.human : owner.two_factor_label %></h2>
-  <%%= form_with url: <%= route_helper_prefix %>_consume_recovery_two_factor_challenge_path, namespace: "recovery_#{index}" do |form| %>
+  <%%= form_with url: vouch_route_path(:two_factor_challenges, :consume_recovery), namespace: "recovery_#{index}" do |form| %>
     <%%= form.hidden_field :recovery_owner_type, value: owner.class.name %>
     <%%= form.hidden_field :recovery_owner_id, value: Vouch::RecordKey.to_param(owner) %>
     <%%= form.label :recovery_code, "Recovery code" %>
@@ -11,4 +11,4 @@
   <%% end %>
 <%% end %>
 
-<%%= button_to "Cancel", <%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>
+<%%= button_to "Cancel", vouch_route_path(:two_factor_challenges, :destroy), method: :delete %>

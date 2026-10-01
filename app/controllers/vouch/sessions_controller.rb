@@ -137,7 +137,7 @@ class Vouch::SessionsController < ::ApplicationController
 
   def confirmation_mfa_path
     return if Vouch::ImpersonationStack.active?(session)
-    helper = :"#{auth_mapping.helper_prefix}_two_factor_challenges_path"
+    helper = auth_mapping.route_helper(:two_factor_challenges, :index)
     return unless _routes.url_helpers.respond_to?(helper)
     pending = session[Vouch::Session.key_for(confirmation_scope_name, :confirmation_pending)]
     _routes.url_helpers.public_send(helper, return_to: recent_authentication_return_path(pending&.fetch("return_to", nil)))

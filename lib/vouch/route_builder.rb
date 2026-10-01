@@ -163,25 +163,37 @@ module Vouch
       })
     end
 
-    def two_factor(challenge_controller: nil, credentials_controller: nil, recovery_controller: nil)
+    def two_factor_challenges(controller: nil, paths: {}, path_names: {})
       require_credentials_scope!
-      m = @current_mapping
-      challenge_ctrl = challenge_controller || "#{m.scope_name.to_s.pluralize}/two_factor_challenge"
-      creds_ctrl     = credentials_controller || "#{m.scope_name.to_s.pluralize}/two_factor_credentials"
-      recovery_ctrl  = recovery_controller || "#{m.scope_name.to_s.pluralize}/recovery_codes"
+      controller ||= "#{@current_mapping.scope_name.to_s.pluralize}/two_factor_challenge"
+      draw_feature_routes(:two_factor_challenges, controller, paths, path_names, {
+        index: [[:get], "two_factor_challenges"],
+        show: [[:get], "two_factor_challenges/:id"],
+        update: [[:patch, :put], "two_factor_challenges/:id"],
+        send_code: [[:post], "two_factor_challenges/:id/send_code"],
+        destroy: [[:delete], "two_factor_challenges"],
+        recovery: [[:get], "recovery"],
+        consume_recovery: [[:post], "recovery"]
+      })
+    end
 
-      router.scope m.path, as: m.helper_prefix do
-        router.resources :two_factor_challenges, only: [:index, :show, :update],
-                         controller: challenge_ctrl do
-          router.post :send_code, on: :member
-        end
-        router.delete "two_factor_challenges", to: "#{challenge_ctrl}#destroy"
-        router.resources :two_factor_credentials, only: [:index, :new, :create, :update, :destroy],
-                         controller: creds_ctrl
-        router.get "recovery", to: "#{challenge_ctrl}#recovery", as: :recovery_two_factor_challenge
-        router.post "recovery", to: "#{challenge_ctrl}#consume_recovery", as: :consume_recovery_two_factor_challenge
-        router.resource :recovery_codes, only: [:show, :create], controller: recovery_ctrl
-      end
+    def two_factor_credentials(controller: nil, paths: {}, path_names: {})
+      require_credentials_scope!
+      draw_feature_routes(:two_factor_credentials, controller, paths, path_names, {
+        index: [[:get], "two_factor_credentials"],
+        new: [[:get], "two_factor_credentials/new"],
+        create: [[:post], "two_factor_credentials"],
+        update: [[:patch, :put], "two_factor_credentials/:id"],
+        destroy: [[:delete], "two_factor_credentials/:id"]
+      })
+    end
+
+    def recovery_codes(controller: nil, paths: {}, path_names: {})
+      require_credentials_scope!
+      draw_feature_routes(:recovery_codes, controller, paths, path_names, {
+        show: [[:get], "recovery_codes"],
+        create: [[:post], "recovery_codes"]
+      })
     end
 
     def invitations(controller: nil, paths: {}, path_names: {})

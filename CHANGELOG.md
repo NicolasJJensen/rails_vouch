@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Separate MFA challenge, credential-management and recovery-code route declarations with configurable URLs and helper names.
+- Documented concrete storage for composite-key recovery-code and password-history owners, and compatible scalar keys for shared polymorphic storage.
 - Rails 8.1+ and PostgreSQL support, with case-insensitive email columns.
 - Shared password/OAuth sign-in callbacks and customizable action outcomes.
 - Mapped writing-connection transactions with rollback detection and preserved errors.

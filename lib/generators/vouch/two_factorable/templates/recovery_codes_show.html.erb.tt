@@ -8,4 +8,4 @@
 <%% end %>
 
 <p>Generate a new set only when you can save it securely. Generating a new set permanently invalidates any unused codes for this record.</p>
-<%%= button_to "Generate recovery codes", <%= route_helper_prefix %>_recovery_codes_path(recovery_owner_type: @recovery_owner.class.name, recovery_owner_id: Vouch::RecordKey.to_param(@recovery_owner)), method: :post %>
+<%%= button_to "Generate recovery codes", vouch_route_path(:recovery_codes, :create, recovery_owner_type: @recovery_owner.class.name, recovery_owner_id: Vouch::RecordKey.to_param(@recovery_owner)), method: :post %>

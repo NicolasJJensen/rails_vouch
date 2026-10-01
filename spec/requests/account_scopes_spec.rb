@@ -101,8 +101,9 @@ RSpec.describe "Account and membership sessions", type: :request do
           auth.sessions controller: "linked_accounts/sessions"
           auth.registrations controller: "linked_accounts/registrations"
           auth.oauth_callbacks controller: "linked_accounts/omni_auths", registration: :automatic
-          auth.two_factor challenge_controller: "linked_accounts/two_factor_challenge",
-            credentials_controller: "linked_accounts/two_factor_credentials"
+          auth.two_factor_challenges controller: "linked_accounts/two_factor_challenge"
+          auth.two_factor_credentials controller: "linked_accounts/two_factor_credentials"
+          auth.recovery_codes
         end
         auth.scope :member, account_scope: :account, identity: "User", tenant: "Organisation", path: "linked_members" do
           auth.sessions controller: "linked_members/sessions"

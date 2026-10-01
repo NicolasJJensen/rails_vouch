@@ -219,7 +219,9 @@ auth.oauth_callbacks(
 )
 ```
 
-The provider middleware and registered provider callback URL must use that same path. `auth.two_factor` currently uses its standard route names.
+The provider middleware and registered provider callback URL must use that same path.
+
+MFA has separate `auth.two_factor_challenges`, `auth.two_factor_credentials` and `auth.recovery_codes` declarations. Each accepts `controller:`, `paths:` and `path_names:` with the action names in the table below. [The MFA guide](mfa.md#configure-challenge-and-management-routes) shows how to customize them.
 
 These routes use `auth.scope model: "User"` with the corresponding feature declarations. Optional feature generators add their declarations. Every named `_path` helper also has a Rails `_url` variant.
 
@@ -237,19 +239,19 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | | `POST /users/password_reset` | `user_password_reset_path` | `Users::PasswordResetsController#create` |
 | | `GET /users/password_reset/edit?token=…` | `edit_user_password_reset_path(token: token)` | `Users::PasswordResetsController#edit` |
 | | `PATCH/PUT /users/password_reset` | `user_password_reset_path` | `Users::PasswordResetsController#update` |
-| `auth.two_factor` | `GET /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#index` |
+| `auth.two_factor_challenges` | `GET /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#index` |
 | | `DELETE /users/two_factor_challenges` | `user_two_factor_challenges_path` | `Users::TwoFactorChallengeController#destroy` |
 | | `GET /users/two_factor_challenges/:id` | `user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#show` |
 | | `POST /users/two_factor_challenges/:id/send_code` | `send_code_user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#send_code` |
 | | `PATCH/PUT /users/two_factor_challenges/:id` | `user_two_factor_challenge_path(id)` | `Users::TwoFactorChallengeController#update` |
-| | `GET /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#index` |
+| `auth.two_factor_credentials` | `GET /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#index` |
 | | `GET /users/two_factor_credentials/new` | `new_user_two_factor_credential_path` | `Users::TwoFactorCredentialsController#new` |
 | | `POST /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#create` |
 | | `PATCH/PUT /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#update` |
 | | `DELETE /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#destroy` |
-| `auth.two_factor` | `GET /users/recovery` | `user_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#recovery` |
+| `auth.two_factor_challenges` | `GET /users/recovery` | `user_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#recovery` |
 | | `POST /users/recovery` | `user_consume_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#consume_recovery` |
-| | `GET /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#show` |
+| `auth.recovery_codes` | `GET /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#show` |
 | | `POST /users/recovery_codes` | `user_recovery_codes_path` | `Users::RecoveryCodesController#create` |
 | `auth.oauth_callbacks` | `GET /users/auth/:provider/callback` | `user_oauth_callback_path(provider: :github)` | `Users::OmniAuthsController#callback` |
 | | `GET /users/auth/failure` | `user_oauth_failure_path` | `Users::OmniAuthsController#failure` |

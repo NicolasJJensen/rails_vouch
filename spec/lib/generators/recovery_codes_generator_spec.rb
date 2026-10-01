@@ -29,7 +29,8 @@ RSpec.describe Vouch::Generators::RecoveryCodesGenerator do
       Rails.application.routes.draw do
         Vouch.routes(self) do |auth|
           auth.scope :account, model: "Account", path: "portal/accounts" do
-            auth.two_factor
+            auth.two_factor_challenges
+            auth.two_factor_credentials
           end
         end
       end
@@ -40,7 +41,10 @@ RSpec.describe Vouch::Generators::RecoveryCodesGenerator do
     expect(File).to exist(File.join(directory, "app/controllers/portal/accounts/recovery_codes_controller.rb"))
     expect(File.read(File.join(directory, "app/controllers/portal/accounts/recovery_codes_controller.rb"))).to include("Portal::Accounts::RecoveryCodesController")
     view = File.read(File.join(directory, "app/views/portal/accounts/recovery_codes/show.html.erb"))
-    expect(view).to include("account_recovery_codes_path")
+    expect(view).to include("vouch_route_path(:recovery_codes, :create,")
+    routes = File.read(File.join(directory, "config/routes.rb"))
+    expect(routes.scan("auth.two_factor_challenges").size).to eq(1)
+    expect(routes).to include('auth.recovery_codes controller: "portal/accounts/recovery_codes"')
   end
 
   it "adds credential-owned recovery UI to the credential owner's custom scope" do
@@ -54,7 +58,8 @@ RSpec.describe Vouch::Generators::RecoveryCodesGenerator do
       Rails.application.routes.draw do
         Vouch.routes(self) do |auth|
           auth.scope :user, model: "User", path: "portal/users", as: :member do
-            auth.two_factor
+            auth.two_factor_challenges
+            auth.two_factor_credentials
           end
         end
       end
@@ -64,7 +69,43 @@ RSpec.describe Vouch::Generators::RecoveryCodesGenerator do
 
     expect(File).to exist(File.join(directory, "app/controllers/users/recovery_codes_controller.rb"))
     view = File.read(File.join(directory, "app/views/users/two_factor_challenge/recovery.html.erb"))
-    expect(view).to include("member_consume_recovery_two_factor_challenge_path")
+    expect(view).to include("vouch_route_path(:two_factor_challenges, :consume_recovery)")
+  end
+
+  it "adds standalone recovery challenges and management routes once without adding enrollment" do
+    write "app/models/user.rb", "class User < ApplicationRecord\nend\n"
+    write "config/routes.rb", "Rails.application.routes.draw do\nend\n"
+
+    2.times { generate "User", auth_scope: "member", controller_path: "security" }
+
+    routes = File.read(File.join(directory, "config/routes.rb"))
+    expect(routes.scan('auth.scope :member, model: "User"').size).to eq(1)
+    expect(routes.scan('auth.two_factor_challenges controller: "security/two_factor_challenge"').size).to eq(1)
+    expect(routes.scan('auth.recovery_codes controller: "security/recovery_codes"').size).to eq(1)
+    expect(routes).not_to include("auth.two_factor_credentials")
+    expect(File.read(File.join(directory, "app/controllers/security/recovery_codes_controller.rb"))).to include("auth_scope :member")
+    expect(File.read(File.join(directory, "app/controllers/security/two_factor_challenge_controller.rb"))).to include("auth_scope :member")
+    %w[index show recovery].each do |action|
+      expect(File).to exist(File.join(directory, "app/views/security/two_factor_challenge/#{action}.html.erb"))
+    end
+  end
+
+  it "preserves custom challenge and recovery declarations when rerun" do
+    write "config/routes.rb", <<~RUBY
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope model: "User" do
+            auth.two_factor_challenges controller: "security/challenges", path_names: {index: :challenge_choices}
+            auth.recovery_codes controller: "security/codes", path_names: {show: :my_recovery_codes}
+          end
+        end
+      end
+    RUBY
+    original = File.read(File.join(directory, "config/routes.rb"))
+
+    2.times { generate "User" }
+
+    expect(File.read(File.join(directory, "config/routes.rb"))).to eq(original)
   end
   [false, true].each do |credential|
     [false, true].each do |polymorphic|

@@ -83,7 +83,9 @@ RSpec.describe "Platform configuration" do
         Vouch::RouteBuilder.new(self).scope(:customer, model: "Account", path: "portal", as: :visitor) do |auth|
           auth.sessions
           auth.password_resets
-          auth.two_factor
+          auth.two_factor_challenges
+          auth.two_factor_credentials
+          auth.recovery_codes
           auth.invitations
           auth.impersonation
           auth.oauth_callbacks

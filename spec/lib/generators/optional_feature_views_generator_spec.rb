@@ -86,12 +86,43 @@ RSpec.describe "optional feature view generators" do
     index = File.read(File.join(directory, "app/views/users/two_factor_challenge/index.html.erb"))
     challenge = File.read(File.join(directory, "app/views/users/two_factor_challenge/show.html.erb"))
     expect(index).to include('credential_param = "#{credential.model_name.singular}-#{Vouch::RecordKey.to_param(credential)}"')
-    expect(index).to include("user_two_factor_challenge_path(credential_param)")
+    expect(index).to include("vouch_route_path(:two_factor_challenges, :show, id: credential_param)")
     expect(challenge).to include('credential_param = "#{@credential.model_name.singular}-#{Vouch::RecordKey.to_param(@credential)}"')
-    expect(challenge).to include("user_two_factor_challenge_path(credential_param), method: :patch")
-    expect(challenge).to include("send_code_user_two_factor_challenge_path(credential_param), method: :post")
+    expect(challenge).to include("vouch_route_path(:two_factor_challenges, :update, id: credential_param), method: :patch")
+    expect(challenge).to include("vouch_route_path(:two_factor_challenges, :send_code, id: credential_param), method: :post")
     expect(challenge).not_to include('inputmode: "numeric"')
     expect(File).to exist(File.join(directory, "app/views/users/two_factor_credentials/new.html.erb"))
+    expect(File).not_to exist(File.join(directory, "app/controllers/users/recovery_codes_controller.rb"))
+  end
+
+  it "adds independent MFA declarations once and preserves custom declarations" do
+    directory = Dir.mktmpdir("vouch-mfa-routes")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    FileUtils.mkdir_p(File.join(directory, "config"))
+    File.write(File.join(directory, "app/models/user.rb"), "class User < ApplicationRecord\nend\n")
+    File.write(File.join(directory, "app/models/phone.rb"), "class Phone < ApplicationRecord\n  belongs_to :user\nend\n")
+    File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope model: "User" do
+            auth.two_factor_challenges controller: "custom/challenges", path_names: {index: :challenge_choices}
+          end
+        end
+      end
+    RUBY
+
+    2.times do
+      generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], subject: ["e164"])
+      generator.destination_root = directory
+      Dir.chdir(directory) { generator.invoke_all }
+    end
+
+    routes = File.read(File.join(directory, "config/routes.rb"))
+    expect(routes.scan("auth.two_factor_challenges").size).to eq(1)
+    expect(routes).to include('auth.two_factor_challenges controller: "custom/challenges", path_names: {index: :challenge_choices}')
+    expect(routes.scan('auth.two_factor_credentials controller: "users/two_factor_credentials"').size).to eq(1)
+    expect(routes).not_to include("auth.recovery_codes")
   end
 
   it "accepts a controller path without an explicit route scope" do

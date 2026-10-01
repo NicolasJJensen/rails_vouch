@@ -3,6 +3,7 @@
 require "rails/generators/base"
 require "vouch/model_metadata"
 require_relative "../feature_base"
+require_relative "../route_editor"
 require_relative "../recoverable/recoverable_generator"
 require_relative "../backup_codes/backup_codes_generator"
 require_relative "storage_generator"
@@ -55,7 +56,28 @@ module Vouch
         source = File.expand_path("../two_factorable/templates", __dir__)
         template_from(source, "recovery_codes_controller.rb.tt", "app/controllers/#{@recovery_controller_path}/recovery_codes_controller.rb")
         template_from(source, "recovery_codes_show.html.erb.tt", "app/views/#{@recovery_view_path}/recovery_codes/show.html.erb")
-        template_from(source, "two_factor_challenge_recovery.html.erb.tt", "app/views/#{@recovery_view_path}/two_factor_challenge/recovery.html.erb")
+        template_from(source, "two_factor_challenge_controller.rb.tt", "app/controllers/#{@recovery_controller_path}/two_factor_challenge_controller.rb")
+        %w[index show recovery].each do |action|
+          template_from(source, "two_factor_challenge_#{action}.html.erb.tt", "app/views/#{@recovery_view_path}/two_factor_challenge/#{action}.html.erb")
+        end
+      end
+
+      def configure_routes
+        path = File.join(destination_root, "config/routes.rb")
+        return unless File.file?(path)
+
+        RouteEditor.ensure_wrapper(path, "Vouch.routes(self) do |auth|\nend\n")
+        declarations = [
+          "auth.two_factor_challenges controller: \"#{controller_scope_path}/two_factor_challenge\"",
+          "auth.recovery_codes controller: \"#{controller_scope_path}/recovery_codes\""
+        ]
+        declarations.each do |declaration|
+          result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
+          if result == :unsafe
+            result = RouteEditor.insert_scope(path, "auth.scope :#{auth_scope_name}, model: \"#{recovery_owner_model}\" do\n  #{declarations.join("\n  ")}\nend\n")
+          end
+          say "Add #{declaration} inside auth.scope :#{auth_scope_name} in config/routes.rb", :yellow if result == :unsafe
+        end
       end
 
       private

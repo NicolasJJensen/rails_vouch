@@ -6,7 +6,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   before_action :find_pending_account
   before_action :set_credential, only: %i[show send_code update]
   before_action :set_recovery_owner, only: :consume_recovery
-  helper_method :additional_authentication?
+  helper_method :additional_authentication?, :credential_management_available?
 
   def index
     @credentials = eligible_credentials
@@ -100,6 +100,10 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   private
+
+  def credential_management_available?
+    _routes.url_helpers.respond_to?(auth_mapping.route_helper(:two_factor_credentials, :index))
+  end
 
   def finish_sign_in(method, credential, owner, &response_handler)
     outcome = complete_sign_in(@account, context: session[two_factor_session_key], credential: credential,

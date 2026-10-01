@@ -371,15 +371,15 @@ module Vouch
     end
 
     def two_factor_challenges_path
-      send(:"#{auth_mapping.helper_prefix}_two_factor_challenges_path")
+      vouch_route_path(:two_factor_challenges, :index)
     end
 
     def two_factor_credentials_path
-      send(:"#{auth_mapping.helper_prefix}_two_factor_credentials_path")
+      vouch_route_path(:two_factor_credentials, :index)
     end
 
     def recovery_codes_path
-      send(:"#{auth_mapping.helper_prefix}_recovery_codes_path")
+      vouch_route_path(:recovery_codes, :show)
     end
 
     def warden

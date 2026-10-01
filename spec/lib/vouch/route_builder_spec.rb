@@ -336,7 +336,9 @@ RSpec.describe Vouch::RouteBuilder do
           Vouch::RouteBuilder.new(self).scope(:empty_two_factor_associations,
             account: "Account", identity: "User", associations: { two_factorable: [] }) do |auth|
             auth.sessions
-            auth.two_factor
+            auth.two_factor_challenges
+            auth.two_factor_credentials
+            auth.recovery_codes
           end
         end
       }.to raise_error(Vouch::ConfigurationError, /two_factorable.*no has_many target/i)

@@ -1,2 +1,5 @@
 class <%= controller_scope_path.camelize %>::RecoveryCodesController < Vouch::RecoveryCodesController
+<% unless controller_scope_path.camelize.underscore.split("/").last.singularize == auth_scope_name.to_s -%>
+  auth_scope :<%= auth_scope_name %>
+<% end -%>
 end

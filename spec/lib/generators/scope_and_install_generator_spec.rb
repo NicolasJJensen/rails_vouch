@@ -317,7 +317,7 @@ RSpec.describe "Vouch generators" do
     expect(routes.scan("auth.sessions").length).to eq(2)
     expect(routes).not_to include("auth.user_selection")
     expect(routes).not_to include("auth.passwords")
-    expect(routes).not_to include("auth.two_factor")
+    expect(routes).not_to include("auth.two_factor_challenges", "auth.two_factor_credentials", "auth.recovery_codes")
     expect(routes).not_to include("auth.invitations")
     expect(routes).not_to include("auth.impersonation")
     expect(routes).not_to include("auth.oauth_callbacks")

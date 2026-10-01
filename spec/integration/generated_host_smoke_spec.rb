@@ -333,7 +333,7 @@ RSpec.describe "generated host smoke test", :generated_host do
         Dir.chdir(directory) { two_factor.invoke_all }
         routes_path = File.join(directory, "config/routes.rb")
         routes = File.read(routes_path)
-        Vouch::Generators::RouteEditor.insert_feature(routes_path, account_scope, "auth.two_factor")
+        Vouch::Generators::RouteEditor.insert_feature(routes_path, account_scope, "auth.two_factor_challenges")
         Vouch::Generators::RouteEditor.insert_feature(routes_path, route_scope, "auth.invitations")
         impersonation = Vouch::Generators::ImpersonationGenerator.new([path_name], auth_scope: route_scope)
         impersonation.destination_root = directory

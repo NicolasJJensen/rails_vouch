@@ -8,6 +8,7 @@ MFA challenges a verified credential after password or provider authentication. 
 
 - [Add phone-based MFA](#add-phone-based-mfa)
 - [Sign in with MFA](#sign-in-with-mfa)
+- [Configure challenge and management routes](#configure-challenge-and-management-routes)
 - [Verify more than one attribute](#verify-more-than-one-attribute)
 - [Control factor availability](#control-factor-availability)
 - [Request another MFA proof](#request-another-mfa-proof)
@@ -51,7 +52,8 @@ Vouch adds:
 - `two_factor_enabled` to `users`, and the `has_many :phones` association.
 - Verification and MFA concerns to `Phone`, with delivery methods for you to implement.
 - Challenge and credential-management controllers under `app/controllers/users`.
-- Their forms under `app/views/users`, and `auth.two_factor` routes.
+- Their forms under `app/views/users`.
+- `auth.two_factor_challenges` and `auth.two_factor_credentials` routes.
 
 Vouch's migrations add:
 
@@ -185,6 +187,49 @@ A correct password alone does not establish the completed login. An incorrect co
 When account MFA is required, the account is not signed in until that challenge succeeds. Organisation-specific access requirements belong to your application; see [MFA evidence](authentication-policy.md#mfa-evidence-and-application-permissions).
 
 [Password reset](password-reset.md) does not disable this requirement. [Recovery codes](recovery-codes.md) can replace the MFA challenge after password authentication. Applications can enable account-owned codes, credential-owned codes, or both.
+
+## Configure challenge and management routes
+
+The MFA generator adds two declarations to the credentials scope:
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  Vouch.routes(self) do |auth|
+    auth.scope model: "User" do
+      auth.sessions
+      auth.registrations
+      auth.two_factor_challenges
+      auth.two_factor_credentials
+    end
+  end
+end
+```
+
+| Declaration | Pages and actions |
+| --- | --- |
+| `auth.two_factor_challenges` | Select an authenticator, send and check its code, cancel a challenge, or use a recovery code. |
+| `auth.two_factor_credentials` | List, enroll, enable and remove authenticators. |
+| `auth.recovery_codes` | View the remaining recovery-code count and generate a replacement set. Added by the [recovery-code generator](recovery-codes.md). |
+
+Each declaration accepts `controller:`, `paths:` and `path_names:`. For example, change the challenge-selection URL and helper while retaining the other challenge actions:
+
+```ruby
+# config/routes.rb, inside auth.scope model: "User"
+auth.two_factor_challenges(
+  controller: "users/two_factor_challenge",
+  paths: {
+    index: "mfa"
+  },
+  path_names: {
+    index: :choose_mfa
+  }
+)
+```
+
+The selector is now `GET /users/mfa`, reached with `choose_mfa_path`. The generated forms and Vouch's redirects follow these names. `paths:` values are relative to the scope URL; `path_names:` values are complete helper names without `_path` or `_url`.
+
+Actions can share a default helper: challenge `index` and `destroy`, for example, both use `user_two_factor_challenges_path`. When giving those actions different URLs, supply distinct `path_names`, as above. See the [complete route table](controllers.md#routes) for actions, URLs and defaults.
 
 ## Verify more than one attribute
 

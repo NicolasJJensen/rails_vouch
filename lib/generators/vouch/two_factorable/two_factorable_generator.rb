@@ -41,8 +41,6 @@ module Vouch
         template_unless_exists "two_factor_credentials_controller.rb.tt", "app/controllers/#{controller_scope_path}/two_factor_credentials_controller.rb"
         template_unless_exists "two_factor_credentials_new.html.erb.tt", "app/views/#{view_scope_path}/two_factor_credentials/new.html.erb"
         template_unless_exists "two_factor_credentials_index.html.erb.tt", "app/views/#{view_scope_path}/two_factor_credentials/index.html.erb"
-        template_unless_exists "recovery_codes_controller.rb.tt", "app/controllers/#{controller_scope_path}/recovery_codes_controller.rb"
-        template_unless_exists "recovery_codes_show.html.erb.tt", "app/views/#{view_scope_path}/recovery_codes/show.html.erb"
       end
 
       def configure_model
@@ -88,12 +86,17 @@ module Vouch
         path = File.join(destination_root, "config/routes.rb")
         return unless File.file?(path)
         RouteEditor.ensure_wrapper(path, "Vouch.routes(self) do |auth|\nend\n")
-        declaration = "auth.two_factor challenge_controller: \"#{controller_scope_path}/two_factor_challenge\", credentials_controller: \"#{controller_scope_path}/two_factor_credentials\", recovery_controller: \"#{controller_scope_path}/recovery_codes\""
-        result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
-        if result == :unsafe
-          result = RouteEditor.insert_scope(path, "auth.scope :#{auth_scope_name}, model: \"#{owner_model}\" do\n  #{declaration}\nend\n")
+        declarations = [
+          "auth.two_factor_challenges controller: \"#{controller_scope_path}/two_factor_challenge\"",
+          "auth.two_factor_credentials controller: \"#{controller_scope_path}/two_factor_credentials\""
+        ]
+        declarations.each do |declaration|
+          result = RouteEditor.insert_feature(path, auth_scope_name, declaration)
+          if result == :unsafe
+            result = RouteEditor.insert_scope(path, "auth.scope :#{auth_scope_name}, model: \"#{owner_model}\" do\n  #{declarations.join("\n  ")}\nend\n")
+          end
+          say "Add #{declaration} inside auth.scope :#{auth_scope_name} in config/routes.rb", :yellow if result == :unsafe
         end
-        say "Add auth.two_factor inside auth.scope :#{auth_scope_name} in config/routes.rb", :yellow if result == :unsafe
       end
 
       def create_owner_migration
