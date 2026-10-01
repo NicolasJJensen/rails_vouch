@@ -50,7 +50,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     OmniAuthIdentity.set_callback(:create, :after, callback)
     counts = [Account.count, User.count, Organisation.count, OmniAuthIdentity.count]
 
-    get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => auth_hash }
+    oauth_callback "/users/auth/google_oauth2/callback", auth: auth_hash, purpose: :register
 
     expect(response).to redirect_to("/users/sign_in")
     expect([Account.count, User.count, Organisation.count, OmniAuthIdentity.count]).to eq(counts)
@@ -71,7 +71,7 @@ RSpec.describe "authentication writes cancelled by host callbacks", type: :reque
     )
     Users::OmniAuthsController.after_oauth_link { raise ActiveRecord::Rollback }
 
-    get "/users/auth/google_oauth2/callback", env: { "omniauth.auth" => auth_hash }
+    oauth_callback "/users/auth/google_oauth2/callback", auth: auth_hash, purpose: :link
 
     expect(response).to have_http_status(:forbidden)
     expect(OmniAuthIdentity.where(provider: "google_oauth2", uid: "rolled-back-provider-link")).not_to exist

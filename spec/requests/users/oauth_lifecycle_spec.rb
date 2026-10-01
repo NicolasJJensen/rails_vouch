@@ -26,7 +26,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
   end
 
   def callback
-    get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => auth_hash}
+    oauth_callback "/users/auth/google_oauth2/callback", auth: auth_hash, purpose: :sign_in
   end
 
   it "runs one named parent callback for password and OAuth sign-in with their method context" do
