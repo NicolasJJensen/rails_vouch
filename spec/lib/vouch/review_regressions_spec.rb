@@ -82,6 +82,6 @@ RSpec.describe 'Credential review regressions' do
     token = account.generate_password_reset_token!.value
     stale = Account.find(account.id)
     expect(account.reset_password_with_token!(token, password: 'replacement123')).to be_ok
-    expect(stale.reset_password_with_token!(token, password: 'secondpassword123')).to be_invalid
+    expect(stale.reset_password_with_token(token, password: 'secondpassword123')).to be_invalid
   end
 end

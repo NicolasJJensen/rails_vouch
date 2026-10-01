@@ -85,7 +85,7 @@ module Vouch
       return unless account.respond_to?(:auth_feature_enabled?)
       Vouch::FeatureContracts::ACCOUNT_COLUMNS.each do |feature|
         next unless account.auth_feature_enabled?(feature)
-        Vouch::FeatureContracts.columns(feature).each do |column|
+        Vouch::FeatureContracts.columns_for(feature, account).each do |column|
           unless account.column_names.include?(column.to_s)
             errors << "scope :#{mapping.scope_name}: #{account.name} requires column #{column.inspect} for :#{feature}"
           end

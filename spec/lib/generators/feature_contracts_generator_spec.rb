@@ -62,7 +62,7 @@ RSpec.describe "feature generator contracts" do
 
   {
     lockable: {"locked_at" => "datetime"},
-    password_resetable: {"password_reset_token_digest" => "string"}
+    password_resetable: {"password_reset_nonce" => "string"}
   }.each do |feature, expected_types|
     it "keeps #{feature} column types when inline table helpers are present" do
       Dir.mktmpdir("vouch-#{feature}-inline-columns") do |directory|
@@ -77,7 +77,8 @@ RSpec.describe "feature generator contracts" do
         rerun = generator_class.new(["accounts"])
         rerun.destination_root = directory
         Dir.chdir(directory) { rerun.create_feature_migration }
-        expect(Dir[File.join(directory, "db/migrate/*add_#{feature}_to_accounts.rb")]).to have_attributes(length: 1)
+        pattern = feature == :password_resetable ? "*add_signed_password_resetable_to_accounts.rb" : "*add_#{feature}_to_accounts.rb"
+        expect(Dir[File.join(directory, "db/migrate", pattern)]).to have_attributes(length: 1)
       end
     end
   end

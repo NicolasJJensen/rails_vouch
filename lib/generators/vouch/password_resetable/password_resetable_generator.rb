@@ -2,6 +2,7 @@
 
 require_relative "../feature_base"
 require_relative "../route_editor"
+require "ripper"
 
 module Vouch
   module Generators
@@ -13,11 +14,31 @@ module Vouch
       argument :account_scope, type: :string, optional: true, banner: "account_model"
       class_option :model_only, type: :boolean, default: false,
                                 desc: "Generate the migration and model wiring only"
+      class_option :token_strategy, type: :string, enum: %w[signed opaque], default: "signed",
+                                    desc: "Reset token storage: signed nonce or opaque digest"
 
       class_option :auth_scope, type: :string, default: nil,
                                 desc: "Authentication route scope for optional UI"
       class_option :controller_path, type: :string, default: nil,
                                      desc: "Controller namespace path for optional UI"
+
+      def initialize(args = [], local_options = {}, config = {})
+        @explicit_token_strategy = local_options.key?(:token_strategy) || local_options.key?("token_strategy") ||
+          args.any? { |argument| argument.to_s.match?(/\A--token-strategy(?:=|\z)/) }
+        super
+      end
+
+      def create_feature_migration
+        validate_model_configuration!
+        validate_reset_column_types!
+        changed_strategy = configured_strategy && configured_strategy != selected_token_strategy
+        complete = feature_schema_already_declared?("password_resetable") || existing_feature_schema_complete?("password_resetable")
+        if complete && !changed_strategy && reset_index_complete?
+          say_status :identical, "password_resetable schema already exists", :blue
+          return
+        end
+        migration_template "password_resetable.rb.tt", "db/migrate/#{reset_migration_name}.rb"
+      end
 
       def create_optional_ui
         return if options[:model_only]
@@ -36,12 +57,24 @@ module Vouch
         end
 
         contents = File.read(path)
+        if ui_enabled? && contents.match?(/^\s*def deliver_password_reset_token\b/) &&
+            !contents.match?(/^\s*def deliver_password_reset_token[^\n]*recipient:/)
+          say "Preserved #{model_metadata.model_path}: accept recipient: in deliver_password_reset_token and pass it unchanged to delivery.", :yellow
+        end
         wiring = +""
         wiring << "  include Vouch::Authenticatable\n\n" unless contents.include?("include Vouch::Authenticatable")
-        wiring << "  authenticates_with :password_resetable\n\n" unless contents.include?("authenticates_with :password_resetable")
+        declaration = reset_declaration(contents)
+        if declaration
+          updated = configured_declaration(declaration)
+          gsub_file(path, declaration, updated) unless updated == declaration
+        else
+          wiring << "  authenticates_with :password_resetable, password_resetable: { token_strategy: :#{selected_token_strategy} }\n\n"
+        end
         wiring += <<~RUBY if ui_enabled? && !contents.match?(/^\s*def deliver_password_reset_token\b/)
-          def deliver_password_reset_token(token)
-            #{mailer_class_name}.reset(self, token).deliver_later
+          def deliver_password_reset_token(token, recipient:)
+            delivery = #{mailer_class_name}.reset(self, token, recipient: recipient).deliver_later
+            raise ActiveJob::EnqueueError, "Password reset delivery was not enqueued" unless delivery
+            delivery
           end
 
         RUBY
@@ -84,6 +117,97 @@ module Vouch
       end
 
       private
+
+      def selected_token_strategy
+        return options[:token_strategy] if @explicit_token_strategy
+
+        configured_strategy || "signed"
+      end
+
+      def validate_reset_column_types!
+        expected = feature_column_types("password_resetable")
+        declared = pending_feature_column_types
+        incompatible = expected.keys.select do |name|
+          declared.key?(name) && !migration_column_type_matches?(declared[name], expected[name])
+        end
+        if generating_current_host? && ActiveRecord::Base.connection.data_source_exists?(table_name)
+          actual = ActiveRecord::Base.connection.columns(table_name).index_by(&:name)
+          incompatible |= expected.keys.select do |name|
+            actual.key?(name) && !database_column_type_matches?(actual[name], expected[name])
+          end
+        end
+        return if incompatible.empty?
+
+        raise Thor::Error, "Existing #{table_name} has incompatible password reset columns: #{incompatible.join(', ')}"
+      end
+
+      def feature_column_types(_template_name)
+        selected_token_strategy == "signed" ? { "password_reset_nonce" => "string" } :
+          { "password_reset_token_digest" => "string", "password_reset_sent_at" => "datetime" }
+      end
+
+      def reset_index_complete?
+        return true unless selected_token_strategy == "opaque" && generating_current_host?
+        connection = ActiveRecord::Base.connection
+        !connection.data_source_exists?(table_name) || connection.index_exists?(table_name, :password_reset_token_digest, unique: true)
+      end
+
+      def reset_migration_name
+        @reset_migration_name ||= begin
+          base = "add_#{selected_token_strategy}_password_resetable_to_#{table_name}"
+          previous = Dir[File.join(destination_root, "db/migrate/*_#{base}*.rb")].length
+          previous.zero? ? base : "#{base}_#{previous + 1}"
+        end
+      end
+
+      def migration_class_name
+        reset_migration_name.camelize
+      end
+
+      def configured_strategy
+        path = File.join(destination_root, model_metadata.model_path)
+        return unless File.file?(path)
+        reset_declaration(File.read(path))&.match(/token_strategy:\s*:(signed|opaque)\b/)&.captures&.first
+      end
+
+      def validate_model_configuration!
+        path = File.join(destination_root, model_metadata.model_path)
+        return unless File.file?(path)
+        declaration = reset_declaration(File.read(path))
+        configured_declaration(declaration) if declaration
+      end
+
+      def reset_declaration(source)
+        tokens = Ripper.lex(source)
+        tokens.each_with_index do |(position, type, value, _state), index|
+          next unless type == :on_ident && value == "authenticates_with"
+          declaration_tokens = tokens[index..].take_while { |token| !%i[on_nl on_semicolon on_comment].include?(token[1]) }
+          declaration = declaration_tokens.map { |token| token[2] }.join
+          return declaration if declaration.match?(/:password_resetable\b/)
+        end
+        nil
+      end
+
+      def configured_declaration(declaration)
+        if declaration.match?(/password_resetable:\s*\{/)
+          declaration.sub(/password_resetable:\s*\{([^{}]*)\}/) do |options_hash|
+            body = Regexp.last_match(1)
+            if body.match?(/token_strategy:/)
+              raise Thor::Error, "Set the password_resetable token_strategy explicitly before generation" unless body.match?(/token_strategy:\s*:(signed|opaque)\b/)
+              options_hash.sub(/token_strategy:\s*:(signed|opaque)\b/, "token_strategy: :#{selected_token_strategy}")
+            else
+              "password_resetable: {#{body.rstrip}#{body.strip.empty? ? '' : ','} token_strategy: :#{selected_token_strategy} }"
+            end
+          end.tap do |updated|
+            raise Thor::Error, "Update the existing password_resetable options explicitly before generation" if updated == declaration && !declaration.include?("token_strategy: :#{selected_token_strategy}")
+          end
+        elsif declaration.match?(/password_resetable:/)
+          raise Thor::Error, "Update the existing password_resetable options explicitly before generation"
+        else
+          suffix = ", password_resetable: { token_strategy: :#{selected_token_strategy} }"
+          declaration.rstrip.end_with?(")") ? declaration.sub(/\)\s*\z/, "#{suffix})") : declaration.rstrip + suffix
+        end
+      end
 
       def controller_scope_path
         options[:controller_path].presence || inferred_controller_path(model_metadata.class_name, auth_scope_name)

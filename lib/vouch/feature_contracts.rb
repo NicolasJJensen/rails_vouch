@@ -4,7 +4,7 @@ module Vouch
   module FeatureContracts
     COLUMNS = {
       lockable: %i[locked_at failed_attempts consecutive_locks],
-      password_resetable: %i[password_reset_token_digest password_reset_sent_at],
+      password_resetable: %i[password_reset_nonce],
       recoverable: %i[recovery_attempts recovery_locked_at],
       verifiable: %i[created_at verified_at verification_attempts verification_locked_at verification_version verification_nonce],
       two_factorable: %i[created_at two_factor_enabled_at two_factor_failed_attempts two_factor_locked_at two_factor_last_used_at two_factor_nonce],
@@ -29,6 +29,9 @@ module Vouch
     end
 
     def self.columns_for(feature, model)
+      if feature.to_sym == :password_resetable && model.respond_to?(:password_reset_strategy)
+        return %i[password_reset_token_digest password_reset_sent_at].freeze if model.password_reset_strategy == :opaque
+      end
       columns(feature).dup.map(&:to_sym).uniq.freeze
     end
 

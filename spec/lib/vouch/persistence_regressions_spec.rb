@@ -85,7 +85,7 @@ RSpec.describe 'Authentication persistence failures' do
         token = account.generate_password_reset_token!.value
         digest = account.password_digest
         cancelling(Account, :update, timing) do
-          expect(account.reset_password_with_token!(token, password: 'replacement-password')).to be_cancelled
+          expect(account.reset_password_with_token(token, password: 'replacement-password')).to be_cancelled
           expect(account.reload.password_digest).to eq(digest)
           expect(Account.find_by_auth_password_reset_token(token)).to eq(account)
         end
@@ -104,7 +104,7 @@ RSpec.describe 'Authentication persistence failures' do
       it 'does not return a password reset token whose digest was not saved' do
         account = create(:account)
         cancelling(Account, :update, timing) do
-          expect { account.generate_password_reset_token! }.to raise_error(ActiveRecord::RecordNotSaved)
+          expect { account.generate_password_reset_token! }.to raise_error(Vouch::OperationFailed)
           expect(account.reload.password_reset_token_digest).to be_nil
         end
       end

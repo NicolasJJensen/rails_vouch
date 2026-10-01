@@ -3,10 +3,12 @@
 ## Contents
 
 - [Add password reset](#add-password-reset)
-- [Customize the email](#customize-the-email)
 - [Use the supplied flow](#use-the-supplied-flow)
-- [Token revocation and expiry](#token-revocation-and-expiry)
-- [Build a custom endpoint](#build-a-custom-endpoint)
+- [Customize delivery](#customize-delivery)
+- [Choose who can reset a password](#choose-who-can-reset-a-password)
+- [Choose token storage](#choose-token-storage)
+- [Change the recovery destination](#change-the-recovery-destination)
+- [Customize responses and token operations](#customize-responses-and-token-operations)
 - [Edit the reset actions](#edit-the-reset-actions)
 
 ## Add password reset
@@ -18,129 +20,248 @@ bin/rails generate vouch:password_resetable User
 bin/rails db:migrate
 ```
 
-This adds reset-token storage and methods to `User`, a `Users::PasswordResetsController`, request and replacement-password forms, routes, and `UserPasswordResetMailer`. The generated model delivery method calls that mailer. You do not need to write token-handling actions.
+The generator adds:
 
-The migration adds:
+- A migration and reset-token methods to the `User` model.
+- `Users::PasswordResetsController` and the request and password reset forms.
+- Password reset routes.
+- `UserPasswordResetMailer`, its template, and a model method for delivery.
+
+The default signed-token migration adds:
 
 ```ruby
 change_table :users do |t|
-  t.string :password_reset_token_digest
-  t.datetime :password_reset_sent_at
-  t.index :password_reset_token_digest, unique: true
+  t.string :password_reset_nonce
 end
 ```
 
-For a **multi-tenant application**, generate against the account:
+It also configures the model:
+
+```ruby
+# app/models/user.rb
+class User < ApplicationRecord
+  include Vouch::Authenticatable
+  authenticates_with :password_resetable, password_resetable: { token_strategy: :signed }
+end
+```
+
+In a **multi-tenant application**, pass the model that stores the password. For example, when that model is `Account`:
 
 ```sh
 bin/rails generate vouch:password_resetable Account
 ```
 
-The same columns are added to `accounts`; the generated controller and routes use `accounts`. An account has one password. Resetting it changes the password used to sign in to that account, whichever organisation the person subsequently selects.
+The migration adds `password_reset_nonce` to `accounts` instead. Resetting this password changes how the person signs in; it does not change their memberships.
 
-The generator infers the route scope and controller namespace. For a custom namespace:
+For a custom controller namespace and authentication scope:
 
 ```sh
 bin/rails generate vouch:password_resetable User --auth-scope customer --controller-path portal
 ```
 
-To generate only the model feature and the same reset-token schema, without pages:
+To generate the migration and model configuration only:
 
 ```sh
 bin/rails generate vouch:password_resetable User --model-only
 ```
 
-## Customize the email
-
-Vouch's supplied `on_password_reset_token_generation` callback calls `user.deliver_password_reset_token(token)`. The generator adds that model method, which calls `UserPasswordResetMailer.reset(user, token).deliver_later`.
-
-To change the delivery mechanism, override that model method. Registering another `on_password_reset_token_generation` callback adds behavior alongside the supplied callback and can send two emails; it does not replace it.
-
-
-Edit the generated mailer to change the subject or recipient:
-
-```ruby
-# app/mailers/user_password_reset_mailer.rb
-class UserPasswordResetMailer < ApplicationMailer
-  def reset(user, token)
-    @user = user
-    @token = token
-    mail(to: user.email_address, subject: "Choose a new password")
-  end
-end
-```
-
-Edit its template to change the message:
-
-```erb
-<%# app/views/user_password_reset_mailer/reset.text.erb %>
-You requested a password reset.
-
-Choose a new password: <%= edit_user_password_reset_url(token: @token) %>
-```
-
-The URL uses Action Mailer's `default_url_options`, for example:
-
-```ruby
-# config/environments/production.rb
-config.action_mailer.default_url_options = { host: "app.example.com", protocol: "https" }
-```
+`--model-only` omits the controller, views, routes, mailer and delivery method.
 
 ## Use the supplied flow
 
 ```erb
+<%# Your sign-in view %>
 <%= link_to "Forgot your password?", new_user_password_reset_path %>
 ```
 
-| Step | Request | What happens |
+| Step | Request | Behavior |
 | --- | --- | --- |
 | Request form | `GET /users/password_reset/new` | Asks for the sign-in email. |
-| Send link | `POST /users/password_reset` | Sends a reset link if the user exists; displays the same response either way. |
-| Choose password | `GET /users/password_reset/edit?token=…` | Checks the link and displays the password form. |
+| Send link | `POST /users/password_reset` | Sends a link to an eligible user, then returns to sign-in with a generic notice. |
+| Choose password | `GET /users/password_reset/edit?token=…` | Checks the token and displays the password reset form. |
 | Save password | `PATCH /users/password_reset` | Validates and changes the password, then returns to sign-in. |
 
-An invalid or expired link returns to sign-in. A password validation error redisplays the replacement-password form with its validation errors.
+Unknown users, ineligible users and expected delivery failures receive the same request response. Delivery failures are reported through `Rails.error`. Invalid or expired links return to sign-in; password validation errors appear on the password reset form.
 
-The request form submits `email_address`. If you identify users by `username` instead of `email_address`, change that field to `username` and register the corresponding [login resolver](sign-in-customization.md#use-usernames-for-sign-in).
-
-The replacement form submits `user[password]`, `user[password_confirmation]` and the reset token. It does not need the sign-in identifier again.
-
-**Resetting a password does not bypass MFA.** It does not sign the person in or disable their second factor. Their next sign-in still requires MFA when enabled.
-
-## Token revocation and expiry
-
-Rails' native `has_secure_password` reset tokens are signed tokens. Vouch additionally supports explicit revocation and replacement on reissue: requesting another reset immediately invalidates the earlier link.
-
-Vouch stores a digest of a random token, locks the record when consuming it, and changes the password and clears the token together. Only one concurrent submission can consume a token successfully. Ordinary password updates also invalidate outstanding reset links. Callback-bypassing updates need equivalent invalidation in your own code.
-
-The lookup method is named `find_by_auth_password_reset_token` to distinguish it from Rails' `find_by_password_reset_token` and its different token format.
-
-## Build a custom endpoint
-
-Use these methods only when building your own endpoint or service. The generated controller already calls them:
+The request form submits `email_address`. If your sign-in identifier is something else, such as `username`, update the form, [login resolver](sign-in-customization.md), and permitted request parameters:
 
 ```ruby
-# Inside your password-reset service
-result = user.generate_password_reset_token!
-user.deliver_password_reset_token(result.value) if result.ok?
-```
+# app/controllers/users/password_resets_controller.rb
+class Users::PasswordResetsController < Vouch::PasswordResetsController
+  private
 
-```ruby
-# Inside your custom password-update action
-token = params.require(:token)
-password_params = params.require(:user).permit(:password, :password_confirmation)
-user = User.find_by_auth_password_reset_token(token)
-result = user&.reset_password_with_token!(token, **password_params.to_h.symbolize_keys)
-
-if result&.ok?
-  redirect_to new_user_session_path
-else
-  render :edit, status: :unprocessable_entity
+  def password_reset_params
+    params.permit(:username)
+  end
 end
 ```
 
-Lookup returns `nil` for an invalid or expired token. `reset_password_with_token!` returns a `Vouch::Result`; `ok?` means the update succeeded. `user.clear_password_reset!` revokes a link without issuing another.
+The password reset form submits `user[password]`, `user[password_confirmation]` and `token`.
 
+> Resetting a password does not sign the person in or disable MFA. Their next sign-in follows the usual authentication flow.
+
+## Customize delivery
+
+The generated controller's `on_password_reset_token_generation` callback calls `user.deliver_password_reset_token(token, recipient: recipient)`. Edit that model method to change delivery, or edit the generated mailer and template:
+
+```ruby
+# app/mailers/user_password_reset_mailer.rb
+class UserPasswordResetMailer < ApplicationMailer
+  def reset(user, token, recipient:)
+    @user = user
+    @token = token
+    mail(to: recipient, subject: "Choose a new password")
+  end
+end
+```
+
+```erb
+<%# app/views/user_password_reset_mailer/reset.text.erb %>
+You requested a password reset.
+Choose a new password: <%= edit_user_password_reset_url(token: @token) %>
+```
+
+The controller captures `recipient` when it issues the token. Keep passing that value to the mailer: a queued email must not change recipients because the user's email changed while the job was waiting.
+
+> Registering another `on_password_reset_token_generation` callback adds behavior; it does not replace the existing callback. Edit the generated delivery method to avoid sending two emails.
+
+## Choose who can reset a password
+
+By default, only accounts with a password are eligible. Accounts awaiting invited registration are also excluded when invitations are enabled for their credentials model.
+
+Override `password_reset_accounts` to add your application's restrictions. Vouch applies this relation when resolving the request, opening the link and changing the password:
+
+```ruby
+# app/controllers/users/password_resets_controller.rb
+class Users::PasswordResetsController < Vouch::PasswordResetsController
+  private
+
+  def password_reset_accounts
+    super.where(suspended: false) # An attribute supplied by this application.
+  end
+end
+```
+
+An application that deliberately allows OAuth-only users to set their first password can remove just the password restriction with `super.unscope(where: :password_digest)`. This preserves the pending-invitation restriction. A custom login resolver cannot bypass the relation.
+
+## Choose token storage
+
+Both strategies expire tokens, revoke earlier links when another is requested, and revoke links when the password changes. Tokens can be consumed only once, including concurrent submissions.
+
+| Strategy | Storage | Tradeoff |
+| --- | --- | --- |
+| `signed` (default) | `password_reset_nonce` | A signed token carries its expiry and password fingerprint; the database nonce enables explicit revocation. |
+| `opaque` | `password_reset_token_digest`, `password_reset_sent_at` | A random token is represented by a digest and issuance time in the database. |
+
+To select opaque tokens:
+
+```sh
+bin/rails generate vouch:password_resetable User --token-strategy opaque
+bin/rails db:migrate
+```
+
+The generator updates the model's `token_strategy` and supplies this schema:
+
+```ruby
+change_table :users do |t|
+  t.string :password_reset_token_digest, index: { unique: true }
+  t.datetime :password_reset_sent_at
+end
+```
+
+Rerunning with another strategy creates the required migration and revokes outstanding links. Existing columns are retained; the configured strategy never falls back to another format.
+
+Configure expiry alongside the strategy:
+
+```ruby
+# app/models/user.rb
+class User < ApplicationRecord
+  authenticates_with :password_resetable,
+    password_resetable: { token_strategy: :signed, expiry: 30.minutes }
+end
+```
+
+> Rails' password reset tokens are signed and bound to the password. Vouch additionally stores revocation state, so an unchanged password does not prevent explicit revocation or revocation when a replacement link is sent.
+
+## Change the recovery destination
+
+Updating the baseline `email_address` revokes outstanding reset links automatically. If your application selects an associated contact, override `password_reset_recipient` to return that selected address. Revoke links when the selection changes, or when that contact changes or is deleted, in the same database transaction as the change.
+
+For example, a controller using a host-defined `primary_email` association can select the recipient with:
+
+```ruby
+# app/controllers/users/password_resets_controller.rb
+class Users::PasswordResetsController < Vouch::PasswordResetsController
+  private
+
+  def password_reset_recipient
+    @account.primary_email&.address
+  end
+end
+```
+
+For an application with `User#primary_email` and `Email#user`, these callbacks revoke the link in the update or deletion transaction:
+
+```ruby
+# app/models/user.rb
+class User < ApplicationRecord
+  after_update :revoke_reset_after_destination_selection,
+    if: :saved_change_to_primary_email_id?
+
+  private
+
+  def revoke_reset_after_destination_selection
+    clear_password_reset!
+  end
+end
+```
+
+```ruby
+# app/models/email.rb
+class Email < ApplicationRecord
+  before_update :revoke_owner_reset, if: :will_save_change_to_address?
+  before_destroy :revoke_owner_reset
+
+  private
+
+  def revoke_owner_reset
+    user.with_lock do
+      user.clear_password_reset! if user.primary_email_id == id
+    end
+  end
+end
+```
+
+The associations and their ownership constraints belong to your application. All participating records must use the same writing connection. Adapt the callbacks to the fields that identify your selected contact; changing an unrelated contact need not revoke the link.
+
+> `update_columns`, `update_all`, direct SQL and other callback-bypassing changes also bypass revocation. Revoke the token explicitly in the same transaction when using them.
+
+## Customize responses and token operations
+
+Actions yield their result before their default response. An override can render or redirect to replace that response:
+
+```ruby
+# app/controllers/users/password_resets_controller.rb
+class Users::PasswordResetsController < Vouch::PasswordResetsController
+  def update
+    super do |result|
+      redirect_to new_user_session_path, notice: "Password changed." if result.ok?
+    end
+  end
+end
+```
+
+For a custom service, the model operations are:
+
+| Operation | Result-returning method | Raising method |
+| --- | --- | --- |
+| Issue a token | `generate_password_reset_token` | `generate_password_reset_token!` |
+| Change the password | `reset_password_with_token(token, **attributes)` | `reset_password_with_token!(token, **attributes)` |
+| Revoke a token | `clear_password_reset` | `clear_password_reset!` |
+
+Successful calls return a `Vouch::Result`. The issuance result's `value` is the plaintext token. Non-bang methods return unsuccessful results for validation or persistence cancellation; bang methods raise `Vouch::OperationFailed`, whose `result` retains the record and error. Unexpected exceptions propagate.
+
+`User.find_by_auth_password_reset_token(token)` returns the user or `nil`. Custom endpoints must apply their own eligibility relation as the supplied controller does.
 
 ## Edit the reset actions
 
@@ -148,4 +269,4 @@ Lookup returns `nil` for an invalid or expired token. `reset_password_with_token
 bin/rails generate vouch:eject users password_resets
 ```
 
-This creates `app/controllers/users/password_resets_implementation_controller.rb` and makes your existing controller inherit from it. See [controller ejection](controllers.md#eject-a-controller).
+This creates `app/controllers/users/password_resets_implementation_controller.rb` and makes your controller inherit from it. The generated views and mailer are already editable application files. See [controller ejection](controllers.md#eject-a-controller).

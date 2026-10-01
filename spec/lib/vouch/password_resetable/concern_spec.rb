@@ -59,7 +59,7 @@ RSpec.describe Vouch::PasswordResetable::Concern do
     it "does not consume a token when no new password is supplied" do
       token = account.generate_password_reset_token!.value
 
-      expect(account.reset_password_with_token!(token)).to be_invalid
+      expect(account.reset_password_with_token(token)).to be_invalid
       expect(Account.find_by_auth_password_reset_token(token)).to eq(account)
     end
 
@@ -68,7 +68,7 @@ RSpec.describe Vouch::PasswordResetable::Concern do
       original_digest = account.password_digest
 
       [123, ["invalid-token"], {"token" => "invalid-token"}].each do |invalid_token|
-        expect(account.reset_password_with_token!(invalid_token, password: "replacement123")).to be_invalid
+        expect(account.reset_password_with_token(invalid_token, password: "replacement123")).to be_invalid
         expect(account.reload.password_digest).to eq(original_digest)
         expect(Account.find_by_auth_password_reset_token(token)).to eq(account)
       end
@@ -79,21 +79,21 @@ RSpec.describe Vouch::PasswordResetable::Concern do
       original_email = account.email_address
 
       expect {
-        account.reset_password_with_token!(token,
+        account.reset_password_with_token(token,
           password: "replacement123",
           email_address: "changed@example.com")
       }.to raise_error(ArgumentError, /unsupported reset attributes: email_address/)
 
       expect(account.reload.email_address).to eq(original_email)
       expect(Account.find_by_auth_password_reset_token(token)).to eq(account)
-      expect(account.reset_password_with_token!(token, password: "replacement123")).to be_ok
+      expect(account.reset_password_with_token(token, password: "replacement123")).to be_ok
       expect(account.reload.authenticate("replacement123")).to be_truthy
     end
 
     it "continues to infer a missing password confirmation" do
       token = account.generate_password_reset_token!.value
 
-      expect(account.reset_password_with_token!(token, password: "replacement123")).to be_ok
+      expect(account.reset_password_with_token(token, password: "replacement123")).to be_ok
       expect(account.reload.authenticate("replacement123")).to be_truthy
     end
   end
