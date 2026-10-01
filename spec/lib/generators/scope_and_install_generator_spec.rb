@@ -433,7 +433,7 @@ RSpec.describe "Vouch generators" do
     expect(Dir.children(@generator_directory)).to be_empty
   end
 
-  it "generates a tenant name contract only for its generated tenant schema" do
+  it "leaves tenant attributes to the host application" do
     @generator_directory = run_generator(
       Vouch::Generators::ScopeGenerator,
       ["users", "Account:account", "User:identity", "Organisation:tenant"]

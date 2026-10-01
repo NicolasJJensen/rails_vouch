@@ -73,7 +73,6 @@ create_table :accounts do |t|
 end
 
 create_table :organisations do |t|
-  t.string :name, null: false
   t.timestamps
 end
 

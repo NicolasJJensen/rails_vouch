@@ -7,7 +7,7 @@ class <%= @controller_class %> < Vouch::<%= @controller_base %>
   private
 
   def build_tenant(_account)
-    <%= model_metadata(@tenant_class).class_name %>.new(params.require(:<%= @tenant_param_key %>).permit(:name))
+    <%= model_metadata(@tenant_class).class_name %>.new
   end
 <% end -%>
 <% if @account_registration -%>

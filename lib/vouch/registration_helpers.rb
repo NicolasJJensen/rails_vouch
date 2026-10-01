@@ -2,6 +2,11 @@ module Vouch
   module RegistrationHelpers
     private
 
+    def invitation_registration?
+      invitation = pending_invited_identity
+      invitation && invitation_requires_registration?(invitation) ? true : false
+    end
+
     def validate_submitted_registration_password!(account, attributes)
       return unless attributes.key?(:password) && attributes[:password].blank?
 

@@ -6,6 +6,7 @@
 - [Accounts without passwords](#accounts-without-passwords)
 - [OAuth registration continuation](#oauth-registration-continuation)
 - [Construct records transactionally](#construct-records-transactionally)
+- [Invitation registration](#invitation-registration)
 - [Send people to onboarding](#send-people-to-onboarding)
 
 ## Standard registration
@@ -71,6 +72,8 @@ flowchart TD
 
 `build_tenant` and `build_identity` return unsaved records. Vouch calls `create_registration_identity!` inside the registration transaction after the account is valid. The methods below construct the organisation and membership; they must not save them themselves.
 
+The generated tenant has no application-specific attributes. The following customization assumes you added a `name` column to `Organisation` and want to collect it during registration.
+
 ```ruby
 # app/controllers/concerns/provisions_organisation.rb
 module ProvisionsOrganisation
@@ -115,10 +118,30 @@ Automatic registration has no submitted organisation form. The example above cho
 The registration form owns the tenant input. Keep it separate from account parameters:
 
 ```erb
-<%= text_field_tag "organisation[name]", params.dig(:organisation, :name), required: true %>
+<%# app/views/accounts/registrations/new.html.erb — inside the registration form %>
+<% unless invitation_registration? %>
+  <%= text_field_tag "organisation[name]", params.dig(:organisation, :name), required: true %>
+<% end %>
 ```
 
 For form OAuth registration, `RegistrationsController#create` rebuilds the mapped unsaved account, assigns only `account_params`, and then creates the account, OAuth identity, tenant, and membership in that transaction. A validation failure renders `app/views/accounts/registrations/new.html.erb` again with errors and no persisted account/link. Provider and UID never come from form fields.
+
+## Invitation registration
+
+A new invitee completes the pending account and accepts the existing membership. Vouch reuses the invitation's organisation and does not call `build_tenant` or `build_identity`. The generated form shows the invited email as text, since registration cannot change the invitation recipient.
+
+Use `invitation_registration?` to hide your tenant-creation fields, as shown above. Put work needed for both ordinary registration and new-invitee registration in a sign-up hook:
+
+```ruby
+# app/controllers/accounts/registrations_controller.rb
+class Accounts::RegistrationsController < Vouch::RegistrationsController
+  after_sign_up do |account, identity|
+    Preferences.create!(account: account)
+  end
+end
+```
+
+> `Preferences` is an example application model. This hook runs inside the registration transaction; a failed write rolls back the account completion and invitation acceptance together. An existing account accepting another membership does not register again; use an invitation-acceptance hook for work needed on every accepted invitation.
 
 ## Send people to onboarding
 

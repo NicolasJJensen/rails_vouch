@@ -265,7 +265,7 @@ module Vouch
       def show_guidance
         say "\nNext steps:"
         say "- Customize the generated views and email defaults, and add application-specific account validations."
-        say "- For tenant scopes, adapt the generated name parameter and required tenant associations to the host schema."
+        say "- For tenant scopes, add your tenant attributes to the model, registration form, and build_tenant method."
         say "- Follow the feature guides to generate password reset, MFA, OAuth, or invitation support and configure their delivery."
       end
 

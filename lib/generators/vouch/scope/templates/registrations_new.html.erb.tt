@@ -7,7 +7,11 @@
 <%%= form_with model: @account, url: vouch_route_path(:registrations, :create), scope: :<%= @account_param_key %>, method: :post do |form| %>
   <p>
     <%%= form.label :email_address %>
-    <%%= form.email_field :email_address, value: @account.email_address, autocomplete: "email", required: true %>
+    <%% if invitation_registration? %>
+      <%%= @account.email_address %>
+    <%% else %>
+      <%%= form.email_field :email_address, value: @account.email_address, autocomplete: "email", required: true %>
+    <%% end %>
   </p>
 <%% unless oauth_registration? %>
   <p>
@@ -19,11 +23,5 @@
     <%%= form.password_field :password_confirmation, autocomplete: "new-password", required: true %>
   </p>
 <%% end %>
-<% if @tenant_class %>
-  <p>
-    <%%= label_tag "<%= @tenant_param_key %>[name]", "Name" %>
-    <%%= text_field_tag "<%= @tenant_param_key %>[name]", params.dig(:<%= @tenant_param_key %>, :name), required: true %>
-  </p>
-<% end %>
   <%%= form.submit "Create account" %>
 <%% end %>
