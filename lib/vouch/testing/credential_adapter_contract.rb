@@ -26,6 +26,14 @@ module Vouch
             expect(credential_adapter.verify(issuance)).to be_ok
           end
 
+          it "raises the same failed outcome through the bang verifier" do
+            issuance = credential_adapter.issue
+
+            expect { credential_adapter.verify!(issuance, proof: credential_adapter.invalid_proof) }
+              .to raise_error(Vouch::OperationFailed) { |error| expect(error.result).to be_invalid }
+            expect(credential_adapter.verify!(issuance)).to be_ok
+          end
+
           it "rejects replay of an accepted proof" do
             issuance = credential_adapter.issue
 

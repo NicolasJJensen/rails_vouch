@@ -25,17 +25,21 @@ RSpec.describe Vouch::Testing::CredentialAdapterContract do
 
     def issue
       if @protocol == :totp
-        Issuance.new(credential.challenge!, ROTP::TOTP.new(credential.otp_secret).now)
+        Issuance.new(credential.challenge, ROTP::TOTP.new(credential.otp_secret).now)
       else
         proof = nil
         credential.define_singleton_method(:deliver_two_factor_code) { |code| proof = code }
-        outcome = credential.challenge!
+        outcome = credential.challenge
         Issuance.new(outcome, proof)
       end
     end
 
     def verify(issuance, credential: self.credential, proof: issuance.proof)
       credential.verify_challenge(proof, token: issuance.outcome.token)
+    end
+
+    def verify!(issuance, proof: issuance.proof)
+      credential.verify_challenge!(proof, token: issuance.outcome.token)
     end
 
     def invalid_proof

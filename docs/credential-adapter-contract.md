@@ -71,11 +71,15 @@ class PhoneCredentialAdapter
   def issue
     proof = nil
     credential.define_singleton_method(:deliver_two_factor_code) { |code| proof = code }
-    Issuance.new(credential.challenge!, proof)
+    Issuance.new(credential.challenge, proof)
   end
 
   def verify(issuance, credential: self.credential, proof: issuance.proof)
     credential.verify_challenge(proof, token: issuance.outcome.token)
+  end
+
+  def verify!(issuance, proof: issuance.proof)
+    credential.verify_challenge!(proof, token: issuance.outcome.token)
   end
 
   def invalid_proof
