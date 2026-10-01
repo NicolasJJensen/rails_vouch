@@ -152,9 +152,25 @@ The generator supplies `Users::TwoFactorCredentialsController` and its `index` a
 <%= link_to "Manage two-factor authentication", user_two_factor_credentials_path %>
 ```
 
-The generated flow saves a phone under the signed-in user, sends a verification code, and asks for that code. A successful verification enables the phone as a factor and enables MFA for the user. An incorrect code leaves the confirmation form available for another attempt.
+The generated flow saves a phone under the signed-in user, sends a verification code, and asks for that code. A successful verification and both MFA enablement writes commit together: the phone becomes a usable factor and MFA is enabled for the user. An incorrect code leaves the confirmation form available for another attempt.
 
-The generated controller looks up phones through the authenticated owner’s association. Edit its permitted attributes and views to suit your forms.
+The management page also lists existing phones. A verified phone can be enabled without sending another verification code. Removing a phone and enabling an existing one are separate actions from the sign-in challenge.
+
+The generated controller looks up phones through the authenticated owner’s association. Before your `create`, `update` or `destroy` override runs, `@credential` contains the new or selected phone. Edit its permitted attributes and views to suit your forms, and check permissions before calling `super`.
+
+```ruby
+# app/controllers/users/two_factor_credentials_controller.rb
+class Users::TwoFactorCredentialsController < Vouch::TwoFactorCredentialsController
+  def destroy
+    # Authorize removal of @credential with your application's permissions.
+    super do |result|
+      redirect_to security_settings_path, notice: "Phone removed" if result.ok?
+    end
+  end
+end
+```
+
+The block receives the operation's result. Rendering or redirecting in that block replaces the generated response; otherwise Vouch uses its normal response. A response issued before `super`, such as `head :forbidden`, prevents the mutation.
 
 ## Sign in with MFA
 

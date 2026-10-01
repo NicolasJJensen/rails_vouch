@@ -7,6 +7,47 @@ RSpec.describe "Users::TwoFactorCredentials", type: :request do
   let(:account) { create(:account) }
   let(:user) { create(:user, account: account, organisation: organisation) }
 
+  it "prepares a new credential before authorization and does not save after a denied action" do
+    Users::TwoFactorCredentialsController.define_method(:create) do
+      raise "missing credential" unless @credential&.new_record?
+      head :forbidden
+      super()
+    end
+    sign_in(user)
+    expect {
+      post "/users/two_factor_credentials", params: { two_factor_credential: { type: "email" } }
+    }.not_to change(TwoFactorCredential, :count)
+    expect(response).to have_http_status(:forbidden)
+  ensure
+    Users::TwoFactorCredentialsController.remove_method(:create)
+  end
+
+  it "prepares an owned credential before authorization and does not delete after a denied action" do
+    credential = account.two_factor_credentials.create!(otp_secret: SecureRandom.hex(20))
+    Users::TwoFactorCredentialsController.define_method(:destroy) do
+      raise "missing credential" unless @credential&.persisted?
+      head :forbidden
+      super()
+    end
+    sign_in(user)
+    expect { delete "/users/two_factor_credentials/#{credential.id}" }.not_to change(TwoFactorCredential, :count)
+    expect(response).to have_http_status(:forbidden)
+  ensure
+    Users::TwoFactorCredentialsController.remove_method(:destroy)
+  end
+
+  it "lets the host replace a successful creation response" do
+    Users::TwoFactorCredentialsController.define_method(:create) do
+      super() { |result| render json: { id: result.value.id }, status: :created }
+    end
+    sign_in(user)
+    post "/users/two_factor_credentials", params: { two_factor_credential: { type: "email" } }
+    expect(response).to have_http_status(:created)
+    expect(account.two_factor_credentials.find(response.parsed_body.fetch("id"))).to be_present
+  ensure
+    Users::TwoFactorCredentialsController.remove_method(:create)
+  end
+
   describe "GET /users/two_factor_credentials" do
     it "requires authentication" do
       get "/users/two_factor_credentials"
