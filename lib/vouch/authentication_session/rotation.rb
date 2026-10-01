@@ -5,6 +5,11 @@ module Vouch
     module Rotation
       def renew!
         rails_session[AuthenticationSession::CONTEXT_KEY] = SecureRandom.hex(32)
+        Vouch.each_mapping do |current|
+          %i[confirmation confirmation_pending].each do |purpose|
+            rails_session.delete(Vouch::Session.key_for(current.scope_name, purpose))
+          end
+        end
         mapping = controller.send(:auth_mapping)
         affected = [mapping] + Vouch.dependent_mappings(scope)
         preserved = scoped_keys + [key(:impersonation)]

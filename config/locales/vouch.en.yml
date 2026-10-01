@@ -1,5 +1,8 @@
 en:
   vouch:
+    confirmation:
+      expired: "Confirmation expired. Please try the action again."
+      failed: "Your identity could not be confirmed. Please try again."
     sessions:
       signed_out: "Signed out."
       invalid_credentials: "Invalid credentials."
@@ -29,11 +32,11 @@ en:
       removed: "2FA method removed."
       not_found: "2FA method not found."
     invitations:
-      already_invited: "An invitation already exists. Use resend to send another link."
-      already_joined: "This person has already joined."
       update_failed: "The invitation could not be updated. Please try again."
       joined: "Invitation accepted."
       rejected: "Invitation rejected."
+      already_invited: "An invitation already exists. Use resend to send another link."
+      already_joined: "This person has already joined."
       not_found: "Invitation not found."
       failed: "The invitation could not be created. Please try again."
       sent: "If the recipient is valid, an invitation will be sent."

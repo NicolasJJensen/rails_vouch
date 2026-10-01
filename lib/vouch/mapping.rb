@@ -165,7 +165,7 @@ module Vouch
 
     def default_route_names
       {
-        sessions: {new: :"new_#{helper_prefix}_session", create: :"#{helper_prefix}_session", destroy: :"#{helper_prefix}_sign_out"},
+        sessions: {new: :"new_#{helper_prefix}_session", create: :"#{helper_prefix}_session", destroy: :"#{helper_prefix}_sign_out", confirmation: :"new_#{helper_prefix}_confirmation", confirm: :"#{helper_prefix}_confirmation", cancel_confirmation: :"cancel_#{helper_prefix}_confirmation"},
         registrations: {new: :"new_#{helper_prefix}_registration", create: :"#{helper_prefix}_registration"},
         password_resets: {new: :"new_#{helper_prefix}_password_reset", create: :"#{helper_prefix}_password_reset", edit: :"edit_#{helper_prefix}_password_reset", update: :"#{helper_prefix}_password_reset"},
         invitations: {new: :"new_#{helper_prefix}_invitation", create: :"#{helper_prefix}_invitation", destroy: :"#{helper_prefix}_invitation", accept: :"accept_#{helper_prefix}_invitation", reject: :"reject_#{helper_prefix}_invitation", resend: :"resend_#{helper_prefix}_invitation"},

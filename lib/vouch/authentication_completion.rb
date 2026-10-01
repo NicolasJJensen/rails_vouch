@@ -100,6 +100,7 @@ module Vouch
           publish_invitation_acceptance
         end
         warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
+        record_recent_authentication(scope: auth_scope_name, method: context["method"], at: Time.at(context["issued_at"]), origin: :sign_in)
         true
       end
       return :denied unless completed

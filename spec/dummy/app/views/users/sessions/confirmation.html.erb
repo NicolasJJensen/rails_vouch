@@ -1,0 +1,24 @@
+<h1>Confirm your identity</h1>
+
+<% if flash[:alert] %>
+  <p role="alert"><%= flash[:alert] %></p>
+<% end %>
+
+<% if @confirmation_actor.respond_to?(:password_digest) && @confirmation_actor.password_digest.present? %>
+  <%= form_with url: vouch_route_path(:sessions, :confirm), method: :post do |form| %>
+    <%= hidden_field_tag :confirmation_scope, confirmation_scope_name %>
+    <p>
+      <%= form.label :password, "Your password" %>
+      <%= form.password_field :password, autocomplete: "current-password", required: true %>
+    </p>
+    <%= form.submit "Confirm" %>
+  <% end %>
+<% else %>
+  <p>This account does not have a password. Use another confirmation method provided by this application.</p>
+<% end %>
+
+<% if (path = confirmation_mfa_path) %>
+  <p><%= link_to "Use an authenticator or recovery code", path %></p>
+<% end %>
+
+<%= button_to "Cancel", vouch_route_path(:sessions, :cancel_confirmation), method: :delete, params: { confirmation_scope: confirmation_scope_name } %>

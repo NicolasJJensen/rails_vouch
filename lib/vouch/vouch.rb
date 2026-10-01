@@ -197,6 +197,8 @@ module Vouch
       oauth_registration: "oauth_registration",
       destination_scope: "destination_scope",
       completion: "completion",
+      confirmation: "confirmation",
+      confirmation_pending: "confirmation_pending",
       evidence: "authentication_evidence"
     }.freeze
 

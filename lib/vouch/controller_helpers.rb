@@ -9,6 +9,7 @@ module Vouch
     include Vouch::AuthenticationCompletion
 
     AUTH_LIFECYCLE_HOOKS = %i[
+      authentication_confirmation
       sign_in
       sign_out
       sign_up

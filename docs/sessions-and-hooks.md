@@ -60,10 +60,11 @@ typical use. Each supports the phases in the preceding table.
 | Lifecycle | Arguments | Example use |
 | --- | --- | --- |
 | `sign_in` | Credentials record, identity, `authentication_method:`; OAuth also supplies `auth_hash:` and a verified MFA factor is added after completion | Audit password, OAuth or custom sign-in. |
+| `authentication_confirmation` | Original actor confirming identity | Audit confirmation before a sensitive action. |
 | `sign_out` | Current identity | Audit a logout. |
 | `sign_up` | Credentials record; created identity is added after creation | Create associated registration data. |
 | `oauth_link` | Current identity, `auth_hash:` | Record a newly linked provider. |
-| `oauth_account_creation` | `auth_hash:` initially; account and identity are added after creation | Provision an OAuth signup. |
+| `oauth_account_creation` | Credentials account and `auth_hash:`; identity is added after creation | Provision an OAuth signup. |
 | `invitation_acceptance` | Invitation identity, credentials account | Create records for the accepted membership. |
 | `invitation_rejection` | Invitation identity, credentials account | Audit the recipient declining an invitation. |
 | `invitation_revocation` | Invitation identity, credentials account | Audit an invitation withdrawal. |

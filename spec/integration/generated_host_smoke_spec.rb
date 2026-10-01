@@ -720,6 +720,10 @@ RSpec.describe "generated host smoke test", :generated_host do
           reset_login_session.get("/#{path_name}/sign_in")
           reset_login_session.get("/")
           abort "two-factor completion did not retain the signed-in session" unless reset_login_session.response.successful?
+          reset_login_session.get("/#{account_path_name}/confirmation", params: { return_to: "/", format: :html })
+          abort "generated confirmation form missing" unless reset_login_session.response.successful? && reset_login_session.response.body.include?("Your password")
+          reset_login_session.post("/#{account_path_name}/confirmation", params: { password: "replacement123" })
+          abort "generated password confirmation failed" unless reset_login_session.response.redirect?
           credential.disable_two_factor!
           reset_login_session.get("/#{account_path_name}/two_factor_credentials", params: { format: :html })
           abort "verified factor management did not offer enabling" unless reset_login_session.response.successful? && reset_login_session.response.body.include?("Enable two-factor authentication")

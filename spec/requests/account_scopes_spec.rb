@@ -136,6 +136,68 @@ RSpec.describe "Account and membership sessions", type: :request do
     response.parsed_body
   end
 
+  it "does not select or sign out a membership after the host denies the action" do
+    account_login
+    %i[new create].each do |action|
+      LinkedMembers::SessionsController.define_method(action) { head :forbidden; super() }
+    end
+    get "/linked_members/sign_in"
+    expect(response).to have_http_status(:forbidden)
+    expect(request.env.fetch("warden").user(:member)).to be_nil
+    post "/linked_members/sign_in", params: { identity_id: membership.id }
+    expect(response).to have_http_status(:forbidden)
+    expect(request.env.fetch("warden").user(:member)).to be_nil
+    %i[new create].each { |action| LinkedMembers::SessionsController.remove_method(action) }
+    get "/linked_members/sign_in"
+    expect(request.env.fetch("warden").user(:member)).to eq(membership)
+    LinkedMembers::SessionsController.define_method(:destroy) { head :forbidden; super() }
+    delete "/linked_members/sign_out"
+    expect(response).to have_http_status(:forbidden)
+    expect(request.env.fetch("warden").user(:member)).to eq(membership)
+    expect(request.env.fetch("warden").user(:account)).to eq(account)
+  end
+
+  it "confirms a membership guard through its credentials controller" do
+    LinkedStatusController.require_recent_authentication(scope: :member, within: 1.minute, only: :protected_page)
+    account_login
+    original_proof = request.session[Vouch::Session.key_for(:account, :confirmation)].fetch("proof").deep_dup
+    get "/linked_members/sign_in"
+    get "/protected_page"
+    expect(response).to have_http_status(:ok)
+    expect(request.session[Vouch::Session.key_for(:member, :confirmation)].fetch("proof")).to eq(original_proof)
+    travel 2.minutes do
+      get "/protected_page"
+      expect(response).to redirect_to("/linked_accounts/confirmation?confirmation_scope=member")
+      post "/linked_accounts/confirmation", params: { confirmation_scope: :member, password: "password123" }
+      expect(response).to redirect_to("/protected_page")
+      follow_redirect!
+      expect(response).to have_http_status(:ok)
+      expect(request.env.fetch("warden").user(:member)).to eq(membership)
+    end
+  end
+
+  it "uses the original operator's password during full-account impersonation" do
+    LinkedStatusController.require_recent_authentication(scope: :account, within: 1.minute, only: :account_page)
+    LinkedAccounts::SessionsController.define_method(:confirm) do
+      super() { |result| head :unprocessable_entity unless result.ok? }
+    end
+    target = create(:account, password: "target-secret", password_confirmation: "target-secret")
+    account_login
+    get "/linked_admins/sign_in"
+    post "/account_impersonations/#{target.id}"
+    expect(response).to have_http_status(:redirect)
+    get "/account_page"
+    expect(response).to redirect_to("/linked_accounts/confirmation?confirmation_scope=account")
+    post "/linked_accounts/confirmation", params: { password: "target-secret" }
+    expect(response).to have_http_status(:unprocessable_entity)
+    post "/linked_accounts/confirmation", params: { password: "password123" }
+    expect(response).to redirect_to("/account_page")
+    follow_redirect!
+    expect(response.parsed_body).to eq("account" => target.id)
+    expect(request.env.fetch("warden").user(:account)).to eq(target)
+    expect(request.session[Vouch::Session.key_for(:account, :evidence)]).to be_nil
+  end
+
   it "yields automatic membership completion once before the default response" do
     observed = []
     LinkedMembers::SessionsController.define_method(:new) do

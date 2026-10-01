@@ -188,6 +188,7 @@ module Vouch
         if @single_model
           @controller_route_scope = @generated_scope_name.to_s.singularize
           template_unless_exists "sessions_new.html.erb.tt", "app/views/#{view_namespace}/sessions/new.html.erb"
+          template_unless_exists "sessions_confirmation.html.erb.tt", "app/views/#{view_namespace}/sessions/confirmation.html.erb"
           template_unless_exists "registrations_new.html.erb.tt", "app/views/#{view_namespace}/registrations/new.html.erb"
           return
         end
@@ -195,6 +196,7 @@ module Vouch
         account_namespace = account_route_scope.to_s.pluralize
         @controller_route_scope = account_route_scope
         template_unless_exists "sessions_new.html.erb.tt", "app/views/#{account_namespace}/sessions/new.html.erb"
+        template_unless_exists "sessions_confirmation.html.erb.tt", "app/views/#{account_namespace}/sessions/confirmation.html.erb"
         template_unless_exists "registrations_new.html.erb.tt", "app/views/#{account_namespace}/registrations/new.html.erb"
         @controller_route_scope = @generated_scope_name.to_s.singularize
         template_unless_exists "membership_sessions_new.html.erb.tt", "app/views/#{view_namespace}/sessions/new.html.erb"

@@ -9,6 +9,8 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   before_action :require_account_session!
 
   def new(&response_handler)
+    return if performed?
+
     unless auth_mapping.membership_scope?
       pending = authentication_session.load_selection
       return redirect_to(new_session_path) unless pending
@@ -32,6 +34,8 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   end
 
   def create(&response_handler)
+    return if performed?
+
     return complete_combined_scope(&response_handler) unless auth_mapping.membership_scope?
 
     context = session[selection_session_key]
@@ -49,6 +53,8 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   end
 
   def destroy(&response_handler)
+    return if performed?
+
     identity = current_identity
     completed = run_authentication_hooks(:sign_out, identity) do |env|
       committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
@@ -122,12 +128,19 @@ class Vouch::MembershipSessionsController < ::ApplicationController
           true
         end
         env.abort! unless committed
+        original_proof = recent_sign_in_proof(auth_mapping.parent_scope_name)
         renew_authentication_session
         session.delete(selection_session_key)
         if invitation
           publish_invitation_acceptance
         end
         warden.set_user(identity, scope: auth_scope_name, store: true, event: :authentication)
+        if original_proof
+          [auth_scope_name, auth_mapping.parent_scope_name].each do |scope|
+            record_recent_authentication(scope: scope, method: original_proof.fetch("method"),
+              at: Time.iso8601(original_proof.fetch("verified_at")), origin: :sign_in)
+          end
+        end
         true
       end
       completed ? Vouch::Result.ok(account, identity: identity) : Vouch::Result.cancelled(record: identity)

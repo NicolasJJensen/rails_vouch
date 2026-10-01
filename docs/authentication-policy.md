@@ -13,6 +13,7 @@ To end logins that already exist when an account is suspended, also [invalidate 
 - [Pending sign-in timeout](#pending-sign-in-timeout)
 - [Revoke established sessions](#revoke-established-sessions)
 - [MFA evidence and application permissions](#mfa-evidence-and-application-permissions)
+- [Confirm identity before a sensitive action](#confirm-identity-before-a-sensitive-action)
 
 ## Block suspended users
 
@@ -112,6 +113,8 @@ class SecurityController < AuthenticatedController
 end
 ```
 
+The normal `invalidate_authentication_sessions` method returns a `Vouch::Result` for branching. Its bang version raises `Vouch::OperationFailed` on an expected failure; both return the successful result when invalidation succeeds.
+
 In a multi-tenant application, call the method on `Account`, which owns authentication.
 
 Vouch tracks revocation with an `auth_session_version` column, included by the scope generator. For an existing model that lacks it, add the column with:
@@ -170,3 +173,101 @@ In a multi-tenant setup, `authentication_evidence(scope: :account)` reads the ac
 Your permissions code decides which methods, credential records and ages are acceptable. Recovery proof does not claim use of the lost credential. Passwords, OAuth sign-in and contact verification are not entries in this collection.
 
 > Evidence is current session state, not an audit history. Use lifecycle callbacks if your application needs a permanent log.
+
+## Confirm identity before a sensitive action
+
+Ask for recent authentication on the actions your application considers sensitive:
+
+```ruby
+# app/controllers/security_settings_controller.rb
+class SecuritySettingsController < ApplicationController
+  before_action :authenticate_user!
+  require_recent_authentication scope: :user, within: 10.minutes, only: :update
+
+  def show
+  end
+
+  def update
+    # Apply the authorized settings change to current_user.
+  end
+end
+```
+
+A recent password or OAuth sign-in, MFA proof, or recovery-code proof satisfies this check. Selecting a membership retains the original sign-in time; it does not make an old sign-in recent again. Otherwise, Vouch opens the generated confirmation form. The person can enter their password or follow its authenticator/recovery-code link. Confirmation keeps their existing login and returns them to the settings page. They must submit the change again: Vouch never replays a modifying request.
+
+For a GET, the return destination is the requested page. For a modifying request, Vouch uses its same-origin referring page, falling back to `/`. The pending confirmation expires after `pending_authentication_ttl`; refreshing the form does not extend it. Cancel leaves the login intact.
+
+The scope names the identity whose action is protected. For example, `scope: :user` can protect a membership action; Vouch uses its parent credentials scope's confirmation endpoint automatically. Omit `scope:` in a Vouch endpoint controller, or when the application has only one credentials scope. Specify it when several scopes exist.
+
+### Choose acceptable confirmation methods
+
+The default accepts password, OAuth, MFA and recovery-code proof. Override this method in a controller or a shared application parent to narrow the choices:
+
+```ruby
+# app/controllers/security_settings_controller.rb
+class SecuritySettingsController < ApplicationController
+  before_action :authenticate_user!
+  require_recent_authentication scope: :user, within: 5.minutes, only: :update
+
+  private
+
+  def recent_authentication_methods
+    super - ["recovery_code"]
+  end
+end
+```
+
+> If a recovery workflow replaces a lost factor, keep recovery-code proof acceptable for that workflow. Requiring the missing factor again would prevent replacement.
+
+Password confirmation uses the account's configured failed-attempt/lockout behavior when [lockout](lockout.md) is enabled. The generated sessions controller contains this ordinary Rails declaration, which you can edit:
+
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::SessionsController
+  rate_limit to: 10, within: 3.minutes, only: :confirm, name: "authentication_confirmation"
+end
+```
+
+Add the same declaration if you write that controller yourself. See [rate limiting](verification.md#protect-delivery-and-code-submission) for shared-cache deployment considerations.
+
+### Confirmation during impersonation
+
+During impersonation, the password form verifies the original operator's password. It never asks for the target account's password or adds operator proof to the target's MFA evidence. The resulting confirmation is bound to both the operator and the current target. Signing out, signing in again, switching targets, or changing credentials invalidates it.
+
+An operator without a password needs your application's own operator-confirmation flow. Override the confirmation view and the verification method in the generated sessions controller. The actor argument is the original operator, including while administering another account:
+
+```ruby
+# app/controllers/accounts/sessions_controller.rb
+class Accounts::SessionsController < Vouch::SessionsController
+  private
+
+  def verify_authentication_confirmation(actor)
+    return super if params[:password].present?
+
+    # Verify a challenge bound to actor with your security-key integration.
+    verified = OperatorSecurityKey.verify(actor: actor, response: params[:security_key_response])
+    verified ? Vouch::Result.ok(actor, method: :security_key) : Vouch::Result.invalid(record: actor)
+  end
+end
+```
+
+> `OperatorSecurityKey` is an application service in this example. It must verify the submitted proof against that operator and its challenge; a submitted account ID or success flag is not proof. Vouch does not supply a security-key integration.
+
+Accept that method in the parent shared by the protected controller:
+
+```ruby
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  private
+
+  def recent_authentication_methods
+    super + ["security_key"]
+  end
+end
+```
+
+Override `recent_authentication_confirmation_path(scope:)` when your confirmation page has a different entry point. Passwordless OAuth-only accounts can use the ordinary MFA/recovery option outside impersonation. During impersonation, the built-in form deliberately does not link to the target's authenticator challenge.
+
+Successful confirmation runs the normal `authentication_confirmation` [lifecycle](sessions-and-hooks.md#lifecycle-hooks), receiving the actor. It does not rerun `sign_in`. The generated sessions controller's `confirm` action accepts the usual result block when you need a different response.
+
+Confirmation metadata is separate from `authentication_evidence`, which contains only MFA proofs. Page permissions remain your application's responsibility.

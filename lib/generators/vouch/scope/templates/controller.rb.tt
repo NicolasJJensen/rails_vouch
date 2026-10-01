@@ -1,4 +1,7 @@
 class <%= @controller_class %> < Vouch::<%= @controller_base %>
+<% if @controller_base == "SessionsController" -%>
+  rate_limit to: 10, within: 3.minutes, only: :confirm, name: "authentication_confirmation"
+<% end -%>
 <% unless @controller_class.deconstantize.underscore.split("/").last.singularize == @controller_route_scope.to_s -%>
   auth_scope :<%= @controller_route_scope %>
 <% end -%>

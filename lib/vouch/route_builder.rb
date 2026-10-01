@@ -120,7 +120,7 @@ module Vouch
     def sessions(paths: {}, path_names: {}, controller: nil)
       m = @current_mapping
       ctrl = controller || "#{m.scope_name.to_s.pluralize}/sessions"
-      routes = {new: "sign_in", create: "sign_in", destroy: "sign_out"}.merge(validate_paths!(:sessions, paths))
+      routes = {new: "sign_in", create: "sign_in", destroy: "sign_out", confirmation: "confirmation", confirm: "confirmation", cancel_confirmation: "confirmation"}.merge(validate_paths!(:sessions, paths))
       m.configure_route_names(:sessions, path_names)
       prefix = m.helper_prefix
 
@@ -128,6 +128,11 @@ module Vouch
         router.get routes[:new], to: "#{ctrl}#new", as: m.route_name(:sessions, :new)
         router.post routes[:create], to: "#{ctrl}#create", as: m.route_name(:sessions, :create)
         router.delete routes[:destroy], to: "#{ctrl}#destroy", as: m.route_name(:sessions, :destroy)
+        unless m.membership_scope?
+          router.get routes[:confirmation], to: "#{ctrl}#confirmation", as: m.route_name(:sessions, :confirmation)
+          router.post routes[:confirm], to: "#{ctrl}#confirm", as: m.route_name(:sessions, :confirm)
+          router.delete routes[:cancel_confirmation], to: "#{ctrl}#cancel_confirmation", as: m.route_name(:sessions, :cancel_confirmation)
+        end
         if m.split_model? && !m.membership_scope?
           router.get "select", to: "#{m.scope_name.to_s.pluralize}/membership_sessions#new", as: :"#{prefix}_select"
           router.post "select", to: "#{m.scope_name.to_s.pluralize}/membership_sessions#create"

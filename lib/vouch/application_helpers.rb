@@ -3,6 +3,7 @@
 module Vouch
   module ApplicationHelpers
     extend ActiveSupport::Concern
+    include Vouch::RecentAuthentication
 
     included do
       Vouch::ApplicationHelpers.register_controller(self)

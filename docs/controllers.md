@@ -10,7 +10,7 @@
 - [Registration](#registration)
 - [Eject a controller](#eject-a-controller)
 
-After the [README setup](../README.md#install-and-generate-a-login), your application has two endpoint subclasses (`Users::SessionsController` and `Users::RegistrationsController`) and their `new` views. Optional feature generators add their own controllers and views.
+After the [README setup](../README.md#install-and-generate-a-login), your application has two endpoint subclasses (`Users::SessionsController` and `Users::RegistrationsController`) and their sign-in, registration and identity-confirmation views. Optional feature generators add their own controllers and views.
 
 ## Protect pages
 
@@ -149,7 +149,7 @@ When supplied, `result.error` retains the underlying expected error and `result.
 
 | Vouch controller | Purpose |
 | --- | --- |
-| `SessionsController` | Check credentials and sign in or sign out. |
+| `SessionsController` | Check credentials, sign in or out, and confirm identity for [sensitive actions](authentication-policy.md#confirm-identity-before-a-sensitive-action). |
 | `MembershipSessionsController` | Select a membership after its parent account signs in. Used by linked membership scopes. |
 | `RegistrationsController` | Create the credentials record and run your registration customization. |
 | `PasswordResetsController` | Send a reset link and accept a replacement password. |
@@ -227,6 +227,9 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | --- | --- | --- | --- |
 | `auth.sessions` | `GET /users/sign_in` | `new_user_session_path` | `Users::SessionsController#new` |
 | | `POST /users/sign_in` | `user_session_path` | `Users::SessionsController#create` |
+| | `GET /users/confirmation` | `new_user_confirmation_path` | `Users::SessionsController#confirmation` |
+| | `POST /users/confirmation` | `user_confirmation_path` | `Users::SessionsController#confirm` |
+| | `DELETE /users/confirmation` | `cancel_user_confirmation_path` | `Users::SessionsController#cancel_confirmation` |
 | | `DELETE /users/sign_out` | `user_sign_out_path` | `Users::SessionsController#destroy` |
 | `auth.registrations` | `GET /users/sign_up` | `new_user_registration_path` | `Users::RegistrationsController#new` |
 | | `POST /users/sign_up` | `user_registration_path` | `Users::RegistrationsController#create` |
