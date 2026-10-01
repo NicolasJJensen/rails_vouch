@@ -60,8 +60,6 @@ module Vouch
       end
     end
 
-    class LastFactorRemoval < StandardError; end
-
     # Human-readable label for this credential in the 2FA picker. Falls back
     # to verifiable_subject_attribute so hosts that follow the credential
     # pattern get it for free.
@@ -119,36 +117,11 @@ module Vouch
     end
 
     def disable_two_factor!
-      owner = two_factor_account
-      if owner
-        owner.class.transaction(requires_new: true) do
-          owner.lock!
-          if owner.respond_to?(:two_factor_enabled?) && owner.two_factor_enabled?
-            ensure_not_last_usable_factor!(owner)
-          end
-          Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil)
-        end
-      else
-        Vouch::Persistence.transaction(self) { Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil) }
+      Vouch::Persistence.transaction(self) do
+        lock!
+        Vouch::Persistence.update!(self, two_factor_enabled_at: nil, two_factor_nonce: nil)
       end
       self
-    end
-
-    # Destroying a credential is also a policy operation. Lock the account
-    # before counting factors so concurrent removals cannot leave enabled MFA
-    # without a usable factor.
-    def destroy
-      owner = two_factor_account
-      return super unless owner
-
-      destroyed = false
-      owner.class.transaction(requires_new: true) do
-        owner.lock!
-        ensure_not_last_usable_factor!(owner) if owner.respond_to?(:two_factor_enabled?) && owner.two_factor_enabled?
-        destroyed = super
-        raise ActiveRecord::Rollback unless destroyed
-      end
-      destroyed
     end
 
     # Issue a fresh 2FA challenge. Delivery exceptions bubble (decisions
@@ -251,47 +224,6 @@ module Vouch
       MSG
     end
 
-    def ensure_not_last_usable_factor!(owner)
-      associations = if owner.respond_to?(:two_factor_credential_associations)
-        owner.two_factor_credential_associations
-      else
-        owner.class.reflect_on_all_associations(:has_many).select do |reflection|
-          reflection.klass.ancestors.include?(Vouch::TwoFactorable)
-        end
-      end
-      remaining = 0
-      target_usable = false
-      associations.each do |association|
-        association_scope = owner.public_send(association.name)
-        association_scope.reset
-        association_scope.to_a.each do |credential|
-          usable = credential.two_factor_enabled? &&
-            (!credential.respond_to?(:verified?) || credential.verified?) &&
-            !credential.two_factor_locked?
-          if credential.class == self.class && Vouch::RecordKey.same?(credential, self)
-            target_usable = usable
-          elsif usable
-            remaining += 1
-          end
-        end
-      end
-      return unless target_usable && remaining.zero?
-
-      action = if owner.respond_to?(:two_factor_last_factor_removal_action)
-        owner.two_factor_last_factor_removal_action(self)
-      else
-        :prevent
-      end
-      case action.to_sym
-      when :disable
-        owner.write_two_factor_enabled!(false)
-      when :prevent
-        raise Vouch::TwoFactorable::LastFactorRemoval, "cannot remove the last usable two-factor credential"
-      else
-        raise Vouch::ConfigurationError, "unsupported two-factor last-factor action: #{action.inspect}"
-      end
-    end
-
     def two_factor_account_class
       candidates = self.class.reflect_on_all_associations(:belongs_to).filter_map do |reflection|
         if reflection.polymorphic?
@@ -384,12 +316,6 @@ module Vouch
         write_two_factor_enabled!(false)
       end
       self
-    end
-
-    # Hosts may opt into clearing account MFA when the final usable factor is
-    # removed. The default keeps MFA enabled and prevents that removal.
-    def two_factor_last_factor_removal_action(credential)
-      :prevent
     end
 
     # Host apps with a non-standard account column or persistence layer can

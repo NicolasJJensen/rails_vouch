@@ -33,7 +33,7 @@ class Vouch::TwoFactorCredentialsController < ::ApplicationController
     else
       redirect_to two_factor_credentials_path, alert: I18n.t("vouch.two_factor_credentials.removal_failed")
     end
-  rescue ActiveRecord::RecordNotFound, Vouch::TwoFactorable::LastFactorRemoval
+  rescue ActiveRecord::RecordNotFound
     redirect_to two_factor_credentials_path, alert: I18n.t("vouch.two_factor_credentials.not_found")
   end
 

@@ -166,16 +166,19 @@ Both values are bound to the verification. Changing either invalidates existing 
 
 Calling `phone.enable_two_factor!` again leaves its enabled timestamp unchanged. Disabling the phone cancels its outstanding MFA challenge. Enabling it again starts a new enabled period: earlier challenges and recorded MFA proof no longer count, but an unchanged phone remains verified.
 
-Removing or disabling the last usable factor is prevented by default: Vouch raises `Vouch::TwoFactorable::LastFactorRemoval`. To let removal disable the account’s MFA requirement, define this method on the credentials owner:
+Your application decides who may remove or disable a factor. Removing the last one does not turn off the account's login MFA preference. If that preference remains enabled, the next sign-in still requires MFA; offer recovery codes or a replacement-factor journey according to your application's permissions.
+
+For example, authorize deletion before calling Vouch's action. The account preference changes only when your code explicitly calls `user.disable_two_factor!`.
 
 ```ruby
-# app/models/user.rb
- def two_factor_last_factor_removal_action(_credential)
-   :disable
- end
+# app/controllers/users/two_factor_credentials_controller.rb
+class Users::TwoFactorCredentialsController < Vouch::TwoFactorCredentialsController
+  def destroy
+    # Check whether this person may remove the selected authenticator.
+    super
+  end
+end
 ```
-
-Only choose that behavior when your application permits users to turn MFA off.
 
 ## Request another MFA proof
 

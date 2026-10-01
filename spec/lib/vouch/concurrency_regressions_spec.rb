@@ -16,7 +16,7 @@ RSpec.describe "single-use authentication concurrency" do
                    "BackupCodable consumes one code only once",
                    "Recoverable rechecks lockout after waiting for the row lock",
                    "does not reset an active verification lockout when a queued failure arrives",
-                   "serializes concurrent last-factor removals through the account lock",
+                   "allows concurrent credential removals without silently disabling account MFA",
                    "increments verification_version for concurrent subject updates",
                    "preserves version history when a stale object saves A B A edits"
 
@@ -143,7 +143,7 @@ RSpec.describe "single-use authentication concurrency" do
     account&.destroy!
   end
 
-  it "serializes concurrent last-factor removals through the account lock" do
+  it "allows concurrent credential removals without silently disabling account MFA" do
     account = create(:account, email_address: "mfa-removal-concurrency-#{SecureRandom.hex(8)}@example.com")
     account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
     account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
@@ -157,11 +157,7 @@ RSpec.describe "single-use authentication concurrency" do
         ActiveRecord::Base.connection_pool.with_connection do
           ready << true
           release.pop
-          begin
-            credential.destroy&.destroyed?
-          rescue Vouch::TwoFactorable::LastFactorRemoval
-            :last_factor
-          end
+          credential.destroy&.destroyed?
         end
       end
     end
@@ -169,9 +165,9 @@ RSpec.describe "single-use authentication concurrency" do
     2.times { release << true }
     results = workers.map(&:value)
 
-    expect(results).to contain_exactly(true, :last_factor)
+    expect(results).to contain_exactly(true, true)
     expect(account.reload).to be_two_factor_enabled
-    expect(account.two_factor_credentials.where.not(two_factor_enabled_at: nil).count).to eq(1)
+    expect(account.two_factor_credentials.where.not(two_factor_enabled_at: nil).count).to eq(0)
   ensure
     account&.disable_two_factor! if account&.persisted? && account.respond_to?(:two_factor_enabled?) && account.two_factor_enabled?
     account&.destroy!
