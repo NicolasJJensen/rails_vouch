@@ -153,12 +153,15 @@ RSpec.describe 'Authentication persistence failures' do
     expect { credential.consume_recovery_code('backup-proof') }.to raise_error(ActiveRecord::StatementInvalid)
   end
 
-  it 'preserves the explicit exception from an aborting callback' do
+  it 'retains the destroy callback error in the bang operation failure' do
     credential = create(:account).two_factor_credentials.create!
     row = credential.backup_codes.create!(code_digest: BCrypt::Password.create('old-backup'))
     callback = proc { throw :abort }
     BackupCode.set_callback(:destroy, :before, callback)
-    expect { credential.regenerate_backup_codes!(count: 1) }.to raise_error(ActiveRecord::RecordNotDestroyed)
+    expect { credential.regenerate_backup_codes!(count: 1) }.to raise_error(Vouch::OperationFailed) { |error|
+      expect(error.result.error).to be_a(ActiveRecord::RecordNotDestroyed)
+      expect(error.result.error.record.id).to eq(row.id)
+    }
     expect(credential.backup_codes.reload.ids).to eq([row.id])
   ensure
     BackupCode.skip_callback(:destroy, :before, callback) if callback

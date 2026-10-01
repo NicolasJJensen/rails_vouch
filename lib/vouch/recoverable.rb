@@ -51,8 +51,12 @@ module Vouch
         after_replace: -> { Vouch::Persistence.update!(self, recovery_attempts: 0, recovery_locked_at: nil) })
       return result unless result.ok?
       Vouch::Result.ok(plaintexts)
-    rescue Vouch::Persistence::Cancelled => error
-      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error, owner: self)
+    rescue ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotDestroyed => error
+      raise unless error.record
+
+      Vouch::Result.cancelled(record: error.record || self, error: error, owner: self)
     end
 
     # Consume a single recovery code. Returns Result.ok on success (marks

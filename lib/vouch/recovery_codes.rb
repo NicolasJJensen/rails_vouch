@@ -58,8 +58,12 @@ module Vouch
           Vouch::Result.invalid(record: owner)
         end
       end
-    rescue Vouch::Persistence::Cancelled => error
-      Vouch::Result.cancelled(record: owner, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error, owner: owner)
+    rescue ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotDestroyed => error
+      raise unless error.record
+
+      Vouch::Result.cancelled(record: error.record || owner, error: error, owner: owner)
     end
   end
 end

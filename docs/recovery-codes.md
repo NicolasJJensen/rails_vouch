@@ -135,7 +135,7 @@ end
 
 `recovery_codes_low?` returns true when fewer than `low_threshold` unused codes remain. Use it to display a reminder; it does not generate replacements.
 
-Both owners expose normal methods that return a `Vouch::Result`, and bang methods that raise `Vouch::OperationFailed` for an unsuccessful result. The exception's `result` contains the same failure information. Unexpected delivery or database exceptions propagate.
+Both owners expose normal methods that return a `Vouch::Result`, and bang methods that raise `Vouch::OperationFailed` for an unsuccessful result. The exception's `result` contains the same failure information. Unexpected exceptions propagate.
 
 ## Generate and replace a set
 
@@ -149,8 +149,8 @@ For a credential-owned set, include the selected credential:
 
 ```erb
 <%= link_to "Phone recovery codes", user_recovery_codes_path(
-  recovery_owner_type: "credential",
-  recovery_owner_id: "#{phone.model_name.singular}-#{Vouch::RecordKey.to_param(phone)}"
+  recovery_owner_type: "Phone",
+  recovery_owner_id: phone.id
 ) %>
 ```
 
@@ -158,14 +158,25 @@ The page shows the remaining count and a button to generate a set. Generation di
 
 Replacing a set deletes every previous hash and saves the replacement hashes in one transaction. Old paper or digital copies stop working immediately after the replacement commits.
 
-For your own settings controller, the same operation is:
+Override the generated action to authorize the selected record or customize its response. `@recovery_owner` is set before the action runs:
 
 ```ruby
-result = current_user.generate_recovery_codes
-@recovery_codes = result.value if result.ok?
+# app/controllers/users/recovery_codes_controller.rb
+class Users::RecoveryCodesController < Vouch::RecoveryCodesController
+  def create
+    # Check permission to replace @recovery_owner's recovery codes.
+    super do |result|
+      unless result.ok?
+        redirect_to security_settings_path, alert: "Your recovery codes were not changed."
+      end
+    end
+  end
+end
 ```
 
-Use `phone.generate_recovery_codes` for a phone-owned set. Both owners expose `recovery_codes_remaining` and `recovery_codes_low?`.
+Calling `super` without rendering a response keeps Vouch's default: successful generation renders the plaintext codes; failure renders the page with an error. An owner type and ID must match an allowed record belonging to the signed-in account. Vouch does not resolve arbitrary Ruby classes from the submitted type.
+
+For composite primary keys, pass `Vouch::RecordKey.to_param(phone)` instead of `phone.id`. Ordinary scalar IDs need no encoding helper.
 
 ## Sign in with a code
 

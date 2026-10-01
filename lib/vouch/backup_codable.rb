@@ -58,8 +58,12 @@ module Vouch
 
       plain = Vouch::RecoveryCodes.generate(count: count, length: length)
       Vouch::RecoveryCodes.replace!(self, relation: recovery_codes_relation, plaintexts: plain)
-    rescue Vouch::Persistence::Cancelled => error
-      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: error.record, error: error, owner: self)
+    rescue ActiveRecord::RecordNotSaved, ActiveRecord::RecordNotDestroyed => error
+      raise unless error.record
+
+      Vouch::Result.cancelled(record: error.record || self, error: error, owner: self)
     end
 
     def generate_recovery_codes!(**options)

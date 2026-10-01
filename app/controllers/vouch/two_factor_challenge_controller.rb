@@ -5,6 +5,7 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   allow_unauthenticated_access
   before_action :find_pending_account
   before_action :set_credential, only: %i[show send_code update]
+  before_action :set_recovery_owner, only: :consume_recovery
   helper_method :additional_authentication?
 
   def index
@@ -14,15 +15,21 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   def show
+    return if performed?
+
     issue_challenge!(@credential) or return
   end
 
   def send_code
+    return if performed?
+
     return unless issue_challenge!(@credential)
     render :show
   end
 
   def update(&response_handler)
+    return if performed?
+
     challenge = session[two_factor_token_session_key(@credential)]
     @credential.reload
     valid_period = challenge.is_a?(Hash) && challenge["enabled_at"] == @credential.two_factor_enabled_at&.utc&.iso8601(6)
@@ -61,7 +68,9 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   def consume_recovery(&response_handler)
-    owner = recovery_owner_from_params
+    return if performed?
+
+    owner = @recovery_owner
     result = owner ? owner.consume_recovery_code(params[:recovery_code]) : Vouch::Result.invalid
     if result.ok?
       return complete_additional_authentication(:recovery_code, nil, owner, &response_handler) if additional_authentication?
@@ -83,6 +92,8 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   end
 
   def destroy(&response_handler)
+    return if performed?
+
     destination = additional_authentication? ? @authentication_context.fetch("return_to", "/") : new_session_path
     clear_challenge_context
     respond_with_authentication_result(Vouch::Result.ok(@account), response_handler) { redirect_to destination }
@@ -188,21 +199,9 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     two_factor_credentials_for(@account).enabled
   end
 
-  # A host must choose which configured set is being used. This intentionally
-  # does not probe every set, which would make multiple recovery-code owners
-  # ambiguous and leak which owner matched a submitted code.
-  def recovery_owner_from_params
-    type, kind, encoded_id = params[:recovery_owner_type].to_s.split(":", 3)
-    return @account if type == "account" && recovery_owners.include?(@account)
-    return nil unless type == "credential"
-
-    credential = two_factor_credentials_for(@account).enabled.find(encoded_id.presence || params[:recovery_owner_id])
-    return nil unless kind.blank? || credential.model_name.singular == kind
-    return credential if recovery_owners.any? { |owner| owner.class == credential.class && Vouch::RecordKey.same?(owner, credential) }
-
-    nil
-  rescue ActiveRecord::RecordNotFound
-    nil
+  def set_recovery_owner
+    @recovery_owner = select_recovery_owner(recovery_owners, account: @account,
+      type: params[:recovery_owner_type], id: params[:recovery_owner_id])
   end
 
   def find_pending_account

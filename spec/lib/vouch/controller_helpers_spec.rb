@@ -26,6 +26,14 @@ RSpec.describe Vouch::ControllerHelpers do
     Vouch.mappings[:user] = @original_mapping
   end
 
+  it "selects an allowlisted recovery owner whose primary key is false" do
+    owner = build(:account)
+    allow(Vouch::RecordKey).to receive(:dump).with(owner).and_return(false)
+    allow(Vouch::RecordKey).to receive(:from_param).with(Account, false).and_return(false)
+    expect(Vouch::RecordKey).to receive(:same?).with(owner, false, model: Account).and_return(true)
+    expect(controller.send(:select_recovery_owner, [owner], account: owner, type: "Account", id: false)).to equal(owner)
+  end
+
   describe "registration construction" do
     it "keeps onboarding extension points private on the controller facade" do
       expect(controller.private_methods).to include(

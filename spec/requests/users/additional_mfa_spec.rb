@@ -19,6 +19,37 @@ RSpec.describe "Additional MFA", type: :request do
     get "/users/two_factor_challenges/#{credential.id}"
   end
 
+  %i[show send_code update consume_recovery destroy].each do |action|
+    it "does not perform #{action} after the host has denied the action" do
+      start_challenge
+      codes = account.generate_recovery_codes.value
+      original_context = request.session[Vouch::Session.key_for(:user, :two_factor)].deep_dup
+      original_attributes = credential.reload.attributes
+      Users::TwoFactorChallengeController.define_method(action) do
+        head :forbidden
+        super()
+      end
+      expect_any_instance_of(TwoFactorCredential).not_to receive(:challenge!)
+      expect_any_instance_of(Account).not_to receive(:consume_recovery_code)
+
+      case action
+      when :show then get "/users/two_factor_challenges/#{credential.id}"
+      when :send_code then post "/users/two_factor_challenges/#{credential.id}/send_code"
+      when :update then patch "/users/two_factor_challenges/#{credential.id}", params: { code: "123456" }
+      when :consume_recovery
+        post "/users/recovery", params: { recovery_owner_type: "Account", recovery_code: codes.first }
+      when :destroy then delete "/users/two_factor_challenges"
+      end
+
+      expect(response).to have_http_status(:forbidden)
+      expect(credential.reload.attributes).to eq(original_attributes)
+      expect(account.recovery_codes_remaining).to eq(codes.size)
+      expect(request.session[Vouch::Session.key_for(:user, :two_factor)]).to eq(original_context)
+    ensure
+      Users::TwoFactorChallengeController.remove_method(action) if Users::TwoFactorChallengeController.instance_methods(false).include?(action)
+    end
+  end
+
   it "adds proof without rerunning sign-in or changing the signed-in identity" do
     start_challenge
     hooks = []
@@ -89,7 +120,7 @@ RSpec.describe "Additional MFA", type: :request do
     allow_any_instance_of(Users::TwoFactorChallengeController).to receive(:run_hooks) do |_controller, hook, *_args|
       events << hook
     end
-    post "/users/recovery", params: { recovery_owner_type: "account", recovery_code: code }
+    post "/users/recovery", params: { recovery_owner_type: "Account", recovery_code: code }
     expect(response).to redirect_to("/")
     expect(events).to eq([:two_factor_verification])
     proof = request.session[Vouch::Session.key_for(:user, :evidence)].sole
@@ -101,7 +132,7 @@ RSpec.describe "Additional MFA", type: :request do
     code = account.generate_recovery_codes!.value.first
     get "/users/two_factor_challenges"
     allow_any_instance_of(Users::TwoFactorChallengeController).to receive(:recovery_owners).and_return([])
-    post "/users/recovery", params: { recovery_owner_type: "account", recovery_code: code }
+    post "/users/recovery", params: { recovery_owner_type: "Account", recovery_code: code }
     expect(response).to have_http_status(:unprocessable_entity)
     expect(account.recovery_codes_remaining).to eq(10)
   end
@@ -185,6 +216,9 @@ RSpec.describe "Additional MFA", type: :request do
     get "/users/two_factor_challenges/#{credential.id}"
     expect(response).to redirect_to("/users/two_factor_challenges")
     expect(request.session[Vouch::Session.key_for(:user, :evidence)]).to be_nil
+    post "/users/recovery_codes", params: { recovery_owner_type: "TwoFactorCredential", recovery_owner_id: credential.id }
+    expect(response).to have_http_status(:created)
+    expect(credential.recovery_codes_remaining).to eq(10)
   ensure
     Users::SessionsController.remove_method(:create)
   end

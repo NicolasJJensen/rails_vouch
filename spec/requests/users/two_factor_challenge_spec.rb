@@ -70,7 +70,7 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
         code = account.generate_recovery_codes!.value.first
         establish_2fa_session
 
-        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        post "/users/recovery", params: {recovery_owner_type: "Account", recovery_code: code}
 
         expect(response).to redirect_to("/")
         expect(account.recovery_codes_remaining).to eq(9)
@@ -80,11 +80,11 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
       it "does not allow a recovery code to be replayed" do
         code = account.generate_recovery_codes!.value.first
         establish_2fa_session
-        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        post "/users/recovery", params: {recovery_owner_type: "Account", recovery_code: code}
         delete "/users/sign_out"
 
         establish_2fa_session
-        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        post "/users/recovery", params: {recovery_owner_type: "Account", recovery_code: code}
         expect(response).to have_http_status(:unprocessable_entity)
       end
 
@@ -93,7 +93,7 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
         code = account.generate_recovery_codes!.value.first
         establish_2fa_session
 
-        post "/users/recovery", params: {recovery_owner_type: "account", recovery_code: code}
+        post "/users/recovery", params: {recovery_owner_type: "Account", recovery_code: code}
         expect(response).to redirect_to("/users/select")
         follow_redirect!
         post "/users/select", params: {identity_id: user.id}

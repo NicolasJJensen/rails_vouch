@@ -1,5 +1,5 @@
 <%= form_with url: request.path do |form| %>
-  <%= form.hidden_field :recovery_owner_type, value: "account" %>
+  <%= form.hidden_field :recovery_owner_type, value: "Account" %>
   <%= form.password_field :recovery_code %>
   <%= form.submit "Use recovery code" %>
 <% end %>

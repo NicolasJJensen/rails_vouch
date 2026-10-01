@@ -447,7 +447,25 @@ module Vouch
       auth_mapping.first_identity(identities)
     end
 
-    def two_factor_credentials_for(account)
+    def select_recovery_owner(owners, account:, type:, id:)
+      candidates = owners.uniq { |owner| [owner.class.name, Vouch::RecordKey.dump(owner)] }
+      missing_id = id.nil? || id.to_s.empty?
+      if type.blank? && missing_id
+        return candidates.find { |owner| owner.class == account.class && Vouch::RecordKey.same?(owner, account) }
+      end
+      candidates.select! { |owner| owner.class.name == type.to_s }
+      candidates.select! do |owner|
+        if missing_id
+          owner.class == account.class && Vouch::RecordKey.same?(owner, account)
+        else
+          key = Vouch::RecordKey.from_param(owner.class, id)
+          !key.nil? && Vouch::RecordKey.same?(owner, key, model: owner.class)
+        end
+      end
+      candidates.one? ? candidates.first : nil
+    end
+
+    def two_factor_credentials_for(account, exclude_primary: true)
       assocs = auth_mapping.two_factor_credential_associations
 
       if assocs.nil? || assocs.empty?
@@ -459,7 +477,7 @@ module Vouch
       end
 
       set = Vouch::CredentialSet.new(account, assocs)
-      primary = signed_in_via(account)
+      primary = signed_in_via(account) if exclude_primary
       return set unless primary
 
       type = primary["type"]
