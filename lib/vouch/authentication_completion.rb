@@ -53,9 +53,10 @@ module Vouch
       invitation = nil
       hook = context['hook'].to_sym
       oauth = context['oauth'] && parse_oauth(context['oauth'])
-      completed = run_authentication_hooks_with_invitation(hook, account, identity, **(oauth ? {auth_hash: oauth} : {})) do |env|
-        committed = run_commit_hooks(hook, account, identity,
-          **(oauth ? {auth_hash: oauth} : {})) do |commit_env|
+      hook_options = {authentication_method: context.fetch('method').to_sym}
+      hook_options[:auth_hash] = oauth if oauth
+      completed = run_authentication_hooks_with_invitation(hook, account, identity, **hook_options) do |env|
+        committed = run_commit_hooks(hook, account, identity, **hook_options) do |commit_env|
           account.lock!
           # The account or factor may change while the user completes MFA or selects an identity.
           next false unless Vouch::PendingAuthentication.valid?(context, account)

@@ -114,7 +114,8 @@ class Vouch::MembershipSessionsController < ::ApplicationController
       return
     end
     invitation = nil
-    completed = run_authentication_hooks_with_invitation(:sign_in, account, identity) do |env|
+    completed = run_authentication_hooks_with_invitation(:sign_in, account, identity,
+      authentication_method: context.fetch('method').to_sym) do |env|
       committed = run_commit_hooks(:sign_in, *env.args, **env.kwargs) do
         account.lock!
         next false unless Vouch::PendingAuthentication.valid?(context, account)

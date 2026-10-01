@@ -26,7 +26,7 @@ module Vouch
       return false unless Vouch::RecordKey.same?(context['account_id'], Vouch::RecordKey.serialize(account), model: account.class)
       return false unless context['issued_at'].is_a?(Numeric)
       return false unless context['identity_ids'].is_a?(Array)
-      return false unless %w[sign_in oauth_sign_in].include?(context['hook'])
+      return false unless context['hook'] == "sign_in"
 
       age = Time.current.to_f - context['issued_at']
       age >= 0 && age < Vouch.configuration.pending_authentication_ttl.to_f &&

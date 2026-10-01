@@ -37,7 +37,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
 
   def finish_oauth(account, refresh_oauth: false)
     session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
-    outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth, auth_hash: @auth_hash, refresh_oauth: refresh_oauth)
+    outcome = complete_sign_in(account, hook: :sign_in, method: :oauth, auth_hash: @auth_hash, refresh_oauth: refresh_oauth)
     case outcome
     when :signed_in
       authentication_session.clear_oauth_initiation_return_to
@@ -100,7 +100,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
       end
       env.abort! unless completed
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
-      outcome = complete_sign_in(account, hook: :oauth_sign_in, method: :oauth,
+      outcome = complete_sign_in(account, hook: :sign_in, method: :oauth,
         auth_hash: @auth_hash)
       env.add(account, identity)
       true

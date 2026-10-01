@@ -314,7 +314,14 @@ RSpec.describe Vouch::ControllerHelpers do
     end
   end
 
-  describe "#current_account" do
+  describe "authentication endpoint #current_account" do
+    let(:controller_class) do
+      Class.new(ApplicationController) do
+        include Vouch::Authentication
+        auth_scope :user
+      end
+    end
+
     before do
       mapping = Vouch::Mapping.new(:user, account: "Account", identity: "User")
       mapping.resolve_reflections!

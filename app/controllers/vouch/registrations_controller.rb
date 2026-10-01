@@ -98,7 +98,7 @@ class Vouch::RegistrationsController < ::ApplicationController
       clear_oauth_registration
       authentication_session.clear_oauth_initiation_return_to
       session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_up"
-      outcome = complete_sign_in(@account, hook: :oauth_sign_in, method: :oauth, auth_hash: oauth)
+      outcome = complete_sign_in(@account, hook: :sign_in, method: :oauth, auth_hash: oauth)
       env.add(@account, identity)
       true
     end

@@ -12,7 +12,6 @@ module Vouch
       sign_in
       sign_out
       sign_up
-      oauth_sign_in
       oauth_link
       oauth_account_creation
       invitation_revocation
@@ -419,23 +418,6 @@ module Vouch
 
     def authentication_session
       @authentication_session ||= Vouch::AuthenticationSession.new(self)
-    end
-
-    def current_identity
-      Vouch.authenticated_identity(warden, auth_scope_name, controller: self)
-    end
-
-    def current_account
-      if Vouch::ImpersonationStack.active?(session) && auth_mapping.split_model? && !auth_mapping.membership_scope?
-        account = Vouch::ImpersonationStack.original_account(session)
-        return account if account.is_a?(auth_mapping.account_class)
-        return nil
-      end
-      if auth_mapping.membership_scope?
-        warden.user(auth_mapping.parent_scope_name)
-      else
-        pending_select_account || (current_identity && auth_mapping.account_for(current_identity))
-      end
     end
 
     def pending_select_account

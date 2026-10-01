@@ -11,21 +11,67 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
   end
 
   before do
-    @original_hooks = [Users::OmniAuthsController, Users::MembershipSessionsController,
-      Users::TwoFactorChallengeController].to_h { |klass| [klass, klass.__hooks] }
+    @original_hooks = [ApplicationController, *ApplicationController.descendants]
+      .to_h { |klass| [klass, klass.__hooks] }
     allow_any_instance_of(Account).to receive(:oauth_attributes_for_update) do |_account, auth|
       {email_address: auth.info.email}
     end
   end
 
-  after { @original_hooks.each { |klass, hooks| klass.__hooks = hooks } }
+  after do
+    @original_hooks.each { |klass, hooks| klass.__hooks = hooks }
+    if ApplicationController.instance_methods(false).include?(:capture_sign_in)
+      ApplicationController.remove_method(:capture_sign_in)
+    end
+  end
 
   def callback
     get "/users/auth/google_oauth2/callback", env: {"omniauth.auth" => auth_hash}
   end
 
+  it "runs one named parent callback for password and OAuth sign-in with their method context" do
+    observed = []
+    ApplicationController.define_method(:capture_sign_in) do |owner, selected, authentication_method:, **options|
+      observed << [owner.id, selected.id, authentication_method, options[:auth_hash]&.provider]
+    end
+    ApplicationController.before_sign_in :capture_sign_in
+
+    post "/users/sign_in", params: {account: {email_address: account.email_address, password: "password123"}}
+    expect(response).to redirect_to("/")
+    delete "/users/sign_out"
+    callback
+
+    expect(observed).to eq([
+      [account.id, identity.id, :password, nil],
+      [account.id, identity.id, :oauth, "google_oauth2"]
+    ])
+  end
+
+  it "retains OAuth method context through MFA and selection for a parent callback" do
+    observed = []
+    ApplicationController.before_sign_in do |owner, selected, authentication_method:, **options|
+      observed << [owner.id, selected.id, authentication_method, options[:auth_hash]&.provider]
+    end
+    create(:user, account: account)
+    credential = account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
+    account.enable_two_factor!
+    delivered = nil
+    allow_any_instance_of(TwoFactorCredential).to receive(:deliver_two_factor_code) { |_record, code| delivered = code }
+
+    callback
+    expect(observed).to be_empty
+    get "/users/two_factor_challenges/#{credential.id}"
+    patch "/users/two_factor_challenges/#{credential.id}", params: {code: delivered}
+    expect(response).to redirect_to("/users/select")
+    expect(observed).to be_empty
+    post "/users/select", params: {identity_id: identity.id}
+
+    expect(response).to redirect_to("/")
+    expect(observed).to eq([[account.id, identity.id, :oauth, "google_oauth2"]])
+  end
+
   it "does not update the profile when a before hook aborts sign-in" do
-    Users::OmniAuthsController.before_oauth_sign_in { throw :abort }
+    Users::OmniAuthsController.before_sign_in { throw :abort }
     callback
     expect(response).to redirect_to("/users/sign_in")
     expect(account.reload.email_address).to eq("oauth-before@example.com")
@@ -34,7 +80,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
   end
 
   it "rolls back the profile and denies sign-in when a transactional after hook cancels" do
-    Users::OmniAuthsController.after_oauth_sign_in { raise ActiveRecord::Rollback }
+    Users::OmniAuthsController.after_sign_in { raise ActiveRecord::Rollback }
     callback
     expect(response).to redirect_to("/users/sign_in")
     expect(account.reload.email_address).to eq("oauth-before@example.com")
@@ -46,7 +92,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
     account.enable_two_factor!
     delivered = nil
     allow_any_instance_of(TwoFactorCredential).to receive(:deliver_two_factor_code) { |_record, code| delivered = code }
-    Users::TwoFactorChallengeController.after_oauth_sign_in { raise ActiveRecord::Rollback }
+    Users::TwoFactorChallengeController.after_sign_in { raise ActiveRecord::Rollback }
 
     callback
     expect(response).to redirect_to("/users/two_factor_challenges")
@@ -58,7 +104,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
 
   it "updates the profile inside the lifecycle before publishing authentication" do
     observed = []
-    Users::OmniAuthsController.after_oauth_sign_in do |owner, _identity|
+    Users::OmniAuthsController.after_sign_in do |owner, _identity|
       observed << [owner.reload.email_address, current_identity]
     end
     callback
@@ -70,7 +116,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
   end
 
   it "keeps committed data and authentication when a post-commit callback raises" do
-    Users::OmniAuthsController.after_commit_of_oauth_sign_in { raise "notification failed" }
+    Users::OmniAuthsController.after_commit_of_sign_in { raise "notification failed" }
 
     expect { callback }.to raise_error(RuntimeError, "notification failed")
     expect(account.reload.email_address).to eq("oauth-after@example.com")
@@ -120,7 +166,7 @@ RSpec.describe "OAuth profile updates during authentication", type: :request do
 
   it "does not refresh the profile when a selection hook aborts" do
     create(:user, account: account)
-    Users::MembershipSessionsController.before_oauth_sign_in { throw :abort }
+    Users::MembershipSessionsController.before_sign_in { throw :abort }
     callback
     expect(response).to redirect_to("/users/select")
     post "/users/select", params: {identity_id: identity.id}
