@@ -103,7 +103,9 @@ module Vouch
       if context.dig("evidence", "method") == "recovery_code"
         flash[:notice] = I18n.t("vouch.two_factor.recovery_code_used")
       end
-      run_hooks(:two_factor_verification, account, identity, factor) if factor
+      if context['evidence']
+        run_hooks(:two_factor_verification, account, identity, factor, evidence: context['evidence'], additional: false)
+      end
       :signed_in
     rescue Vouch::Persistence::Cancelled
       :denied

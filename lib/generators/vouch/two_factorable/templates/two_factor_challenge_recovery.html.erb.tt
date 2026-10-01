@@ -14,3 +14,5 @@
   <%%= form.password_field :recovery_code, autocomplete: "one-time-code" %>
   <%%= form.submit "Sign in" %>
 <%% end %>
+
+<%%= button_to "Cancel", cancel_<%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>

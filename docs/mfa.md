@@ -10,6 +10,7 @@ MFA challenges a verified credential after the person supplies their password. T
 - [Sign in with MFA](#sign-in-with-mfa)
 - [Verify more than one attribute](#verify-more-than-one-attribute)
 - [Control factor availability](#control-factor-availability)
+- [Request another MFA proof](#request-another-mfa-proof)
 - [Other factors](#other-factors)
 - [Edit challenge or enrollment actions](#edit-challenge-or-enrollment-actions)
 
@@ -175,6 +176,91 @@ Removing or disabling the last usable factor is prevented by default: Vouch rais
 ```
 
 Only choose that behavior when your application permits users to turn MFA off.
+
+## Request another MFA proof
+
+An already signed-in person can use the same challenge pages to verify another factor. Their account and membership sessions stay signed in. This is useful when your application's permissions require a particular authenticator or a more recent proof.
+
+```mermaid
+flowchart TD
+  Page[Open protected page] --> Check{Application accepts current MFA proof?}
+  Check -->|Yes| Show[Show page]
+  Check -->|No| Challenge[Choose an eligible MFA credential]
+  Challenge --> Verify[Submit its code]
+  Verify -->|Valid| Store[Store or refresh this credential's proof]
+  Store --> Page
+  Verify -->|Invalid| Challenge
+```
+
+For example, a projects page can require a TOTP proof from the last fifteen minutes:
+
+```ruby
+# app/controllers/projects_controller.rb
+class ProjectsController < ApplicationController
+  before_action :authenticate_user!
+
+  def show
+    @project = current_user.projects.find(params[:id])
+    # Apply your normal project authorization here.
+    unless recent_totp?
+      return redirect_to user_two_factor_challenges_path(return_to: request.fullpath)
+    end
+  end
+
+  private
+
+  def recent_totp?
+    authentication_evidence(scope: :user).any? do |proof|
+      proof["method"] == "two_factor" && proof["credential_method"] == "totp" &&
+        Time.iso8601(proof["verified_at"]) >= 15.minutes.ago
+    end
+  end
+end
+```
+
+This example assumes your application has `User#projects` and an enrolled authenticator named `totp`. In a multi-tenant setup, use the credentials scope's challenge route, such as `account_two_factor_challenges_path`, and read `authentication_evidence(scope: :account)`.
+
+Filter the available factors in the generated challenge controller. `additional_authentication?` distinguishes this request from MFA during sign-in:
+
+```ruby
+# app/controllers/users/two_factor_challenge_controller.rb
+class Users::TwoFactorChallengeController < Vouch::TwoFactorChallengeController
+  def update(&response_handler)
+    # Authorize @credential using your application's permissions system.
+    super
+  end
+
+  private
+
+  def eligible_credentials
+    credentials = super
+    return credentials unless additional_authentication?
+
+    credentials.reject { |credential| credential.authentication_method.to_s != "totp" }
+  end
+
+  def recovery_owners
+    additional_authentication? ? [] : super
+  end
+end
+```
+
+Apply your normal action authorization to the challenge controller. Vouch prepares `@account` before every action and `@credential` before `show`, `send_code` and `update`. The eligibility filter applies to lookup and submission as well as the displayed list. The recovery filter in this example excludes recovery codes because this particular page requires actual TOTP use.
+
+Successful completion returns to `return_to`, which must be on the application's own origin. The page checks its permissions again. Only a GET destination is retained; Vouch does not replay a previous form submission.
+
+| Request | Behavior while signed in |
+| --- | --- |
+| `GET /users/two_factor_challenges?return_to=/projects/1` | Starts the additional challenge or resumes its existing context. |
+| `GET /users/two_factor_challenges/:id` | Issues or displays that credential's challenge. |
+| `PATCH /users/two_factor_challenges/:id` | Checks the code and records proof. |
+| `DELETE /users/two_factor_challenges` | Cancels the challenge and returns without signing out. |
+
+The generated pages include a Cancel button. Failed codes, expiration and cancellation do not end the existing login. Refreshing the selector does not extend the active continuation's `pending_authentication_ttl`.
+
+A successful challenge runs `on_two_factor_verification` once with the account, identity and credential, plus `evidence:` and `additional:` keywords. Recovery may have a nil credential; its evidence identifies the recovery owner. An additional challenge does not rerun sign-in callbacks.
+
+> If passwordless sign-in used a phone or email record, that exact record remains excluded from MFA choices. Completing contact verification or enrolling a factor does not create MFA evidence.
 
 ## Other factors
 

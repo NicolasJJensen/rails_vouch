@@ -54,7 +54,8 @@ module Vouch
             nil
           end
         end
-        if account && Vouch::PendingAuthentication.valid?(context, account) &&
+        expected_hook = purpose == :two_factor && context.is_a?(Hash) && context["additional_mfa"] == true ? :two_factor_verification : :sign_in
+        if account && Vouch::PendingAuthentication.valid?(context, account, hook: expected_hook) &&
             controller.send(:authentication_allowed?, account, context)
           PendingAuthenticationContext.new(account: account, context: context)
         else

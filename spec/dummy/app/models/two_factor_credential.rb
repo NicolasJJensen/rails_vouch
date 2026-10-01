@@ -9,6 +9,13 @@ class TwoFactorCredential < ApplicationRecord
   include Vouch::Verifiable
   include Vouch::TwoFactorable
   include Vouch::BackupCodable
+  include Vouch::MagicLinkable
+
+  attr_accessor :last_delivered_sign_in_code
+
+  def deliver_sign_in_code(code)
+    self.last_delivered_sign_in_code = code
+  end
 
   self.inheritance_column = nil # Disable STI — type stores method kind, not a class name
   self.verifiable_subject_attribute = :otp_secret

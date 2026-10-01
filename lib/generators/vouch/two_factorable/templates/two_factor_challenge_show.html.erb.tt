@@ -14,3 +14,5 @@
 <%% end %>
 
 <%%= button_to "Send another code", send_code_<%= route_helper_prefix %>_two_factor_challenge_path(credential_param), method: :post %>
+
+<%%= button_to "Cancel", cancel_<%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>

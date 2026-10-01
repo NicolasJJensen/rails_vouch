@@ -1,4 +1,4 @@
-<h1>Choose a verification method</h1>
+<h1>Choose an MFA method</h1>
 
 <ul>
   <%% @credentials.each do |credential| %>
@@ -8,10 +8,12 @@
 </ul>
 
 <%% if @enrollment_required %>
-  <p>This organisation requires an authentication method you have not enrolled yet.</p>
+  <p>No eligible authentication methods are available.</p>
   <p><%%= link_to "Add an authentication method", <%= route_helper_prefix %>_two_factor_credentials_path %></p>
 <%% end %>
 
 <%% if @recovery_available %>
   <p><%%= link_to "Use a recovery code", <%= route_helper_prefix %>_recovery_two_factor_challenge_path %></p>
 <%% end %>
+
+<%%= button_to "Cancel", cancel_<%= route_helper_prefix %>_two_factor_challenges_path, method: :delete %>
