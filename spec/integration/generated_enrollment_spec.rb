@@ -28,6 +28,7 @@ RSpec.describe "generated MFA enrollment" do
   it "enrolls through persisted verification, allows retry, and scopes lookup to the owner" do
     account = create(:account)
     controller = GeneratedEnrollments::TwoFactorCredentialsController.new
+    controller.set_request!(ActionDispatch::TestRequest.create)
     session = {}
     delivered = nil
     allow_any_instance_of(TwoFactorCredential).to receive(:deliver_verification_code) { |_record, code| delivered = code }
@@ -36,7 +37,6 @@ RSpec.describe "generated MFA enrollment" do
     allow(controller).to receive(:performed?).and_return(false)
     allow(controller).to receive(:render)
     allow(controller).to receive(:redirect_to)
-    allow(controller).to receive(:user_two_factor_credentials_path).and_return("/users/two_factor_credentials")
 
     allow(controller).to receive(:action_name).and_return("new")
     controller.send(:build_credential)
@@ -77,6 +77,7 @@ RSpec.describe "generated MFA enrollment" do
     expect(credential).to be_two_factor_enabled
     expect(account.reload).to be_two_factor_enabled
     expect(session).to be_empty
+    expect(controller).to have_received(:redirect_to).with("/users/two_factor_credentials", notice: "Two-factor credential enabled")
 
     verified = account.two_factor_credentials.create!(otp_secret: "already-verified", verified_at: Time.current)
     allow(controller).to receive(:params).and_return(ActionController::Parameters.new(id: verified.id))
