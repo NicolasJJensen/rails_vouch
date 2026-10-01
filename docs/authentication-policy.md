@@ -4,7 +4,7 @@ The default policy blocks locked accounts and requires MFA when the account has 
 
 Add one when the same rule must apply across authentication methods. For example, suspending a user should block both password and OAuth sign-in; a check in the password controller alone would leave OAuth unaffected. Vouch also applies the policy to [custom authentication endpoints](advanced-custom-authentication.md) that use its completion API.
 
-This policy decides admission and MFA requirements. Permissions such as who may edit a project belong in your application's authorization code. To end logins that already exist, use [session invalidation](#revoke-established-sessions).
+To end logins that already exist when an account is suspended, also [invalidate its sessions](#revoke-established-sessions).
 
 ## Contents
 
@@ -12,7 +12,6 @@ This policy decides admission and MFA requirements. Permissions such as who may 
 - [MFA during sign-in](#mfa-during-sign-in)
 - [Pending sign-in timeout](#pending-sign-in-timeout)
 - [Revoke established sessions](#revoke-established-sessions)
-- [Restrict available memberships](#restrict-available-memberships)
 - [MFA evidence and application permissions](#mfa-evidence-and-application-permissions)
 
 ## Block suspended users
@@ -47,7 +46,10 @@ The argument is called `account` because it is the credentials record: your `Use
 `config.authentication_policy` accepts a class, its name as a string, or an instance implementing the policy methods. A class is instantiated for the request. Use a string when Rails autoloads your policy and needs to resolve the current class after a reload:
 
 ```ruby
-config.authentication_policy = "ApplicationAuthenticationPolicy"
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.authentication_policy = "ApplicationAuthenticationPolicy"
+end
 ```
 
 The explicit `require_relative` example loads the class at boot.
@@ -71,9 +73,10 @@ end
 
 ## Pending sign-in timeout
 
-A person may pause between entering a password and submitting their MFA code or selecting an organisation. Limit how long that first authentication proof remains usable:
+A person may pause between entering a password and submitting their MFA code or selecting an organisation. The default limit is ten minutes. Set a different limit in the existing initializer:
 
 ```ruby
+# config/initializers/vouch.rb
 Vouch.configure do |config|
   config.pending_authentication_ttl = 10.minutes
 end
@@ -83,13 +86,14 @@ Pending authentication is stored in the Rails session, including when it began a
 
 In a multi-tenant flow, the account may already be signed in while membership selection remains pending. That does not grant access to the pending membership.
 
-When the pending step expires, the person must authenticate again. This setting also bounds OAuth registration continuations; it does not set an inactivity timeout for established logins.
+When the pending step expires, the person must authenticate again. This setting also limits how long each verified OAuth provider remains usable during registration; it does not set an inactivity timeout for established logins.
 
 ## Revoke established sessions
 
 Changing a password invalidates established sessions and pending sign-in attempts. [Lockout](lockout.md) blocks new sign-in by default; to invalidate existing logins on lockout too:
 
 ```ruby
+# config/initializers/vouch.rb
 Vouch.configure do |config|
   config.lockable.invalidate_sessions_on_lockout = true
 end
@@ -98,8 +102,14 @@ end
 To end earlier sessions after a security change, call `invalidate_authentication_sessions!` on the signed-in user:
 
 ```ruby
-# In your account-security action, after authorizing the change
-current_user.invalidate_authentication_sessions!
+# app/controllers/security_controller.rb
+class SecurityController < AuthenticatedController
+  def destroy_sessions
+    # Authorize this security change with your application's permissions.
+    current_user.invalidate_authentication_sessions!
+    redirect_to new_user_session_path, notice: "Sign in again to continue."
+  end
+end
 ```
 
 In a multi-tenant application, call the method on `Account`, which owns authentication.
@@ -113,32 +123,19 @@ bin/rails generate migration AddAuthSessionVersionToUsers auth_session_version:b
 Set the generated column's default and null constraint:
 
 ```ruby
-# In a migration
-add_column :users, :auth_session_version, :bigint, null: false, default: 0
-```
-
-The invalidation method increments the version under a record lock. Vouch includes the version in its session fingerprint. Sessions with the old value are rejected when next restored. Impersonation restoration also checks the original operator's fingerprint.
-
-## Restrict available memberships
-
-For a linked multi-tenant scope, you may want suspended memberships hidden from the organisation selector even though the account can still sign in elsewhere:
-
-```ruby
-# app/controllers/users/sessions_controller.rb
-class Users::SessionsController < Vouch::MembershipSessionsController
-  private
-
-  def candidate_identities_for(account)
-    super.where(active: true)
+# db/migrate/<timestamp>_add_auth_session_version_to_users.rb
+class AddAuthSessionVersionToUsers < ActiveRecord::Migration[8.1]
+  def change
+    add_column :users, :auth_session_version, :bigint, null: false, default: 0
   end
 end
 ```
 
-This example assumes an `active` column on your membership model. `super` keeps the account ownership restriction. Vouch checks eligibility again when the person submits their choice, so a membership disabled while the form was open cannot be selected.
+The invalidation method increments the version under a record lock. Vouch includes the version in its session fingerprint. Sessions with the old value are rejected when next restored. Impersonation restoration also checks the original operator's fingerprint.
 
 ## MFA evidence and application permissions
 
-Organisation-specific requirements belong to your application's permissions checks. For example, your application can require recent company-email MFA before allowing access to a workspace.
+For selecting which memberships are available, use [membership filtering](model-mapping.md#exclude-inactive-memberships). Organisation-specific MFA requirements belong to your application's permissions checks. For example, your application can require recent company-email MFA before allowing access to a workspace.
 
 `authentication_evidence(scope:)` is available on application controllers and views. It returns an array of current MFA proofs for the authenticated account behind that scope. Different credentials have separate entries; completing another challenge with the same credential refreshes that entry. Vouch excludes proof whose account, credential, verified subject or enabled period no longer matches.
 

@@ -4,15 +4,21 @@
 
 - [Standard registration](#standard-registration)
 - [Accounts without passwords](#accounts-without-passwords)
-- [OAuth registration continuation](#oauth-registration-continuation)
 - [Construct records transactionally](#construct-records-transactionally)
+- [OAuth registration continuation](#oauth-registration-continuation)
 - [Invitation registration](#invitation-registration)
 - [Registration responses](#registration-responses)
 - [Send people to onboarding](#send-people-to-onboarding)
 
 ## Standard registration
 
-The generated registration form creates an account using an email address and password. It posts permitted account fields to `RegistrationsController`, which validates and persists the account. Add ordinary fields to the form and `account_params`; see [sign-in customization](sign-in-customization.md#customize-registration-fields).
+After the [standard setup](../README.md#install-and-generate-a-login), Vouch supplies `Users::RegistrationsController` and `app/views/users/registrations/new.html.erb`:
+
+1. `GET /users/sign_up` builds an unsaved `User` and displays the form.
+2. `POST /users/sign_up` assigns permitted fields and saves the record inside a transaction.
+3. Invalid fields redisplay the form with errors and HTTP 422. Successful creation continues to sign-in or any required MFA.
+
+In this guide, “account” means the model holding sign-in credentials; it can be `User`, `Account`, or another name. Add ordinary fields to the form and `account_params`; see [sign-in customization](sign-in-customization.md#customize-registration-fields).
 
 ## Accounts without passwords
 
@@ -37,45 +43,17 @@ Rails still checks password confirmation, BCrypt's byte limit and a supplied `pa
 
 For another verified registration method, the host can override `registration_authentication_available?(account, oauth:)` in its registration controller. Only return true after your registration flow has established the supported alternative; ordinary contact verification and MFA enrollment are not first-factor authentication.
 
-## OAuth registration continuation
-
-Configure OAuth callback registration with `:form` (the default) when a new provider identity needs fields that OAuth does not supply:
-
-```ruby
-auth.oauth_callbacks registration: :form
-```
-
-After an explicit OAuth registration request is verified, Vouch applies the provider data to the unsaved account and retains its attributes and provider proof in the session. `RegistrationsController#new` restores those values and pre-fills the form without applying the mapping again. No new account or provider link is saved yet. The generated form uses `oauth_registration?` to omit password fields while a valid provider proof supplies the sign-in method.
-
-On submit, Vouch combines the mapped account fields with permitted form fields and creates the account and OAuth link in one transaction. In a multi-tenant setup, that transaction also includes the organisation and membership. It then continues through MFA and membership selection before redirecting. Validation failures re-render the form. Provider/UID data comes from protected session state, never submitted fields.
-
-The default mapping uses the provider email when supplied and leaves the password absent. Add another mapped form value through the account model:
-
-```ruby
-# app/models/account.rb
-class Account < ApplicationRecord
-  def apply_oauth_registration(oauth_identity, auth_hash:)
-    super
-    self.name = auth_hash.info.name if name.blank?
-  end
-end
-```
-
-```mermaid
-flowchart TD
-  callback[Verified OAuth callback] --> pending[Store selected provider data in session]
-  pending --> new[RegistrationsController#new builds unsaved mapped account]
-  new --> form[Registration form pre-fills mapped fields and hides passwords]
-  form --> submit[Permitted submitted attributes]
-  submit --> transaction[One transaction: account, OAuth identity, tenant, membership]
-  transaction --> complete[Complete OAuth sign-in]
-  complete --> mfa[MFA or membership selection when required]
-  mfa --> onboarding[after_sign_up_path]
-```
-
 ## Construct records transactionally
 
-`build_tenant` and `build_identity` return unsaved records. Vouch calls `create_registration_identity!` inside the registration transaction after the account is valid. The methods below construct the organisation and membership; they must not save them themselves.
+For multi-tenant registration, Vouch saves records in this order inside one transaction:
+
+1. Save the credential account.
+2. Call `build_tenant(account)` and save the returned organisation.
+3. Call `build_identity(account, tenant:)` and save the returned membership.
+
+Return unsaved records from custom builders so Vouch controls persistence and rollback. The account passed to a builder, and the tenant passed to `build_identity`, have already been saved inside the open transaction; they are not yet committed. With one model, the default identity is the account itself, so no second record is created. GET registration does not invoke these builders.
+
+All records requiring atomic persistence must share the credential model's writing database connection. A transaction cannot roll back writes to another database.
 
 The generated tenant has no application-specific attributes. The following customization assumes you added a `name` column to `Organisation` and want to collect it during registration.
 
@@ -92,7 +70,7 @@ module ProvisionsOrganisation
 end
 ```
 
-Include the same concern in registrations and, when using automatic OAuth registration, in the callback controller. This keeps construction consistent for password signup, form OAuth continuation, and the explicit automatic OAuth opt-in:
+Move the generated controller's local `build_identity` method into this concern when adopting it; a local method otherwise takes precedence over an included concern. Include the same concern in registrations and, when using automatic OAuth registration, in the callback controller. This keeps construction consistent for ordinary registration, form OAuth continuation, and the explicit automatic OAuth opt-in:
 
 ```ruby
 # app/controllers/accounts/registrations_controller.rb
@@ -130,6 +108,43 @@ The registration form owns the tenant input. Keep it separate from account param
 ```
 
 For form OAuth registration, `RegistrationsController#create` restores the account attributes, assigns only permitted form fields, and then creates the account, OAuth identities, tenant, and membership in that transaction. A validation failure renders `app/views/accounts/registrations/new.html.erb` again with errors and no new persisted account/link. Provider and UID never come from form fields. See [multiple providers](oauth.md#connect-several-providers-during-registration) for separate proof expiry and reconnection.
+
+## OAuth registration continuation
+
+Configure OAuth callback registration with `:form` (the default) when a new provider identity needs fields that OAuth does not supply:
+
+```ruby
+# config/routes.rb, inside the credentials scope
+auth.oauth_callbacks registration: :form
+```
+
+After an explicit OAuth registration request is verified, Vouch applies the provider data to the unsaved account and retains its attributes and provider proof in the session. `RegistrationsController#new` restores those values and pre-fills the form without applying the mapping again. No new account or provider link is saved yet. The generated form uses `oauth_registration?` to omit password fields while a valid provider proof supplies the sign-in method.
+
+On submit, Vouch combines the mapped account fields with permitted form fields and creates the account and OAuth link in one transaction. In a multi-tenant setup, that transaction also includes the organisation and membership. It then continues through MFA and membership selection before redirecting. Validation failures re-render the form. Provider/UID data comes from protected session state, never submitted fields.
+
+The default mapping uses the provider email when supplied and leaves the password absent. Add another mapped form value through the account model:
+
+```ruby
+# app/models/account.rb
+class Account < ApplicationRecord
+  def apply_oauth_registration(oauth_identity, auth_hash:)
+    super
+    self.name = auth_hash.info.name if name.blank?
+  end
+end
+```
+
+```mermaid
+flowchart TD
+  callback[Verified OAuth callback] --> pending[Store selected provider data in session]
+  pending --> new[RegistrationsController#new restores mapped account]
+  new --> form[Registration form pre-fills mapped fields and hides passwords]
+  form --> submit[Permitted submitted attributes]
+  submit --> transaction[One transaction: account, OAuth identity, tenant, membership]
+  transaction --> complete[Complete OAuth sign-in]
+  complete --> mfa[MFA or membership selection when required]
+  mfa --> onboarding[after_sign_up_path]
+```
 
 ## Invitation registration
 
@@ -192,4 +207,4 @@ class ApplicationController < ActionController::Base
 end
 ```
 
-`onboarding_path` is a page you create for any remaining introduction or profile steps. Put required database work in a transactional hook and external work such as a welcome email in `after_commit_of_sign_up`; see [lifecycle hooks](sessions-and-hooks.md#lifecycle-hooks).
+`onboarding_path` is a page you create for any remaining introduction or profile steps. Put required database work in a transactional hook and external work such as a welcome email in `after_commit_of_sign_up` and, when OAuth registration is enabled, `after_commit_of_oauth_account_creation`; see [lifecycle hooks](sessions-and-hooks.md#lifecycle-hooks).

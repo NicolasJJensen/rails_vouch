@@ -97,7 +97,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
     saved = false
     pending = begin_oauth_registration(@auth_hash, reconnect_uid: @oauth_initiation['reconnect_uid'])
     return oauth_request_failed(pending.metadata[:reason]) unless pending.ok?
-    account = pending.value
+    @account = account = pending.value
     return Vouch::Result.pending(account, operation: :registration, next_step: :registration) if oauth_registration_required?
     return oauth_request_failed(:expired_providers) if pending_oauth_providers.any? { |provider| provider[:expired] }
 

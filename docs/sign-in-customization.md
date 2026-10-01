@@ -11,7 +11,7 @@ Start with the [README setup](../README.md). The generated sign-in and registrat
 
 ## Use a username, email or phone number
 
-This example extends a `User` credentials model with a username and an optional phone number. The email column from the scope generator uses PostgreSQL `citext`.
+This example edits the model and migration, two resolver classes, the existing initializer, and the generated sign-in view. It extends a `User` credentials model with a username and an optional phone number. The email column from the scope generator uses PostgreSQL `citext`.
 
 ```ruby
 # db/migrate/20261001000000_add_login_identifiers_to_users.rb
@@ -163,4 +163,4 @@ end
 
 > `onboarding_path` is a page supplied by your application. See [registration redirects](registration.md#send-people-to-onboarding) for the complete flow.
 
-Use [lifecycle hooks](sessions-and-hooks.md#lifecycle-hooks) for accompanying work: transactional signup hooks for related database records and commit hooks for external notifications.
+Use the examples in [lifecycle hooks](sessions-and-hooks.md#lifecycle-hooks) for accompanying database work and notifications. Hook registrations add callbacks; they do not replace existing ones. Post-commit callbacks run after record creation, which can precede MFA completion.

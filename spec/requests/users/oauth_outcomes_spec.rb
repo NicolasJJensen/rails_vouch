@@ -55,6 +55,19 @@ RSpec.describe "OAuth action outcomes", type: :request do
     expect(outcomes.first.metadata[:next_step]).to eq(:registration)
   end
 
+  it "lets the host choose form or automatic registration from the prepared account" do
+    Users::OmniAuthsController.define_method(:oauth_registration_required?) { !@account.valid? }
+    outcomes = observe
+    incomplete = OmniAuth::AuthHash.new(provider: "github", uid: "without-email", info: {})
+    expect { oauth_callback "/users/auth/github/callback", auth: incomplete, purpose: :register }.not_to change(Account, :count)
+    expect(outcomes.last).to be_pending
+    expect(outcomes.last.metadata[:next_step]).to eq(:registration)
+    expect { oauth_callback "/users/auth/github/callback", auth: provider, purpose: :register }.to change(Account, :count).by(1)
+    expect(outcomes.last).to be_ok
+  ensure
+    Users::OmniAuthsController.remove_method(:oauth_registration_required?)
+  end
+
   it "yields automatic registration success after the records commit" do
     outcomes = observe
     expect { oauth_callback "/users/auth/github/callback", auth: provider, purpose: :register }.to change(Account, :count).by(1)

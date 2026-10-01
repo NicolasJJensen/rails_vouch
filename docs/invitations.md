@@ -37,12 +37,12 @@ change_table :users do |t|
   t.datetime :invitation_sent_at
   t.datetime :invitation_accepted_at
   t.datetime :invitation_rejected_at
-  t.references :inviter, foreign_key: {to_table: :users}
+  t.references :inviter, foreign_key: { to_table: :users }
   t.boolean :registration_required, default: false, null: false
 end
 ```
 
-`registration_required` distinguishes a newly invited person who still needs to choose a password from someone who already completed registration.
+`registration_required` marks an unfinished credentials account. Invitation acceptance belongs to each invitation; an account can finish registration once and later accept other organisation invitations. This is why `invitation_accepted_at` cannot replace the account flag.
 
 ### Decide who can invite
 
@@ -84,11 +84,15 @@ For a multi-tenant application, this method targets the model holding the sign-i
 The generated controller connects the invitation event to the mailer:
 
 ```ruby
-# In Users::InvitationsController
- on_invitation_token_generation do |identifier, invitation|
-   Users::InvitationMailer.invitation(identifier, invitation).deliver_later
- end
+# app/controllers/users/invitations_controller.rb
+class Users::InvitationsController < Vouch::InvitationsController
+  on_invitation_token_generation do |identifier, invitation|
+    Users::InvitationMailer.invitation(identifier, invitation).deliver_later
+  end
+end
 ```
+
+> Edit the existing generated callback to replace its delivery behavior. Registering another callback adds another delivery; it does not overwrite the first.
 
 Edit the generated mailer and template to change the message:
 
@@ -150,7 +154,7 @@ Vouch.routes(self) do |auth|
     auth.sessions
     auth.registrations
 
-    auth.scope identity: "User", tenant: "Organisation" do
+    auth.membership model: "User", tenant: "Organisation" do
       auth.sessions
       auth.invitations
     end
@@ -189,7 +193,16 @@ The choices are ordinary POST forms with Rails' request protection. You can edit
 
 For multi-tenant invitations, choosing an existing account can move the pending membership from its unfinished placeholder to the authenticated account. Vouch does this only during successful acceptance, keeps the invitation's organisation, and refuses to move a membership owned by a registered account. It also refuses to add a second membership in the same organisation. The original placeholder is retained; Vouch does not delete an account as part of linking or rejection.
 
-Invitations are checked again when they are consumed. An expired, revoked, accepted or replaced link cannot be reused. A host may send a new invitation after rejection with the normal create action.
+Links expire after seven days by default. Change that in your existing initializer:
+
+```ruby
+# config/initializers/vouch.rb
+Vouch.configure do |config|
+  config.invitations.expiry = 3.days
+end
+```
+
+Expiry does not delete a pending account. Invitations are checked again when they are consumed. An expired, revoked, accepted or replaced link cannot be reused. A host may send a new invitation after rejection with the normal create action.
 
 `before_invitation_acceptance` and `after_invitation_acceptance` wrap acceptance inside its transaction. Rejection has its own `invitation_rejection` lifecycle, separate from the inviter's `invitation_revocation`. Their `before_commit_of_*` and `after_commit_of_*` callbacks use the [normal lifecycle ordering](sessions-and-hooks.md#lifecycle-hooks).
 
@@ -250,18 +263,21 @@ end
   params: { invitation_token: invitation.invitation_token } %>
 ```
 
-By default, a user may revoke their own pending invitations, within the selected organisation when applicable. Override `revocable_invitations` to return another authorized relation, for example to let an organisation administrator revoke invitations from colleagues:
+By default, the relation contains pending invitations the current user sent, within the selected organisation when applicable. Override `revocable_invitations` to return another authorized relation, for example to let an organisation administrator revoke invitations from colleagues:
 
 ```ruby
-# In Users::InvitationsController
- def revocable_invitations
-   return super unless current_user.admin?
+# app/controllers/users/invitations_controller.rb
+class Users::InvitationsController < Vouch::InvitationsController
+  private
 
-   current_organisation.users.pending_invitation
- end
+  def revocable_invitations
+    # Return the invitations this user is authorized to revoke.
+    current_organisation.users.pending_invitation
+  end
+end
 ```
 
-Revocation removes the invited membership in a multi-tenant setup. For a single-model user, it clears the invitation without deleting the user record.
+Revocation removes the invited membership in a multi-tenant setup and retains its credentials account. For a single-model user, it clears the invitation without deleting the user record.
 
 ## Routes
 
@@ -282,22 +298,44 @@ Revocation removes the invited membership in a multi-tenant setup. For a single-
 Use registration hooks for account-wide records and invitation-acceptance hooks for membership records:
 
 ```ruby
-# In the generated registrations controller
- after_sign_up do |account, identity|
-   Preferences.create!(account: account)
- end
+# app/controllers/accounts/registrations_controller.rb
+class Accounts::RegistrationsController < Vouch::RegistrationsController
+  after_sign_up :create_preferences
+  after_oauth_account_creation :create_preferences
+
+  private
+
+  def create_preferences(account, *)
+    Preferences.create!(account: account)
+  end
+end
 ```
+
+For work required on every accepted membership, put the acceptance hook on your shared controller so it also covers acceptance completed by OAuth, MFA or membership selection:
 
 ```ruby
-# In a concern included by the authentication controllers completing acceptance
- on_invitation_acceptance do |identity, account|
-   MembershipPreferences.create!(user: identity)
- end
+# app/controllers/application_controller.rb
+class ApplicationController < ActionController::Base
+  include Vouch::ControllerHelpers
+
+  after_invitation_acceptance do |identity, account|
+    MembershipPreferences.create!(user: identity)
+  end
+end
 ```
 
-`Preferences` and `MembershipPreferences` are example models you supply. These callbacks run inside their operation's database transaction. Use [post-commit hooks](sessions-and-hooks.md#lifecycle-hooks) for external effects.
+> `Preferences` and `MembershipPreferences` are example models. These hooks run inside the operation's database transaction. Automatic OAuth registration uses the OAuth controller, so share its account-creation callback too when that mode is enabled. Use [post-commit hooks](sessions-and-hooks.md#lifecycle-hooks) for external effects.
 
-The generated lookup saves a pending account before sending its invitation. If your account requires profile fields at creation, supply them in `build_invited_account` or condition those validations on completed registration.
+Before sending an invitation, Vouch saves the account built by `build_invited_account`. If a profile field is required only after registration, make that validation conditional and permit the field during [invited registration](sign-in-customization.md#customize-registration-fields):
+
+```ruby
+# app/models/account.rb
+class Account < ApplicationRecord
+  validates :display_name, presence: true, unless: :registration_required?
+end
+```
+
+This example assumes your application added `display_name`; it is not an invitation field. Alternatively supply required values in `build_invited_account` before returning the unsaved record.
 
 For custom flows, the model methods `invite`, `accept_invitation`, `reissue_invitation` and `reject_invitation` return `Vouch::Result`. Their `!` variants return the successful result or raise `Vouch::OperationFailed`, whose `result` retains the failure and underlying error.
 

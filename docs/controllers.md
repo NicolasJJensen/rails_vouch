@@ -10,6 +10,8 @@
 - [Registration](#registration)
 - [Eject a controller](#eject-a-controller)
 
+After the [README setup](../README.md#install-and-generate-a-login), your application has two endpoint subclasses (`Users::SessionsController` and `Users::RegistrationsController`) and their `new` views. Optional feature generators add their own controllers and views.
+
 ## Protect pages
 
 Put the authentication requirement on a base controller for pages that require sign-in:
@@ -27,7 +29,7 @@ end
 
 Keep `ApplicationController` accessible without signing in, because Vouch's sign-in and registration controllers inherit from it too.
 
-Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. This supplies `authenticate_user!`, `current_user`, and `user_signed_in?` for the `:user` scope, and exposes the current-record helpers to views. In a multi-tenant setup where `User` belongs to `Account`, `authenticate_user!` checks both the account login and the selected user membership. You do not need a second account filter.
+Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. This supplies `authenticate_user!`, `current_user`, and `user_signed_in?` for the `:user` scope, and exposes the current-record helpers to views. For a [configured membership scope](model-mapping.md#multi-tenant-models), where `User` belongs to the credentials-owning `Account`, `authenticate_user!` checks both the account login and the selected user membership. You do not need a second account filter.
 
 ## Customize an authentication endpoint
 

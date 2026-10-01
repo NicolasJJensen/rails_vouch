@@ -30,6 +30,30 @@ The generator adds:
 - `Users::OmniAuthsController` and its callback routes.
 - `config/initializers/vouch_omniauth_github.rb`, which connects the GitHub strategy to those routes.
 
+The ordinary `User` migration creates:
+
+```ruby
+create_table :oauth_identities do |t|
+  t.references :user, null: false, foreign_key: true
+  t.string :provider, null: false
+  t.string :uid, null: false
+  t.json :auth_data
+  t.timestamps
+
+  t.index [:provider, :uid], unique: true
+end
+```
+
+An existing compatible table or migration is reused; the generator does not overwrite an existing model. For an existing table, it checks the required columns and reports incompatible storage.
+
+For storage and model support only:
+
+```sh
+bin/rails generate vouch:omniauth User --model-only
+```
+
+This still generates or reuses the OAuth model and migration and configures the owner association. It omits the callback controller, routes and provider initializer. Running the normal generator for a second provider reuses that storage and adds its provider initializer.
+
 Choose the model that owns authentication:
 
 - **Single-tenant:** use the command above for `User`.
@@ -49,22 +73,7 @@ github:
   client_secret: your-client-secret
 ```
 
-On Rails 8.2+, the initializer reads these with `Rails.app.creds.require`; on earlier Rails versions it uses `Rails.application.credentials.dig`. Register `/users/auth/github/callback` as the callback path with GitHub, or `/accounts/auth/github/callback` for the multi-tenant command.
-
-The ordinary `User` migration creates:
-
-```ruby
-create_table :oauth_identities do |t|
-  t.references :user, null: false, foreign_key: true
-  t.string :provider, null: false
-  t.string :uid, null: false
-  t.json :auth_data
-  t.timestamps
-  t.index [:provider, :uid], unique: true
-end
-```
-
-An existing compatible table or migration is reused; the generator does not overwrite an existing model. For an existing table, it checks the required columns and reports incompatible storage.
+On Rails 8.2+, the initializer uses [`Rails.app.creds.require`](https://edgeapi.rubyonrails.org/classes/Rails/Application.html#method-i-creds), which also reads environment variables. On Rails 8.1 it uses `Rails.application.credentials.dig`. Register `/users/auth/github/callback` as the callback path with GitHub, or `/accounts/auth/github/callback` for the multi-tenant command.
 
 ```sh
 bin/rails db:migrate
@@ -78,7 +87,7 @@ Start sign-in with a POST button. OmniAuth handles this request and redirects to
   params: { purpose: :sign_in }, data: { turbo: false } %>
 ```
 
-When GitHub returns, OmniAuth verifies the response and passes it to Vouch. Sign-in succeeds only when that provider identity is already connected to an account. An unknown identity produces an error asking the person to register. Omitting `purpose` also means sign-in.
+When GitHub returns, OmniAuth verifies the response and passes it to Vouch. Sign-in succeeds only when that provider identity is already connected to an account. An unknown identity produces an error asking the person to register. A matching email alone does not connect a provider to an existing account; that account must sign in before linking it. Omitting `purpose` also means sign-in.
 
 ## Choose registration behavior
 
@@ -90,7 +99,7 @@ Start registration explicitly from your registration page:
   params: { purpose: :register }, data: { turbo: false } %>
 ```
 
-An unlinked provider identity opens your registration form by default:
+An unlinked provider identity opens your registration form by default. Edit the generated `auth.oauth_callbacks` declaration when changing the mode; keep any generated `controller:` option rather than adding a second declaration:
 
 ```ruby
 # Inside the User scope in config/routes.rb
@@ -109,6 +118,7 @@ flowchart TD
   D -->|form: default| E[Retain provider data in the session]
   E --> F[Build an unsaved User and prefill registration form]
   F --> G[Submit additional details]
+  F -->|Connect another provider| A
   G --> H[Save User and OAuth link together]
   D -->|automatic| H
   H --> I[Complete required MFA and sign-up redirect]
@@ -117,10 +127,26 @@ flowchart TD
 For an application where provider data supplies everything needed to register, opt into automatic registration instead:
 
 ```ruby
+# config/routes.rb, update the existing credentials-scope declaration
 auth.oauth_callbacks registration: :automatic
 ```
 
 The controller method `oauth_registration_required?` remains an override point for a decision that varies by request. Returning `true` chooses the form; returning `false` attempts automatic creation. Its default follows the route setting.
+
+For example, if your model validations fully describe the required registration fields:
+
+```ruby
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
+  private
+
+  def oauth_registration_required?
+    !@account.valid?
+  end
+end
+```
+
+Vouch has already applied the verified provider information to the unsaved account before this decision. This example attempts automatic creation when that record validates and shows the form otherwise; creation can still fail later because of a uniqueness race or a related record. Keep the default form mode if registration must collect consent or other inputs beyond model validations.
 
 ## Connect a provider to an existing account
 
@@ -363,6 +389,7 @@ The callback helpers are `user_oauth_callback_path(provider: :github)` and `user
 Providers that POST their callback require that HTTP method on the callback route:
 
 ```ruby
+# config/routes.rb, update the existing credentials-scope declaration
 auth.oauth_callbacks callback_methods: [:get, :post]
 ```
 
@@ -380,7 +407,8 @@ See [controller ejection](controllers.md#eject-a-controller) for the generated i
 
 Vouch identifies a provider login by the pair `provider` and `uid`. A matching email alone never authorizes linking. For a differently shaped identity model, override its `find_from_omniauth` lookup and `oauth_attributes` mapping together, maintaining uniqueness for the provider's stable identifier.
 
-An existing polymorphic association can be mapped explicitly:
+For an already-configured OAuth owner, an existing polymorphic association can be mapped explicitly. Keep `include Vouch::Authenticatable` and `authenticates_with :omniauthable` on the owner; an existing identity model must include `Vouch::OAuthIdentity::Concern`:
+
 
 ```ruby
 # app/models/oauth_identity.rb

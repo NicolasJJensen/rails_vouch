@@ -10,12 +10,14 @@ Vouch adds conventional Rails authentication: password sign-in, registration, pa
 - [Customize redirects](#customize-redirects)
 - [Add features](#add-features)
 - [Use a shared account and memberships](#use-a-shared-account-and-memberships)
-- [Go further](#go-further)
+- [Customization and reference](#customization-and-reference)
 - [Development](#development)
 
 ## Install and generate a login
 
 Vouch supports Rails 8.1 and newer Rails 8 releases, Ruby 3.2 or newer, and PostgreSQL.
+
+For a new `User` model:
 
 ```sh
 bundle add rails_vouch
@@ -24,9 +26,14 @@ bin/rails generate vouch:scope User
 bin/rails db:migrate
 ```
 
-The scope generator creates a `User`, sign-in and registration controllers,
-forms, routes, and this standard credential schema. The generated model
-normalizes and validates `email_address` and uses `has_secure_password`.
+The install generator adds `config/initializers/vouch.rb`, translations and a routes block. The scope generator adds:
+
+- A `User` model with `Vouch::Authenticatable`, `has_secure_password`, and email normalization and validation.
+- A migration with the columns below.
+- `Users::SessionsController` and `Users::RegistrationsController`, which inherit Vouch's endpoint actions.
+- Sign-in and registration views and their routes.
+
+> Already have a `User` model? The generator preserves it. Add the [existing-model prerequisites](docs/model-mapping.md#existing-models) before using the endpoints.
 
 ```ruby
 enable_extension "citext" unless extension_enabled?("citext")
@@ -55,10 +62,12 @@ end
 Put access control on a base controller. Keep `ApplicationController` public: generated sign-in and registration endpoints inherit from it.
 
 ```ruby
+# app/controllers/authenticated_controller.rb
 class AuthenticatedController < ApplicationController
   before_action :authenticate_user!
 end
 
+# app/controllers/projects_controller.rb
 class ProjectsController < AuthenticatedController
   def index
     @projects = current_user.projects
@@ -66,7 +75,7 @@ class ProjectsController < AuthenticatedController
 end
 ```
 
-Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. It supplies `authenticate_user!`, `current_user`, and `user_signed_in?`, and exposes current-user and signed-in helpers to views. After sign-in, a visitor returns to the protected page they requested.
+Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. It supplies `authenticate_user!`, `current_user`, and `user_signed_in?`, and exposes current-user and signed-in helpers to views. After sign-in, a visitor returns to a protected GET page they requested; otherwise Vouch uses your sign-in redirect, which defaults to the root route. `projects` is an example association supplied by your application.
 
 ## Use the generated routes
 
@@ -89,6 +98,7 @@ Vouch automatically includes `Vouch::ApplicationHelpers` in application controll
 The generated controller is the usual place to set an application destination:
 
 ```ruby
+# app/controllers/users/sessions_controller.rb
 class Users::SessionsController < Vouch::SessionsController
   private
 
@@ -102,7 +112,7 @@ end
 
 ## Add features
 
-Each feature guide starts with its generator, migration, supplied pages, and ordinary extension points.
+Choose an optional feature for its setup and customization guide.
 
 - [Password reset](docs/password-reset.md) and [password history](docs/password-history.md)
 - [Verification](docs/verification.md), [MFA](docs/mfa.md), [recovery codes](docs/recovery-codes.md), and [passwordless sign-in](docs/passwordless.md)
@@ -113,14 +123,14 @@ Each feature guide starts with its generator, migration, supplied pages, and ord
 
 ## Use a shared account and memberships
 
-For an application where one person can belong to organisations, generate a credential `Account` and a `User` membership:
+For a multi-tenant application, an `Account` can hold the sign-in credentials while each `User` represents membership in an `Organisation`. These are example model names. This is an alternative initial setup to the single `User` above, not a conversion command for an existing installation:
 
 ```sh
 bin/rails generate vouch:scope User --account Account --tenant Organisation
 bin/rails db:migrate
 ```
 
-The generated configuration uses nested declarations. Names are inferred from the models, so the standard declaration needs no explicit scope names:
+The account has sign-in and registration routes. Its nested membership has a route for entering an organisation:
 
 ```ruby
 Vouch.routes(self) do |auth|
@@ -139,9 +149,9 @@ end
 
 See [the generated models and schema](docs/model-mapping.md#multi-tenant-models) for this setup, and [separate administrator logins](docs/model-mapping.md#separate-administrator-logins) when your application needs another authentication scope.
 
-## Go further
+## Customization and reference
 
-- [Registration and sign-in customization](docs/sign-in-customization.md)
+- [Registration](docs/registration.md) and [sign-in customization](docs/sign-in-customization.md)
 - [Controllers, route paths, and ejection](docs/controllers.md)
 - [Models, primary keys, and advanced scopes](docs/model-mapping.md)
 - [Authentication policy and session invalidation](docs/authentication-policy.md)
