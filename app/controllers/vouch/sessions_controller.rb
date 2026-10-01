@@ -6,7 +6,7 @@ class Vouch::SessionsController < ::ApplicationController
 
   def new; end
 
-  def create
+  def create(&response_handler)
     session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
     session.delete(two_factor_session_key)
     session.delete(selection_session_key)
@@ -17,26 +17,31 @@ class Vouch::SessionsController < ::ApplicationController
     warden.set_user(nil, scope: auth_scope_name, store: false, run_callbacks: false)
 
     unless account
-      flash.now[:alert] = failed_login_message
-      render :new, status: 422
-      return
+      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_credentials), response_handler) do
+        flash.now[:alert] = failed_login_message
+        render :new, status: 422
+      end
     end
 
-    case complete_sign_in(account)
-    when :signed_in
-      redirect_after_authentication
-    when :needs_two_factor
-      redirect_to two_factor_challenges_path
-    when :needs_selection
-      redirect_to select_path
-    else
-      flash.now[:alert] = I18n.t("vouch.oauth.no_identity")
-      render :new, status: 422
+    outcome = complete_sign_in(account)
+    respond_with_authentication_result(sign_in_result(account, outcome), response_handler) do
+      case outcome
+      when :signed_in
+        redirect_after_authentication
+      when :needs_two_factor
+        redirect_to two_factor_challenges_path
+      when :needs_selection
+        redirect_to select_path
+      else
+        flash.now[:alert] = I18n.t("vouch.oauth.no_identity")
+        render :new, status: 422
+      end
     end
   end
 
-  def destroy
-    signed_out = run_authentication_hooks(:sign_out, current_identity) do |env|
+  def destroy(&response_handler)
+    identity = current_identity
+    signed_out = run_authentication_hooks(:sign_out, identity) do |env|
       committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
         true
       end
@@ -44,8 +49,13 @@ class Vouch::SessionsController < ::ApplicationController
       Vouch.logout_scope(warden, session, auth_scope_name)
       true
     end
-    return head(:forbidden) unless signed_out
-
-    redirect_to after_sign_out_path, notice: I18n.t("vouch.sessions.signed_out")
+    result = signed_out ? Vouch::Result.ok(identity) : Vouch::Result.cancelled(record: identity)
+    respond_with_authentication_result(result, response_handler) do
+      if signed_out
+        redirect_to after_sign_out_path, notice: I18n.t("vouch.sessions.signed_out")
+      else
+        head :forbidden
+      end
+    end
   end
 end

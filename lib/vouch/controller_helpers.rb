@@ -97,6 +97,24 @@ module Vouch
 
     private
 
+    def respond_with_authentication_result(result, response_handler)
+      response_handler&.call(result)
+      yield unless performed?
+    end
+
+    def sign_in_result(account, outcome)
+      case outcome
+      when :signed_in
+        Vouch::Result.ok(account, identity: current_identity)
+      when :needs_two_factor
+        Vouch::Result.pending(account, next_step: :two_factor)
+      when :needs_selection
+        Vouch::Result.pending(account, next_step: :selection)
+      else
+        Vouch::Result.invalid(record: account, reason: outcome)
+      end
+    end
+
     def auth_mapping
       Vouch.mapping_for(auth_scope_name)
     end

@@ -4,6 +4,7 @@
 
 - [Protect pages](#protect-pages)
 - [Customize an authentication endpoint](#customize-an-authentication-endpoint)
+- [Customize action responses](#customize-action-responses)
 - [Endpoint reference](#endpoint-reference)
 - [Routes](#routes)
 - [Registration](#registration)
@@ -104,6 +105,43 @@ end
 ```
 
 Here, `Portal` does not identify the `:user` scope, so the declaration makes that connection explicit.
+
+## Customize action responses
+
+Session creation, sign-out and membership selection yield their outcome before sending the default response. Override the action and pass a block to `super` to supply your own response:
+
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::SessionsController
+  def create
+    super do |result|
+      next unless request.format.json?
+
+      status = case result.status
+      when :ok then :ok
+      when :pending then :accepted
+      else :unprocessable_content
+      end
+
+      render json: {
+        status: result.status,
+        next_step: result.metadata[:next_step]
+      }, status: status
+    end
+  end
+end
+```
+
+Rendering or redirecting in the block suppresses the default response. A block that only observes the result leaves the normal HTML response in place. The operation has already run when the block receives its result; perform permission checks before calling `super`, not in this response block.
+
+| Outcome | Meaning |
+| --- | --- |
+| `result.ok?` | The operation completed; `value` contains its record. |
+| `result.pending?` | Authentication needs another step; `metadata[:next_step]` is `:two_factor` or `:selection`. This is not completed sign-in. |
+| `result.invalid?` | Credentials, continuation or selection were rejected. |
+| `result.cancelled?` | The operation was cancelled; for example, a sign-out hook prevented sign-out. |
+
+When supplied, `result.error` retains the underlying expected error and `result.metadata[:record]` provides its record and field errors. These fields are not present for every failure. Unexpected exceptions still propagate.
 
 ## Endpoint reference
 

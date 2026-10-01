@@ -3,7 +3,7 @@
 require "rails_helper"
 
 RSpec.describe Vouch::ApplicationHelpers, type: :controller do
-  controller(ApplicationController) do
+  controller(ActionController::Base) do
     before_action :authenticate_user!, except: :public_page
 
     def index
@@ -34,6 +34,12 @@ RSpec.describe Vouch::ApplicationHelpers, type: :controller do
     expect(response.body).to eq("public")
     expect(controller.respond_to?(:complete_sign_in, true)).to be(false)
     expect(controller.respond_to?(:build_registration, true)).to be(false)
+  end
+
+  it "allows a host parent to opt into callbacks without an authentication filter" do
+    expect(ApplicationController).to respond_to(:before_sign_in)
+    expect(ApplicationController.new.respond_to?(:complete_sign_in, true)).to be(true)
+    expect(ApplicationController._process_action_callbacks.map(&:filter)).not_to include(:authenticate_auth_scope!)
   end
 
   it "redirects anonymous GETs and preserves the destination" do

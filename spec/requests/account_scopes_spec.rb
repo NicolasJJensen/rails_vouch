@@ -127,6 +127,25 @@ RSpec.describe "Account and membership sessions", type: :request do
     response.parsed_body
   end
 
+  it "yields automatic membership completion once before the default response" do
+    observed = []
+    LinkedMembers::SessionsController.define_method(:new) do
+      super() do |result|
+        observed << result.status
+        render json: { identity_id: result.metadata.fetch(:identity).id }
+      end
+    end
+    account_login
+
+    get "/linked_members/sign_in"
+
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body).to eq("identity_id" => membership.id)
+    expect(response.headers["Location"]).to be_nil
+    expect(observed).to eq([:ok])
+    expect(status).to include("account" => account.id, "member" => membership.id)
+  end
+
   it "establishes only the account when logging in directly" do
     account_login
     expect(response).to redirect_to("/")
