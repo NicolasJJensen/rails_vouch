@@ -8,7 +8,7 @@
 #
 module Vouch
   Result = Struct.new(:status, :token, :metadata) do
-    STATUSES = %i[ok invalid locked cancelled].freeze
+    STATUSES = %i[ok invalid locked cancelled pending].freeze
 
     def initialize(status, token = nil, metadata = nil)
       raise ArgumentError, "unknown authentication result: #{status.inspect}" unless STATUSES.include?(status)
@@ -36,6 +36,14 @@ module Vouch
       status == :cancelled
     end
 
+    def pending?
+      status == :pending
+    end
+
+    def error
+      metadata[:error]
+    end
+
     def recovery_code?
       metadata[:recovery_code] == true
     end
@@ -44,16 +52,20 @@ module Vouch
       new(:ok, token, metadata)
     end
 
-    def self.invalid
-      new(:invalid)
+    def self.invalid(**metadata)
+      new(:invalid, nil, metadata)
     end
 
-    def self.locked
-      new(:locked, nil)
+    def self.locked(**metadata)
+      new(:locked, nil, metadata)
     end
 
-    def self.cancelled
-      new(:cancelled, nil)
+    def self.cancelled(**metadata)
+      new(:cancelled, nil, metadata)
+    end
+
+    def self.pending(value = nil, **metadata)
+      new(:pending, value, metadata)
     end
   end
 end
