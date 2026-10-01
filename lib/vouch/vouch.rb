@@ -68,8 +68,8 @@ module Vouch
       Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session) if session
       if session && Vouch::ImpersonationStack.active?(session) &&
           (mapping.split_model? || Vouch::ImpersonationStack.target_scope(session) == scope.to_sym)
-        target = Vouch::ImpersonationStack.authorized_identity(session, scope: scope)
         identity = warden.user(scope)
+        target = Vouch::ImpersonationStack.authorized_identity(session, scope: scope, identity: identity)
         return target if target && identity && identity.class == target.class &&
           Vouch::RecordKey.same?(identity, target, model: target.class)
         return nil

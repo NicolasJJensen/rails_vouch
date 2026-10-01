@@ -30,7 +30,7 @@ module Vouch
 
     def current_account
       if Vouch::ImpersonationStack.active?(session) && auth_mapping.split_model? && !auth_mapping.membership_scope?
-        account = Vouch::ImpersonationStack.original_account(session)
+        account = Vouch::ImpersonationStack.retained_account(session)
         return account if account.is_a?(auth_mapping.account_class)
         return nil
       end

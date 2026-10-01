@@ -92,7 +92,8 @@ class Vouch::ImpersonationsController < ::ApplicationController
 
   def authenticate_impersonator!
     Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
-    if Vouch::ImpersonationStack.active?(session)
+    if Vouch::ImpersonationStack.membership_restricted?(session)
+      return head(:forbidden) unless auth_mapping.split_model?
       source = Vouch::ImpersonationStack.source_scope(session)
       requested = params[:impersonator_scope].presence
       return head(:forbidden) unless allowed_impersonator_scopes.include?(source)

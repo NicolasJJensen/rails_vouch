@@ -279,7 +279,7 @@ module Vouch
         impersonation_session = env["warden"]&.raw_session
         if impersonation_session && Vouch::ImpersonationStack.active?(impersonation_session) &&
             (mapping.split_model? || Vouch::ImpersonationStack.target_scope(impersonation_session) == scope)
-          next Vouch::ImpersonationStack.authorized_identity(impersonation_session, scope: scope)
+          next Vouch::ImpersonationStack.authorized_identity(impersonation_session, scope: scope, identity: identity)
         end
         if mapping.membership_scope?
           parent = env["warden"]&.user(mapping.parent_scope_name)

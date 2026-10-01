@@ -2,7 +2,17 @@
 
 Impersonation gives an authorized operator a temporary view of one target identity. It is for support and administrative work where the host application decides both who may act and which records they may enter.
 
-In a single-model `:user` setup, `current_user` is the target and `true_user` is the original operator. In a linked account and membership setup, `current_user` is the target membership while `current_account` remains the operator's account. `current_user.account` is the target membership's associated data; it is not a login for that account.
+In a single-model `:user` setup, `current_user` is the target and `true_user` is the original operator. A multi-tenant application can impersonate either a membership or the account that signs in:
+
+| Operation | `current_user` | `current_account` |
+| --- | --- | --- |
+| Impersonate a membership | Target membership | Account authorized before the switch |
+| Impersonate an account | `nil` until selecting a membership | Target account |
+| Select a membership while impersonating an account | Selected membership of that account | Target account |
+
+`true_user` and `true_account` retain their original signed-in values throughout the chain. A scope that was not signed in originally returns `nil`. Names follow your authentication scopes.
+
+> During membership impersonation, `current_user.account` is the target membership's associated data; it does not grant authentication as that account. Account settings should use `current_account` for the effective authorized account, or `true_account` for a deliberately personal settings page. Your permissions still govern writes through ordinary associations.
 
 ## Contents
 
@@ -71,7 +81,7 @@ class Users::ImpersonationsController < Vouch::ImpersonationsController
 end
 ```
 
-`impersonator` is the original actor. `impersonator_scope_name` is the resolved source scope. If exactly one allowed scope is authenticated, Vouch selects it automatically. If several are authenticated, the request must supply `impersonator_scope`:
+`impersonator` is the actor authorizing this switch. A membership-only chain retains its first authorizing actor; selecting a membership during full account impersonation allows that membership to authorize a subsequent membership switch. `impersonator_scope_name` is the resolved source scope. If exactly one allowed scope is authenticated, Vouch selects it automatically. If several are authenticated, the request must supply `impersonator_scope`:
 
 ```erb
 <%= button_to "View as this user",
@@ -81,7 +91,7 @@ end
 
 A supplied scope must be allowed by `impersonator_scopes` and authenticated. Otherwise Vouch denies the request. `impersonator_scope :support_operator` remains available as the singular form.
 
-When impersonation is already active, a nested start keeps the original operator and source scope. A nested request cannot select a different original actor.
+Once a membership-only chain starts, nested requests cannot change its authorizing actor or escalate to account impersonation. The `true_*` helpers always retain the original signed-in context.
 
 ## Start and stop
 
@@ -107,9 +117,11 @@ Vouch supplies `impersonating_user?` in controllers and views.
 
 The stack lives in the Rails session. It stores the original operator reference once and records each target by its mapping scope, record key, owner, tenant, and session fingerprint. Those exact references work with ordinary, namespaced, and composite-key models without treating a class name as the identity boundary.
 
-Vouch retains the operator's credential and account sessions. For a membership target it makes only that target membership current; it does not authenticate the target account. Other memberships are unavailable during impersonation, and membership selection routes return `403` until the operator stops. Account endpoints continue to operate on the operator's account.
+Membership impersonation retains the account authorized immediately before that switch. Ordinary membership selection returns `403` while this restriction applies. Full account impersonation clears existing memberships and permits selecting the target account's memberships; account settings operate on that target account subject to your permissions.
 
-Nested impersonation uses the same original operator:
+For example, support account A impersonates account B, selects B's membership, then impersonates membership C. At that point `current_user` is C's membership, `current_account` is B, and `true_account` is A. Account C is never signed in. Stopping once returns to B's selected membership.
+
+Stopping a nested impersonation restores the preceding context:
 
 ```text
 Operator → Manager → User

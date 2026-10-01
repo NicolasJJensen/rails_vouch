@@ -159,7 +159,7 @@ module Vouch
 
     def impersonator_scope_name
       return @resolved_impersonator_scope if @resolved_impersonator_scope
-      if Vouch::ImpersonationStack.active?(session)
+      if Vouch::ImpersonationStack.membership_restricted?(session)
         return Vouch::ImpersonationStack.source_scope(session)
       end
       allowed_impersonator_scopes.one? ? allowed_impersonator_scopes.first : nil
@@ -171,8 +171,8 @@ module Vouch
 
     def impersonator
       return unless impersonator_scope_name
-      if Vouch::ImpersonationStack.active?(session)
-        Vouch::ImpersonationStack.original(warden: warden, session: session, scope: impersonator_scope_name)
+      if Vouch::ImpersonationStack.membership_restricted?(session)
+        Vouch::ImpersonationStack.restricted_operator(session, scope: impersonator_scope_name)
       else
         Vouch.authenticated_identity(warden, impersonator_scope_name, controller: self)
       end

@@ -15,9 +15,9 @@ module Vouch
         end
         valid = stored.is_a?(Array) && stored.any? && stored.all? do |entry|
           entry.is_a?(Hash) && valid_reference.call(entry["target"]) &&
+            valid_reference.call(entry["source"]) && %w[account membership].include?(entry["mode"]) &&
             entry["contexts"].is_a?(Array) && entry["evidence"].is_a?(Hash)
         end
-        valid &&= valid_reference.call(stored.first["operator"])
         return if valid
 
         clear_contexts!(warden, session)
@@ -32,12 +32,21 @@ module Vouch
       def active?(session, scope: nil)
         entries(session).any? do |entry|
           scope.nil? || entry.dig("target", "scope") == scope.to_s ||
-            entries(session).first.dig("operator", "scope") == scope.to_s
+            entries(session).first.dig("source", "scope") == scope.to_s
         end
       end
 
       def source_scope(session)
-        entries(session).first&.dig("operator", "scope")&.to_sym
+        restricted_source(session)&.fetch("scope", nil)&.to_sym || entries(session).first&.dig("source", "scope")&.to_sym
+      end
+
+      def membership_restricted?(session)
+        entries(session).last&.fetch("mode", nil) == "membership"
+      end
+
+      def retained_account(session)
+        resolved = resolve(restricted_source(session))
+        resolved && resolved.first.account_for(resolved.last)
       end
 
       def target_scope(session)
@@ -45,35 +54,47 @@ module Vouch
       end
 
       def original(warden:, session:, scope:)
-        reference = entries(session).first&.fetch("operator", nil)
+        first = entries(session).first
+        reference = Array(first&.fetch("contexts", nil)).find { |context| context["scope"] == scope.to_s }
+        reference ||= first&.fetch("source", nil)
         resolved = resolve(reference)
         return unless resolved
 
         mapping, identity = resolved
         return identity if mapping.scope_name == scope.to_sym
-        return mapping.account_for(identity) if mapping.membership_scope? && mapping.parent_scope_name == scope.to_sym
       end
 
       def original_account(session)
-        resolved = resolve(entries(session).first&.fetch("operator", nil))
+        resolved = resolve(entries(session).first&.fetch("source", nil))
         resolved && resolved.first.account_for(resolved.last)
       end
 
       def current_source(warden:, session:, scope:)
-        original(warden: warden, session: session, scope: scope)
+        resolve(entries(session).first&.fetch("source", nil))&.last
       end
 
-      # An impersonation authorizes one exact target. It never authenticates
-      # that target's credentials owner or lends it the operator's MFA proof.
-      def authorized_identity(session, scope:)
-        return unless resolve(entries(session).first&.fetch("operator", nil))
-        resolved = resolve(entries(session).last&.fetch("target", nil))
+      def restricted_operator(session, scope:)
+        resolved = resolve(restricted_source(session))
         resolved&.last if resolved && resolved.first.scope_name == scope.to_sym
+      end
+
+      def authorized_identity(session, scope:, identity: nil)
+        return unless resolve(entries(session).first&.fetch("source", nil))
+        resolved = resolve(entries(session).last&.fetch("target", nil))
+        return unless resolved
+        target_mapping, target = resolved
+        return target if target_mapping.scope_name == scope.to_sym
+        return if membership_restricted?(session) || !identity
+
+        mapping = mapping_for(scope)
+        return unless mapping&.membership_scope? && mapping.parent_scope_name == target_mapping.scope_name
+        owner = mapping.account_for(identity)
+        identity if owner && owner.class == target.class && Vouch::RecordKey.same?(owner, target)
       end
 
       def logout_scopes(session, scope:)
         return [] unless active?(session)
-        references = entries(session).flat_map { |entry| Array(entry["contexts"]) + [entry["target"], entry["operator"]] }.compact
+        references = entries(session).flat_map { |entry| Array(entry["contexts"]) + [entry["target"], entry["source"]] }.compact
         scopes = references.flat_map do |reference|
           mapping = mapping_for(reference["scope"])
           mapping ? [mapping.scope_name, mapping.parent_scope_name].compact : []
@@ -83,8 +104,9 @@ module Vouch
 
       def start!(warden:, session:, source_mapping:, target_mapping:, target:, return_to: nil, source: nil)
         stack = entries(session)
-        if stack.any?
-          source = original(warden: warden, session: session, scope: source_mapping.scope_name)
+        if membership_restricted?(session)
+          raise Vouch::ConfigurationError, "Membership impersonation cannot enter an account" unless target_mapping.split_model?
+          source = restricted_operator(session, scope: source_mapping.scope_name)
         else
           source ||= Vouch.authenticated_identity(warden, source_mapping.scope_name)
         end
@@ -92,18 +114,18 @@ module Vouch
 
         entry = {
           "target" => reference_for(target_mapping, target),
+          "source" => reference_for(source_mapping, source),
+          "mode" => target_mapping.split_model? ? "membership" : "account",
           "return_to" => safe_return_path(return_to),
           "contexts" => active_contexts(warden),
           "evidence" => active_evidence(session)
         }
-        entry["operator"] = reference_for(source_mapping, source) if stack.empty?
         stack << entry
         write(session, stack)
         yield if block_given?
         clear_contexts!(warden, session)
-        # Keep existing credentials scopes authenticated as the operator.
-        restore_contexts!(warden, stack.first["contexts"], accounts_only: true) if target_mapping.split_model?
-        restore_evidence!(session, stack.first) if target_mapping.split_model?
+        restore_contexts!(warden, entry["contexts"], accounts_only: true) if target_mapping.split_model?
+        restore_evidence!(session, entry) if target_mapping.split_model?
         warden.set_user(target, scope: target_mapping.scope_name, store: true)
         target
       end
@@ -121,6 +143,11 @@ module Vouch
       end
 
       private
+
+      def restricted_source(session)
+        return unless membership_restricted?(session)
+        entries(session).reverse.take_while { |entry| entry["mode"] == "membership" }.last&.fetch("source", nil)
+      end
 
       def mapping_for(scope)
         Vouch.mapping_for(scope)
@@ -156,7 +183,7 @@ module Vouch
         identity = Vouch::RecordKey.find(mapping.identity_class, reference.fetch("key"))
         account = mapping.account_for(identity)
         return unless account
-        return if account.respond_to?(:locked?) && account.locked?
+        return if Vouch.configuration.lockable.invalidate_sessions_on_lockout && account.respond_to?(:locked?) && account.locked?
         return unless reference_for(mapping, identity) == reference
 
         [mapping, identity]
@@ -195,7 +222,7 @@ module Vouch
       def restore_previous!(warden, session, all:)
         stack = entries(session)
         return if stack.empty?
-        operator = resolve(stack.first["operator"])
+        operator = resolve(stack.first["source"])
         entry = all ? stack.first : stack.last
         clear_contexts!(warden, session)
         unless operator

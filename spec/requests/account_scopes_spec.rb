@@ -72,7 +72,9 @@ RSpec.describe "Account and membership sessions", type: :request do
           member: current_account_member&.id,
           short_member: current_member&.id,
           admin: current_admin&.id,
-          true_admin: true_admin&.id
+          true_admin: true_admin&.id,
+          true_account: true_account&.id,
+          true_member: true_member&.id
         }
       end
       def account_page
@@ -525,15 +527,40 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(status).to include("member" => membership.id)
   end
 
-  it "preserves the operator's credentials when nesting from account impersonation into a membership" do
+  it "retains the impersonated account when its selected membership impersonates another membership" do
     target = create(:user)
+    foreign = create(:user)
+    LinkedMembers::ImpersonationsController.impersonator_scopes :member
     account_login
     get "/linked_admins/sign_in"
     post "/account_impersonations/#{target.account_id}"
     expect(response).to redirect_to("/")
-    post "/linked_members/impersonations/#{target.id}"
+    expect(status).to include("account" => target.account_id, "member" => nil, "admin" => nil,
+      "true_account" => account.id, "true_admin" => membership.id, "true_member" => nil)
+
+    get "/linked_members/sign_in"
     expect(response).to redirect_to("/")
+    expect(status).to include("account" => target.account_id, "member" => target.id)
+    post "/linked_members/impersonations/#{foreign.id}"
+    expect(response).to redirect_to("/")
+    expect(status).to include("account" => target.account_id, "member" => foreign.id,
+      "true_account" => account.id, "true_admin" => membership.id, "true_member" => nil)
+
+    get "/linked_members/sign_in"
+    expect(response).to have_http_status(:forbidden)
+    get "/account_page"
+    expect(response.parsed_body).to eq("account" => target.account_id)
+    delete "/linked_members/impersonations"
+    expect(status).to include("account" => target.account_id, "member" => target.id)
+  end
+
+  it "does not let a restricted membership impersonation escalate to an account" do
+    target = create(:user)
+    start_member_impersonation(target)
+    post "/account_impersonations/#{target.account_id}"
+    expect(response).to have_http_status(:forbidden)
     expect(status).to include("account" => account.id, "member" => target.id)
   end
+
 
 end

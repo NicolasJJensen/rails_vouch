@@ -71,7 +71,7 @@ class Vouch::MembershipSessionsController < ::ApplicationController
 
   def require_unimpersonated_selection!
     Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
-    head :forbidden if Vouch::ImpersonationStack.active?(session)
+    head :forbidden if Vouch::ImpersonationStack.membership_restricted?(session)
   end
 
   def require_account_session!
