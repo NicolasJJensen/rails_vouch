@@ -12,6 +12,67 @@ module Vouch
       class_option :polymorphic, type: :boolean, default: false,
                                   desc: "Use a polymorphic archive owner"
 
+      def validate_archive_storage
+        if polymorphic? && model_metadata.composite_primary_key?
+          raise Thor::Error, "Polymorphic archive generation needs a single-column owner key; configure composite shared storage explicitly."
+        end
+
+        owner_path = File.join(destination_root, model_metadata.model_path)
+        if File.file?(owner_path)
+          association = File.read(owner_path).lines.find { |line| line.match?(/\bhas_many\s+:password_archives\b/) }
+          if association
+            compatible = polymorphic? ? association.match?(/\bas:\s*:owner\b/) : !association.match?(/\bas:/)
+            declared_keys = association[/foreign_key:\s*(\[[^\]]+\]|:[a-z_][a-z0-9_]*|["'][^"']+["'])/, 1]
+            if declared_keys
+              keys = declared_keys.scan(/[a-z_][a-z0-9_]*/)
+              compatible &&= keys == model_metadata.foreign_keys(archive_owner_name)
+            end
+            raise Thor::Error, "Existing password_archives association is incompatible; preserve or update its ownership explicitly." unless compatible
+          end
+        end
+
+        path = File.join(destination_root, "app/models/password_archive.rb")
+        if File.file?(path)
+          source = File.read(path)
+          association = source.lines.find { |line| line.match?(/\bbelongs_to\s+:#{Regexp.escape(archive_owner_name)}\b/) }
+          compatible = association && source.include?("Vouch::PasswordArchive::Concern")
+          compatible &&= polymorphic? ? association.match?(/polymorphic:\s*true/) : !association.include?("polymorphic:")
+          if compatible && !polymorphic?
+            declared_class = association[/class_name:\s*["']([^"']+)["']/, 1]
+            compatible &&= (declared_class || archive_owner_name.classify) == model_metadata.class_name
+          end
+          raise Thor::Error, "Existing PasswordArchive ownership does not match this command; keep its mapping or migrate it explicitly." unless compatible
+        end
+
+        if schema_table_exists?("password_archives")
+          validate_existing_table!("password_archives", archive_columns)
+          connection = ActiveRecord::Base.connection
+          unless polymorphic?
+            foreign_keys = connection.foreign_keys("password_archives")
+            matching = foreign_keys.any? do |foreign_key|
+              foreign_key.to_table == model_metadata.table_name &&
+                Array(foreign_key.column).map(&:to_s) == model_metadata.foreign_keys(archive_owner_name) &&
+                Array(foreign_key.primary_key).map(&:to_s) == owner_primary_keys
+            end
+            raise Thor::Error, "Existing password_archives foreign key does not match #{model_metadata.table_name}; migrate its ownership explicitly." unless matching
+          end
+        else
+          pending_archive_migrations.each do |migration|
+            source = File.read(migration)[/create_table\s*\(?\s*:password_archives\b.*?\bdo\b.*?^\s*end/m].to_s
+            expected_reference = source.match?(/\b(?:references|belongs_to)\s+:#{Regexp.escape(archive_owner_name)}\b/)
+            explicit_columns = archive_columns.all? { |column| source.match?(/\bt\.\w+\s+:#{Regexp.escape(column)}\b/) }
+            compatible = (expected_reference || explicit_columns) && source.include?(":password_digest") && source.include?(":created_at")
+            compatible &&= source.match?(/polymorphic:\s*true/) if polymorphic?
+            compatible &&= !source.match?(/polymorphic:\s*true/) unless polymorphic?
+            unless polymorphic?
+              targets = source.scan(/(?:foreign_key\s+:|to_table:\s*:)([a-z_][a-z0-9_]*)/).flatten
+              compatible &&= targets.empty? || targets.include?(model_metadata.table_name)
+            end
+            raise Thor::Error, "Pending password_archives migration is incompatible with this owner; edit that migration explicitly." unless compatible
+          end
+        end
+      end
+
       def create_models
         template "password_archive_model.rb.tt", "app/models/password_archive.rb" unless File.file?(File.join(destination_root, "app/models/password_archive.rb"))
       end
@@ -23,8 +84,9 @@ module Vouch
         contents = File.read(path)
         wiring = +"\n"
         wiring << "  include Vouch::Authenticatable\n" unless contents.include?("include Vouch::Authenticatable")
-        wiring << "  authenticates_with :password_trackable\n" unless contents.include?("authenticates_with :password_trackable")
-        association = options[:polymorphic] ? "  has_many :password_archives, as: :account, dependent: :destroy\n" : "  has_many :password_archives, #{model_metadata.association_options("account")}, dependent: :destroy\n"
+        declarations = contents.scan(/authenticates_with[^\n]*(?:\n[ \t]+:[^\n]*)*/)
+        wiring << "  authenticates_with :password_trackable\n" unless declarations.any? { |line| line.match?(/:password_trackable\b/) }
+        association = polymorphic? ? "  has_many :password_archives, as: :owner, dependent: :destroy\n" : "  has_many :password_archives, #{model_metadata.association_options(archive_owner_name)}, dependent: :destroy\n"
         wiring << association unless contents.include?("has_many :password_archives")
         return if wiring == "\n"
 
@@ -36,7 +98,8 @@ module Vouch
       end
 
       def create_feature_migration
-        return existing_archive_table! if schema_table_exists?("password_archives") || pending_table_migration?("password_archives")
+        validate_archive_storage
+        return existing_archive_table! if schema_table_exists?("password_archives") || pending_archive_migrations.any?
         migration_template "password_archives.rb.tt",
                            "db/migrate/create_password_archives.rb"
       end
@@ -54,18 +117,27 @@ module Vouch
       end
 
       def archive_index_columns
-        columns = polymorphic? ? ["account_type", "account_id"] : model_metadata.foreign_keys("account")
+        columns = polymorphic? ? ["owner_type", "owner_id"] : model_metadata.foreign_keys(archive_owner_name)
         (columns + ["created_at"]).inspect
       end
 
       def archive_owner_options
-        ", #{model_metadata.association_options('account')}"
+        ", #{model_metadata.association_options(archive_owner_name)}"
+      end
+
+      def archive_owner_name
+        polymorphic? ? "owner" : model_metadata.association_key
       end
 
       private
 
+      def archive_columns
+        ownership = polymorphic? ? %w[owner_type owner_id] : model_metadata.foreign_keys(archive_owner_name)
+        ownership + %w[password_digest created_at]
+      end
+
       def existing_archive_table!
-        validate_existing_table!("password_archives", %w[password_digest created_at])
+        validate_existing_table!("password_archives", archive_columns)
         say_status :identical, "password_archives already exists", :blue
       end
 
@@ -76,8 +148,8 @@ module Vouch
         false
       end
 
-      def pending_table_migration?(table)
-        Dir[File.join(destination_root, "db/migrate/*.rb")].any? { |path| File.read(path).match?(/create_table\s*(?:\(\s*)?:#{Regexp.escape(table)}\b/) }
+      def pending_archive_migrations
+        Dir[File.join(destination_root, "db/migrate/*.rb")].select { |path| File.read(path).match?(/create_table\s*(?:\(\s*)?:password_archives\b/) }
       end
 
       def generating_current_host?

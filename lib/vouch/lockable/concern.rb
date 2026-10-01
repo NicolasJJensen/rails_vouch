@@ -16,7 +16,7 @@ module Vouch
     module Concern
       extend ActiveSupport::Concern
 
-      MAX_LOCKOUT_EXPONENT = 8 # Cap: 2^8 = 256x base = ~21 hours max
+      MAX_LOCKOUT_EXPONENT = 8 # Cap: 256 times the configured base duration.
 
       def current_lockout_duration
         exponent = (consecutive_locks - 1).clamp(0, MAX_LOCKOUT_EXPONENT)
@@ -54,8 +54,11 @@ module Vouch
         Vouch::Persistence.transaction(self) do
           lock!
           max_failed_attempts = auth_config(:lockable, :max_failed_attempts)
-          new_attempts = failed_attempts + 1
+          reset_expired = locked_at.present? && !locked? &&
+            auth_config(:lockable, :reset_attempts_after_lockout)
+          new_attempts = (reset_expired ? 0 : failed_attempts) + 1
           attrs = { failed_attempts: new_attempts }
+          attrs[:locked_at] = nil if reset_expired
 
           if auth_config(:lockable, :strategy) == :failed_attempts &&
              new_attempts >= max_failed_attempts && !locked?

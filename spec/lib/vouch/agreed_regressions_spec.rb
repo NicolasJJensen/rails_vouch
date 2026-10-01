@@ -30,7 +30,7 @@ RSpec.describe 'Agreed model and mapping contracts' do
     5.times { account.failed_login! }
     duration = account.current_lockout_duration
     travel duration + 1.second do
-      account.failed_login!
+      5.times { account.failed_login! }
       expect(account.current_lockout_duration).to eq(duration * 2)
     end
   end

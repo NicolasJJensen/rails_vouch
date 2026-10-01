@@ -3,9 +3,10 @@
 module Vouch
   class Configuration
     class LockableConfig
-      attr_reader :max_failed_attempts, :strategy, :invalidate_sessions_on_lockout
+      attr_reader :max_failed_attempts, :strategy, :invalidate_sessions_on_lockout,
+                  :reset_attempts_after_lockout
       attr_writer :max_failed_attempts, :strategy, :lockout_duration,
-                  :invalidate_sessions_on_lockout
+                  :invalidate_sessions_on_lockout, :reset_attempts_after_lockout
 
       def initialize(root_configuration = nil)
         @root_configuration  = root_configuration
@@ -13,6 +14,7 @@ module Vouch
         @lockout_duration    = nil  # nil = inherit from root
         @strategy            = :failed_attempts
         @invalidate_sessions_on_lockout = false
+        @reset_attempts_after_lockout = true
       end
 
       # Lockout duration cascade: own value if set, else root config.

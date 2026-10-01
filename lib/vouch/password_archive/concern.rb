@@ -5,16 +5,14 @@
 # Include this in your password archive model so the gem can discover
 # the association via reflection at boot.
 #
-# The host app's model must declare:
-#   belongs_to :account
-#
-# Required columns:
-#   account_id, password_digest
+# The host supplies the owner association. Its name and foreign keys follow
+# that model; the feature discovers the owner's has_many association.
+# Archive rows require password_digest and created_at columns.
 #
 # Usage:
 #   class PasswordArchive < ApplicationRecord
 #     include Vouch::PasswordArchive::Concern
-#     belongs_to :account
+#     belongs_to :user
 #   end
 #
 module Vouch

@@ -37,6 +37,41 @@ RSpec.describe Vouch::Lockable::Concern do
   end
 
   describe "#failed_login!" do
+    it "defaults to a fresh allowance after lockout expires" do
+      expect(Vouch::Configuration.new.lockable.reset_attempts_after_lockout).to be true
+      account.update!(failed_attempts: 5, consecutive_locks: 1, locked_at: 10.minutes.ago)
+
+      account.failed_login!
+      expect(account.reload.failed_attempts).to eq(1)
+      expect(account.locked_at).to be_nil
+      expect(account.consecutive_locks).to eq(1)
+
+      account.failed_login!
+      expect(account.reload.failed_attempts).to eq(2)
+    end
+
+    it "retains the escalating duration when the fresh allowance is exhausted" do
+      account.update!(failed_attempts: 5, consecutive_locks: 1, locked_at: 10.minutes.ago)
+      5.times { account.failed_login! }
+
+      expect(account.reload).to be_locked
+      expect(account.consecutive_locks).to eq(2)
+      expect(account.current_lockout_duration).to eq(10.minutes)
+    end
+
+    it "can retain failed attempts through a model override" do
+      stub_const("RetainedLockAccount", Class.new(Account))
+      RetainedLockAccount.authenticates_with :lockable,
+        lockable: { reset_attempts_after_lockout: false }
+      account.update!(failed_attempts: 5, consecutive_locks: 1, locked_at: 10.minutes.ago)
+
+      RetainedLockAccount.find(account.id).failed_login!
+
+      expect(account.reload.failed_attempts).to eq(6)
+      expect(account).to be_locked
+      expect(account.consecutive_locks).to eq(2)
+    end
+
     it "increments failed_attempts" do
       expect { account.failed_login! }.to change { account.reload.failed_attempts }.by(1)
     end

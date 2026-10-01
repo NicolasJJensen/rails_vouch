@@ -91,6 +91,21 @@ RSpec.describe Vouch::PasswordTrackable::Concern do
   end
 
   describe "archive pruning" do
+    it "retains no archived passwords at zero count but still rejects the current password" do
+      stub_const("NoHistoryAccount", Class.new(Account))
+      NoHistoryAccount.authenticates_with :password_trackable,
+        password_trackable: { history_count: 0 }
+      account.password_archives.create!(password_digest: BCrypt::Password.create("older-password"))
+      record = NoHistoryAccount.find(account.id)
+
+      record.update!(password: "replacement-password", password_confirmation: "replacement-password")
+      expect(record.password_archives).to be_empty
+      expect(record.update(password: "replacement-password", password_confirmation: "replacement-password")).to be false
+      expect(record.errors[:password]).to include("was used recently. Choose a different password.")
+      expect(record.update(password: "password123", password_confirmation: "password123")).to be true
+      expect(record.password_archives).to be_empty
+    end
+
     it "prunes archives beyond the history count" do
       # Create more archives than the history count (5)
       6.times do |i|

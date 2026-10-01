@@ -102,7 +102,11 @@ module Vouch
           keep_ids = password_archives_relation.order(created_at: :desc)
                        .limit(auth_config(:password_trackable, :history_count))
                        .pluck(password_archives_relation.klass.primary_key)
-          password_archives_relation.where.not(password_archives_relation.klass.primary_key => keep_ids).delete_all if keep_ids.any?
+          if keep_ids.empty?
+            password_archives_relation.delete_all
+          else
+            password_archives_relation.where.not(password_archives_relation.klass.primary_key => keep_ids).delete_all
+          end
         end
       end
     end
