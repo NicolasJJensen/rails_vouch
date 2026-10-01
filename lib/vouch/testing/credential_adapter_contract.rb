@@ -39,6 +39,15 @@ module Vouch
             expect(credential_adapter.verify(issuance, proof: credential_adapter.invalid_proof)).to be_invalid
           end
 
+          it "locks verification after the configured number of incorrect attempts" do
+            issuance = credential_adapter.issue
+            credential_adapter.maximum_attempts.times do
+              expect(credential_adapter.verify(issuance, proof: credential_adapter.invalid_proof)).to be_invalid
+            end
+
+            expect(credential_adapter.verify(issuance)).to be_locked
+          end
+
           it "rejects a proof after the credential is disabled" do
             issuance = credential_adapter.issue
             credential_adapter.disable!

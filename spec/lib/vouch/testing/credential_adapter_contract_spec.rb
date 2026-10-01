@@ -6,9 +6,8 @@ require "vouch/testing/credential_adapter_contract"
 Vouch::Testing::CredentialAdapterContract.install!
 
 RSpec.describe Vouch::Testing::CredentialAdapterContract do
-  Issuance = Struct.new(:outcome, :proof)
-
   class ContractAdapter
+    Issuance = Struct.new(:outcome, :proof)
     include ActiveSupport::Testing::TimeHelpers
 
     attr_reader :credential
@@ -48,16 +47,20 @@ RSpec.describe Vouch::Testing::CredentialAdapterContract do
     end
 
     def unverify!
-      credential.update!(verified_at: nil)
+      credential.unverify!()
     end
 
     def after_expiry(&block)
       duration = if @protocol == :totp
-        2.minutes
+        30.seconds + 30.seconds + 30.seconds + 1.second
       else
-        Vouch.configuration.two_factorable.challenge_validity + 1.second
+        credential.account.auth_config(:two_factorable, :challenge_validity) + 1.second
       end
       travel(duration, &block)
+    end
+
+    def maximum_attempts
+      credential.account.auth_config(:two_factorable, :max_attempts)
     end
 
     def stale_credential
@@ -73,13 +76,12 @@ RSpec.describe Vouch::Testing::CredentialAdapterContract do
     end
 
     def with_cancelled_persistence
-      callback = :rollback_credential_contract_persistence
-      TwoFactorCredential.define_method(callback) { raise ActiveRecord::Rollback }
+      target_id = credential.id
+      callback = proc { raise ActiveRecord::Rollback if id == target_id }
       TwoFactorCredential.set_callback(:update, :before, callback)
       yield
     ensure
       TwoFactorCredential.skip_callback(:update, :before, callback)
-      TwoFactorCredential.remove_method(callback)
     end
   end
 

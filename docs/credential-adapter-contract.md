@@ -19,6 +19,7 @@ to the gem's dependencies.
 Load the contract from your application's spec helper:
 
 ```ruby
+# spec/rails_helper.rb
 require "vouch/testing/credential_adapter_contract"
 
 Vouch::Testing::CredentialAdapterContract.install!
@@ -27,6 +28,7 @@ Vouch::Testing::CredentialAdapterContract.install!
 Define the adapter below in `spec/support/phone_credential_adapter.rb` and require it from `spec/rails_helper.rb`. Then use it in `spec/models/phone_spec.rb`:
 
 ```ruby
+# spec/models/phone_spec.rb
 RSpec.describe Phone do
   let(:credential_adapter) { PhoneCredentialAdapter.new(self) }
 
@@ -38,14 +40,26 @@ This example uses the `Phone` model from the MFA guide and a `:phone` factory th
 setup and time control inside the adapter so the shared examples can exercise
 different delivery protocols.
 
+For example, define the factory with its real owner association:
+
+```ruby
+# spec/factories/phones.rb
+FactoryBot.define do
+  factory :phone do
+    association :user
+    sequence(:e164) { |number| "+614#{number.to_s.rjust(8, '0')}" }
+  end
+end
+```
+
 ## Minimal adapter interface
 
 The shared examples call these methods:
 
 ```ruby
-Issuance = Struct.new(:outcome, :proof)
-
+# spec/support/phone_credential_adapter.rb
 class PhoneCredentialAdapter
+  Issuance = Struct.new(:outcome, :proof)
   include ActiveSupport::Testing::TimeHelpers
 
   attr_reader :credential
@@ -73,11 +87,15 @@ class PhoneCredentialAdapter
   end
 
   def unverify!
-    credential.update!(verified_at: nil)
+    credential.unverify!
   end
 
   def after_expiry(&block)
-    travel(Vouch.configuration.two_factorable.challenge_validity + 1.second, &block)
+    travel(credential.user.auth_config(:two_factorable, :challenge_validity) + 1.second, &block)
+  end
+
+  def maximum_attempts
+    credential.user.auth_config(:two_factorable, :max_attempts)
   end
 
   def stale_credential
@@ -93,13 +111,12 @@ class PhoneCredentialAdapter
   end
 
   def with_cancelled_persistence
-    callback = :rollback_credential_adapter_persistence
-    credential.class.define_method(callback) { raise ActiveRecord::Rollback }
+    target_id = credential.id
+    callback = proc { raise ActiveRecord::Rollback if id == target_id }
     credential.class.set_callback(:update, :before, callback)
     yield
   ensure
     credential.class.skip_callback(:update, :before, callback)
-    credential.class.remove_method(callback)
   end
 end
 ```
@@ -110,8 +127,10 @@ submitted by `verify`. `verify` returns a `Vouch::Result` with statuses such as
 `ok?`, `invalid?`, `locked?`, and `cancelled?`.
 
 `after_expiry` must run its block after the provider's validity boundary. A
-TOTP adapter may advance the clock to the next time step, while an OTP adapter
-can use the configured challenge validity. `stale_credential` must return a
+TOTP adapter must advance beyond its entire accepted drift window, not just
+the next time step. For a 30-second interval with 30 seconds of drift in each
+direction, advance 91 seconds. An OTP adapter uses the credential owner’s
+configured challenge validity, which can differ from the global default. `stale_credential` must return a
 separately loaded instance of the same row.
 
 ## What the contract checks
@@ -120,6 +139,7 @@ The shared examples verify that the adapter:
 
 - issues a usable proof;
 - rejects invalid, expired, and replayed proofs;
+- locks verification after the owner’s configured attempt limit;
 - rejects a proof after disablement or unverification;
 - rejects a proof through an instance loaded before acceptance;
 - preserves the proof when persistence raises an Active Record error; and
@@ -132,3 +152,14 @@ the cancellation condition is removed.
 See
 [`spec/lib/vouch/testing/credential_adapter_contract_spec.rb`](../spec/lib/vouch/testing/credential_adapter_contract_spec.rb)
 for complete OTP and TOTP adapters.
+
+These are model-level checks. They do not exercise HTTP rate limits, the
+controller’s binding of a challenge to the credential’s current enabled period,
+or competing database transactions. Keep request tests for your authentication
+flow and concurrency tests for adapters that implement their own persistence.
+
+The example uses the concrete `Phone#user` association from the MFA guide.
+Replace that association in the adapter if your credentials belong to another
+model. `unverify!` deliberately exercises Vouch’s revocation callbacks instead
+of clearing `verified_at` directly. The temporary callback used by the rollback
+example affects only the test credential and is removed even when the test fails.
