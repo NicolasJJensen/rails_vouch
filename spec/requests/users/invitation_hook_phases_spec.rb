@@ -84,7 +84,7 @@ RSpec.describe "Invitation acceptance hook phases", type: :request do
 
     post "/users/sign_up", params: {account: {password: "replacement123", password_confirmation: "replacement123"}}
 
-    expect(response).to have_http_status(:forbidden)
+    expect(response).to have_http_status(:unprocessable_entity)
     expect(account.reload.password_digest).to eq(digest)
     expect(invitation.reload.invitation_token).to eq(token)
   ensure

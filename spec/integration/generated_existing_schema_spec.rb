@@ -18,7 +18,7 @@ RSpec.describe "feature migrations over existing columns" do
       record = Class.new(ApplicationRecord) { self.table_name = table }
       stub_const("ExistingFeatureRecord", record)
       Dir.mktmpdir("vouch-existing-feature") do |directory|
-        options = generator_class == Vouch::Generators::PasswordResetableGenerator ? {model_only: true} : {}
+        options = generator_class == Vouch::Generators::PasswordResetableGenerator ? {model_only: true, token_strategy: "opaque"} : {}
         generator = generator_class.new(["ExistingFeatureRecord"], options)
         generator.destination_root = directory
         generator.invoke_all
@@ -32,6 +32,9 @@ RSpec.describe "feature migrations over existing columns" do
         expect(columns.count("verification_nonce")).to eq(1)
         expected = generator_class == Vouch::Generators::PasswordResetableGenerator ? "password_reset_sent_at" : "verification_version"
         expect(columns).to include(expected)
+        if generator_class == Vouch::Generators::PasswordResetableGenerator
+          expect(connection.index_exists?(table, :password_reset_token_digest, unique: true)).to be(true)
+        end
       end
     ensure
       connection.drop_table(table, if_exists: true) if table

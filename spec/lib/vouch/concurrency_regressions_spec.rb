@@ -134,7 +134,7 @@ RSpec.describe "single-use authentication concurrency" do
     token = account.generate_password_reset_token!.value
 
     results = concurrently_after_lock_precheck(Account, account.id) do |candidate|
-      candidate.reset_password_with_token!(token, password: "replacement123")
+      candidate.reset_password_with_token(token, password: "replacement123")
     end
 
     expect(results.count(&:ok?)).to eq(1)

@@ -16,7 +16,7 @@ RSpec.describe 'Agreed model and mapping contracts' do
     account = create(:account)
     token = account.generate_password_reset_token!.value
     account.update!(password: 'replacement-password', password_confirmation: 'replacement-password')
-    expect(account.reset_password_with_token!(token, password: 'another-password')).to be_invalid
+    expect(account.reset_password_with_token(token, password: 'another-password')).to be_invalid
   end
 
   it 'rejects the current password as a replacement' do

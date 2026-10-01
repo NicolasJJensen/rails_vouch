@@ -44,7 +44,7 @@ RSpec.describe "Users lifecycle hook phases", type: :request do
       }}
     end
 
-    expect(response).to have_http_status(:forbidden)
+    expect(response).to have_http_status(:unprocessable_entity)
     expect(after_calls).to eq(0)
   end
 

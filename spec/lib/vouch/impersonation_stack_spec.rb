@@ -74,14 +74,15 @@ RSpec.describe Vouch::ImpersonationStack do
 
     expect(session[evidence_key]).to eq({"method" => "totp", "credential" => "operator"})
   end
-  it "round trips serialized stack references and stores the original operator only once" do
+  it "preserves the original authenticated context across serialized nested frames" do
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: mapping, target: first_target)
     described_class.start!(warden: warden, session: session, source_mapping: mapping,
       target_mapping: mapping, target: second_target)
     restored = JSON.parse(JSON.generate(session))
     stack = restored.fetch(described_class::SESSION_KEY)
-    expect(stack.count { |entry| entry.key?("operator") }).to eq(1)
+    expect(stack.first.fetch("contexts").map { |reference| reference.fetch("scope") }).to include("user")
+    expect(stack).to all(include("mode" => "membership"))
     expect(described_class.authorized_identity(restored, scope: :user)).to eq(second_target)
     expect(described_class.original(warden: warden, session: restored, scope: :user)).to eq(operator)
   end
