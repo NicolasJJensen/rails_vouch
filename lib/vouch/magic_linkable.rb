@@ -1,32 +1,8 @@
 # frozen_string_literal: true
 
-# MagicLinkable concern — passwordless sign-in via a one-time code
-# delivered over a contactable channel (email link, SMS code, etc.).
-#
-# Distinct from Verifiable (which proves ownership once, at add time) and
-# TwoFactorable (which challenges an already-authenticated session as the
-# second factor). MagicLinkable is the primary authentication event —
-# verify_sign_in_code returning true IS the sign-in.
-#
-# Same-session mutual exclusion with 2FA is enforced upstream, not on the
-# row. When magic-link sign-in succeeds, controllers stash
-# `{"type", "id"}` in the session's `:signed_in_via` slot; the 2FA challenge
-# filter removes that credential from the picker for the current session
-# only. See Vouch::ControllerHelpers#two_factor_credentials_for.
-#
-# Required columns (added by `bin/rails g vouch:magic_linkable`):
-#   - sign_in_attempts:integer default: 0, null: false
-#   - sign_in_locked_at:datetime
-#   - sign_in_nonce:string (nullable)
-#   - created_at:datetime (validated when the feature is used)
-#
-# Public surface:
-#   - #sign_in_locked?
-#   - #issue_sign_in_code!            => Result.ok(token) | Result.locked
-#   - #verify_sign_in_code(code, token:) => Result
-#
-# Hosts override #deliver_sign_in_code(code) per credential type.
-#
+# Passwordless first-factor codes for saved credentials. A successful proof
+# must pass through complete_sign_in; it does not publish a Warden session or
+# become MFA evidence by itself.
 module Vouch
   module MagicLinkable
     extend ActiveSupport::Concern
@@ -45,7 +21,7 @@ module Vouch
     # you can't sign in with an unsaved row. Delivery exceptions raised
     # by `deliver_sign_in_code` bubble; hosts rescue at the controller
     # level, same convention as Verifiable.
-    def issue_sign_in_code!
+    def issue_sign_in_code
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:magic_linkable, self.class))
       raise ArgumentError, "cannot sign in with an unpersisted record" unless persisted?
       return Vouch::Result.locked if sign_in_locked?
@@ -60,13 +36,24 @@ module Vouch
 
       deliver_sign_in_code(issued.code)
 
-      Vouch::Result.ok(issued.token)
+      Vouch::Result.ok(issued.token, record: self)
+    rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
+    end
+
+    def issue_sign_in_code!
+      result = issue_sign_in_code
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
     end
 
     # Verify a submitted sign-in code. Does NOT set verified_at (that's
     # Verifiable's job) or two_factor_last_used_at (that's TwoFactorable's).
-    # Returns Result.ok on success; caller then set_user's the associated account.
+    # Returns a proof outcome; the controller then completes authentication.
     def verify_sign_in_code(code, token:)
+      raise ArgumentError, "cannot sign in with an unpersisted record" unless persisted?
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:magic_linkable, self.class))
       return Vouch::Result.locked if sign_in_locked?
 
@@ -77,12 +64,12 @@ module Vouch
       if sign_in_payload_valid?(payload)
         transaction_result = Vouch::Persistence.transaction(self) do
           lock!
-          next Vouch::Result.invalid if sign_in_locked?
+          next Vouch::Result.locked if sign_in_locked?
           next Vouch::Result.invalid unless sign_in_payload_valid?(payload)
 
           Vouch::Persistence.update!(self, sign_in_attempts: 0, sign_in_locked_at: nil, sign_in_nonce: nil)
         end
-        transaction_result.is_a?(Vouch::Result) ? transaction_result : Vouch::Result.ok
+        transaction_result.is_a?(Vouch::Result) ? transaction_result : Vouch::Result.ok(self)
       else
         bump_lockout_counter!(
           counter_attr:     :sign_in_attempts,
@@ -92,8 +79,16 @@ module Vouch
         )
         Vouch::Result.invalid
       end
-    rescue Vouch::Persistence::Cancelled
-      Vouch::Result.cancelled
+    rescue Vouch::Persistence::Cancelled, ActiveRecord::RecordNotSaved => error
+      Vouch::Result.cancelled(record: self, error: error)
+    rescue ActiveRecord::RecordInvalid => error
+      Vouch::Result.invalid(record: self, error: error)
+    end
+
+    def verify_sign_in_code!(code, token:)
+      result = verify_sign_in_code(code, token: token)
+      raise Vouch::OperationFailed, result unless result.ok?
+      result
     end
 
     # Host delivery hook. Override per credential type:

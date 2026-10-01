@@ -61,6 +61,23 @@ RSpec.describe Vouch::Generators::MagicLinkableGenerator do
       expect(matches.size).to eq(1)
     end
 
+    it "declares a subject and preserves the host's delivery method" do
+      write_model("app/models/phone.rb", <<~MODEL)
+        class Phone < ApplicationRecord
+          def deliver_sign_in_code(code)
+            SmsService.deliver(e164, code)
+          end
+        end
+      MODEL
+      run_generator(["Phone"], subject: ["e164"])
+      run_generator(["Phone"], subject: ["ignored"])
+
+      body = read("app/models/phone.rb")
+      expect(body).to include("self.verifiable_subject_attribute = :e164", "SmsService.deliver")
+      expect(body.scan("def deliver_sign_in_code").length).to eq(1)
+      expect(body).not_to include(":ignored")
+    end
+
     it "prints a snippet when the model file is missing" do
       output = run_generator(["phones"])
       expect(output).to match(/Add to app\/models\/phone\.rb/)

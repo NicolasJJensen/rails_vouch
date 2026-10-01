@@ -46,7 +46,7 @@ RSpec.describe Vouch::MagicLinkable do
 
     it "returns Result.locked without issuing when sign_in_locked?" do
       record.update!(sign_in_locked_at: 1.minute.ago)
-      result = record.issue_sign_in_code!
+      result = record.issue_sign_in_code
       expect(result).to be_locked
       expect(record.last_delivered_sign_in_code).to be_nil
     end
@@ -69,6 +69,24 @@ RSpec.describe Vouch::MagicLinkable do
     it "lets delivery exceptions bubble" do
       allow(record).to receive(:deliver_sign_in_code).and_raise(StandardError, "transport down")
       expect { record.issue_sign_in_code! }.to raise_error(StandardError, "transport down")
+    end
+  end
+
+  describe "normal and bang outcomes" do
+    it "raises with the expected invalid proof result only when using the bang method" do
+      expect(record.verify_sign_in_code("wrong", token: "invalid")).to be_invalid
+      expect { record.verify_sign_in_code!("wrong", token: "invalid") }.to raise_error(Vouch::OperationFailed) do |error|
+        expect(error.result).to be_invalid
+      end
+    end
+
+    it "preserves a failed issuance result and its underlying persistence error" do
+      allow(record).to receive(:update!).and_raise(ActiveRecord::RecordNotSaved.new("stopped", record))
+      result = record.issue_sign_in_code
+
+      expect(result).to be_cancelled
+      expect(result.error).to be_a(ActiveRecord::RecordNotSaved)
+      expect { record.issue_sign_in_code! }.to raise_error(Vouch::OperationFailed)
     end
   end
 

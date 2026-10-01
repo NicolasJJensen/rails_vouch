@@ -13,6 +13,8 @@ module Vouch
       self.feature_template_name = "magic_linkable"
       desc "Add MagicLinkable columns to a model's table and wire the concern into the model."
 
+      class_option :subject, type: :array, default: []
+
       def configure_model
         path = model_path
         unless File.exist?(path)
@@ -23,24 +25,21 @@ module Vouch
 
         contents = File.read(path)
 
-        if contents.include?("Vouch::MagicLinkable")
-          say_status :identical, "#{path} already includes Vouch::MagicLinkable", :blue
-          return
+        wiring = +"\n"
+        wiring << "  include Vouch::MagicLinkable\n" unless contents.include?("include Vouch::MagicLinkable")
+        if options[:subject].any? && !contents.include?("verifiable_subject_attribute")
+          attributes = options[:subject].map do |name|
+            raise Thor::Error, "Invalid subject attribute" unless name.match?(/\A[a-z_][a-z0-9_]*\z/)
+            name.to_sym
+          end
+          value = attributes.one? ? attributes.first.inspect : attributes.inspect
+          wiring << "  self.verifiable_subject_attribute = #{value}\n"
         end
-
-        inject_into_class(path, model_metadata.declaration_name(contents)) do
-          <<~RUBY
-            include Vouch::MagicLinkable
-
-            # Deliver a one-time sign-in code over this credential's channel.
-            # For SMS: SmsCourier.send(e164, "Your sign-in code: \#{code}").
-            # For email: SignInMailer.code(self, code).deliver_later.
-            #
-            # def deliver_sign_in_code(code)
-            # end
-
-          RUBY
+        unless contents.include?("def deliver_sign_in_code")
+          wiring << "\n  def deliver_sign_in_code(_code)\n    raise NotImplementedError, \"Implement sign-in code delivery\"\n  end\n"
         end
+        inject_model_code(path, model_metadata, wiring) unless wiring == "\n"
+
       end
 
       private
