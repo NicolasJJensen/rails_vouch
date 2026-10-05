@@ -6,7 +6,10 @@ RSpec.describe Vouch::VerificationsController, type: :controller do
 
     def create
       head :forbidden if params[:deny] == "yes"
-      super
+      status = super
+      if status == :ok && params[:custom_response] == "yes"
+        render json: { record_id: @verifiable.id, delivery: "sent" }, status: :accepted
+      end
     end
 
     private
@@ -43,6 +46,16 @@ RSpec.describe Vouch::VerificationsController, type: :controller do
     expect(response).to have_http_status(:forbidden)
     expect(@code).to be_nil
     expect(record.reload.verification_nonce).to be_nil
+  end
+
+  it "returns status and exposes the record without requiring an authentication mapping" do
+    expect(controller).not_to receive(:auth_mapping)
+
+    post :create, params: input.merge(custom_response: "yes")
+
+    expect(response).to have_http_status(:accepted)
+    expect(response.parsed_body).to eq("record_id" => record.id, "delivery" => "sent")
+    expect(session[:vouch_verification_tokens]).to be_present
   end
 
   it "does not turn an arbitrary record id into authorization" do

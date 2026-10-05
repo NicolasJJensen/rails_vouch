@@ -4,7 +4,7 @@ class <%= controller_class_name %> < Vouch::ImpersonationsController
 <% end -%>
 
   def create
-    # Authorize impersonator's access to @identity here.
+    # Authorize impersonator's access to @<%= auth_scope_name %> here.
     super
   end
 end

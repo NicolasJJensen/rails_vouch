@@ -27,6 +27,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     stub_const("LinkedAccounts::TwoFactorChallengeController", Class.new(Vouch::TwoFactorChallengeController) do
       auth_scope :account
       def default_render
+        return super unless %w[index show].include?(action_name)
+
         render plain: "Second factor"
       end
     end)
@@ -115,6 +117,8 @@ RSpec.describe "Account and membership sessions", type: :request do
         end
       end
       post "/account_impersonations/:id", to: "linked_accounts/impersonations#create"
+      delete "/account_impersonations", to: "linked_accounts/impersonations#destroy"
+      delete "/account_impersonations/all", to: "linked_accounts/impersonations#destroy_all"
       get "/linked_status", to: "linked_status#show"
       get "/account_page", to: "linked_status#account_page"
       get "/protected_page", to: "linked_status#protected_page"
@@ -180,7 +184,8 @@ RSpec.describe "Account and membership sessions", type: :request do
   it "uses the original operator's password during full-account impersonation" do
     LinkedStatusController.require_recent_authentication(scope: :account, within: 1.minute, only: :account_page)
     LinkedAccounts::SessionsController.define_method(:confirm) do
-      super() { |result| head :unprocessable_entity unless result.ok? }
+      status = super()
+      head :unprocessable_entity unless status == :ok
     end
     target = create(:account, password: "target-secret", password_confirmation: "target-secret")
     account_login
@@ -199,13 +204,12 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(request.session[Vouch::Session.key_for(:account, :evidence)]).to be_nil
   end
 
-  it "yields automatic membership completion once before the default response" do
+  it "returns automatic membership completion once before the default response" do
     observed = []
     LinkedMembers::SessionsController.define_method(:new) do
-      super() do |result|
-        observed << result.status
-        render json: { identity_id: result.metadata.fetch(:identity).id }
-      end
+      status = super()
+      observed << status
+      render json: { identity_id: @member.id }
     end
     account_login
 
@@ -727,7 +731,8 @@ RSpec.describe "Account and membership sessions", type: :request do
     restored = []
     LinkedMembers::ImpersonationsController.before_impersonation_end { |_target, previous| restored << previous.id }
     LinkedMembers::ImpersonationsController.define_method(:destroy) do
-      super() { |result| render json: { restored: result.value.id } }
+      super()
+      render json: { restored: @member.id }
     end
 
     delete "/linked_members/impersonations"
@@ -735,6 +740,86 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(response.parsed_body).to eq("restored" => first.id)
     expect(restored).to eq([first.id])
     expect(status).to include("member" => first.id)
+  end
+
+  it "exposes the account target after super for an account impersonation response" do
+    target = create(:account)
+    account_login
+    get "/linked_admins/sign_in"
+    LinkedAccounts::ImpersonationsController.define_method(:create) do
+      status = super()
+      render json: { status: status, account_id: @account.id, current_id: current_account.id }
+    end
+
+    post "/account_impersonations/#{target.id}"
+
+    expect(response.parsed_body).to eq("status" => "ok", "account_id" => target.id, "current_id" => target.id)
+    expect(response.headers["Location"]).to be_nil
+  end
+
+  it "retains the attempted account target when impersonation is cancelled" do
+    target = create(:account)
+    account_login
+    get "/linked_admins/sign_in"
+    LinkedAccounts::ImpersonationsController.before_impersonation_start { throw :abort }
+    LinkedAccounts::ImpersonationsController.define_method(:create) do
+      status = super()
+      render json: { status: status, target_id: @account.id, current_id: current_account.id }
+    end
+
+    post "/account_impersonations/#{target.id}"
+
+    expect(response.parsed_body).to eq("status" => "cancelled", "target_id" => target.id, "current_id" => account.id)
+    expect(request.session[Vouch::ImpersonationStack::SESSION_KEY]).to be_nil
+  end
+
+  %i[destroy destroy_all].each do |action|
+    it "does not expose an administrator as the member after #{action}" do
+      target = create(:user)
+      start_member_impersonation(target)
+      LinkedMembers::ImpersonationsController.define_method(action) do
+        outcome = super()
+        render json: { status: outcome, member_id: @member&.id, account_id: @account.id }
+      end
+
+      delete(action == :destroy ? "/linked_members/impersonations" : "/linked_members/impersonations/all")
+
+      expect(response.parsed_body).to eq("status" => "ok", "member_id" => nil, "account_id" => account.id)
+      expect(status).to include("member" => nil, "admin" => membership.id)
+    end
+
+    it "does not expose a different operator class as the account after #{action}" do
+      stub_const("SupportOperator", Class.new(Account))
+      Vouch.mappings[:support_operator] = Vouch::Mapping.new(:support_operator, model: "SupportOperator").tap(&:resolve_reflections!)
+      LinkedAccounts::ImpersonationsController.impersonator_scopes :support_operator
+      operator = SupportOperator.find(account.id)
+      target = create(:account)
+      login_as(operator, scope: :support_operator)
+      post "/account_impersonations/#{target.id}"
+      expect(response).to redirect_to("/")
+      LinkedAccounts::ImpersonationsController.define_method(action) do
+        outcome = super()
+        render json: { status: outcome, account_id: @account&.id, operator_id: warden.user(:support_operator)&.id }
+      end
+
+      delete(action == :destroy ? "/account_impersonations" : "/account_impersonations/all")
+
+      expect(response.parsed_body).to eq("status" => "ok", "account_id" => nil, "operator_id" => operator.id)
+    end
+
+    it "keeps the current member exposed when #{action} is cancelled" do
+      target = create(:user)
+      start_member_impersonation(target)
+      LinkedMembers::ImpersonationsController.before_impersonation_end { throw :abort }
+      LinkedMembers::ImpersonationsController.define_method(action) do
+        outcome = super()
+        render json: { status: outcome, member_id: @member.id, current_id: current_member.id }
+      end
+
+      delete(action == :destroy ? "/linked_members/impersonations" : "/linked_members/impersonations/all")
+
+      expect(response.parsed_body).to eq("status" => "cancelled", "member_id" => target.id, "current_id" => target.id)
+    end
   end
 
   it "lets full account impersonation manage only the effective account's MFA credentials" do
@@ -791,6 +876,4 @@ RSpec.describe "Account and membership sessions", type: :request do
     expect(response).to have_http_status(:forbidden)
     expect(status).to include("account" => account.id, "member" => target.id)
   end
-
-
 end

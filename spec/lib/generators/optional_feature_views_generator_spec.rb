@@ -45,6 +45,35 @@ RSpec.describe "optional feature view generators" do
     expect(Vouch::Generators::PasswordResetableGenerator.new(["Account"], auth_scope: "user")).to be_a(Vouch::Generators::PasswordResetableGenerator)
   end
 
+  {
+    combined: ['auth.scope :user, account: "Account", identity: "User" do', "Account", "user", "account"],
+    inferred_combined: ['auth.scope account: "Account", identity: "User" do', "Account", "user", "account"],
+    custom_single: ['auth.scope :operator, model: "User" do', "User", "operator", "operator"],
+    membership: ['auth.scope :employee, account_scope: :owner, identity: "Employee" do', "Account", "employee", "owner"]
+  }.each do |kind, (declaration, model, scope, variable)|
+    it "uses the credentials record's public variable in #{kind} reset views" do
+      directory = Dir.mktmpdir("vouch-reset-view")
+      @directories << directory
+      FileUtils.mkdir_p(File.join(directory, "config"))
+      File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
+        Rails.application.routes.draw do
+          Vouch.routes(self) do |auth|
+            #{declaration}
+              auth.sessions
+            end
+          end
+        end
+      RUBY
+      generator = Vouch::Generators::PasswordResetableGenerator.new([model],
+        auth_scope: scope, controller_path: "portal")
+      generator.destination_root = directory
+      generator.invoke(:create_optional_ui)
+
+      view = File.read(File.join(directory, "app/views/portal/password_resets/edit.html.erb"))
+      expect(view).to include("@#{variable}.errors")
+    end
+  end
+
   it "wires password reset authentication, delivery, and account routes idempotently" do
     directory = Dir.mktmpdir("vouch-password-reset")
     @directories << directory

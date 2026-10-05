@@ -2,22 +2,28 @@ class Vouch::OmniAuthsController < ::ApplicationController
   include Vouch::Authentication
   allow_unauthenticated_access
 
-  def callback(&response_handler)
+  def callback(&block)
     return if performed?
     @auth_hash = request.env['omniauth.auth']
-    result = oauth_callback_result
-    respond_with_authentication_result(result, response_handler) { render_oauth_result(result) }
+    set_operation_result(oauth_callback_result(&block))
   end
 
-  def failure(&response_handler)
+  def failure
     return if performed?
     result = Vouch::Result.invalid(reason: :failed, error: request.env['omniauth.error'], request_failure: true)
-    respond_with_authentication_result(result, response_handler) { render_oauth_result(result) }
+    set_operation_result(result)
   end
 
   private
 
-  def oauth_callback_result
+  def default_render
+    return if performed?
+    return super unless %w[callback failure].include?(action_name) && @_vouch_operation_result
+
+    render_oauth_result(@_vouch_operation_result)
+  end
+
+  def oauth_callback_result(&block)
     unless @auth_hash && @auth_hash['provider'].present? && @auth_hash['uid'].present?
       return oauth_request_failed(:failed)
     end
@@ -47,7 +53,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
         return oauth_request_failed(:context_changed)
       end
       return oauth_request_failed(:registration_conflict) if oauth_identity
-      create_account
+      create_account(&block)
     else
       oauth_request_failed(:invalid_request)
     end
@@ -58,7 +64,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   def sign_in_existing(oauth_identity)
-    account = auth_mapping.account_for_oauth_identity(oauth_identity)
+    @vouch_account = account = auth_mapping.account_for_oauth_identity(oauth_identity)
     return oauth_request_failed(:failed) unless account
     context = {'method' => 'oauth', 'provider' => @auth_hash['provider']}
     return Vouch::Result.invalid(record: account, operation: :sign_in, reason: :denied) unless authentication_allowed?(account, context)
@@ -73,6 +79,7 @@ class Vouch::OmniAuthsController < ::ApplicationController
   end
 
   def link_identity(existing)
+    @vouch_account = current_account
     if existing && auth_mapping.account_for_oauth_identity(existing) != current_account
       return Vouch::Result.invalid(operation: :link, reason: :already_linked, record: existing)
     end
@@ -88,18 +95,18 @@ class Vouch::OmniAuthsController < ::ApplicationController
       env.abort! unless completed
       true
     end
+    @oauth_identity = identity
     linked ? Vouch::Result.ok(identity, operation: :link) : Vouch::Result.cancelled(operation: :link, record: current_account)
   rescue ActiveRecord::RecordInvalid, ActiveRecord::RecordNotUnique, Vouch::Persistence::Cancelled => error
     Vouch::Result.invalid(operation: :link, reason: :already_linked, record: current_account, error: error)
   end
 
-  def create_account
+  def create_account(&block)
     saved = false
-    registration_form if registration_form_class
-    pending = begin_oauth_registration(@auth_hash, account: @account, reconnect_uid: @oauth_initiation['reconnect_uid'])
+    pending = begin_oauth_registration(@auth_hash, account: @vouch_account, reconnect_uid: @oauth_initiation['reconnect_uid'])
     return oauth_request_failed(pending.metadata[:reason]) unless pending.ok?
-    @account = account = pending.value
-    prepare_registration_form if registration_form_class
+    @vouch_account = account = pending.value
+    expose_authentication_records
     return Vouch::Result.pending(account, operation: :registration, next_step: :registration) if oauth_registration_required?
     return oauth_request_failed(:expired_providers) if pending_oauth_providers.any? { |provider| provider[:expired] }
 
@@ -108,14 +115,13 @@ class Vouch::OmniAuthsController < ::ApplicationController
     committed = run_authentication_hooks_with_invitation(:oauth_account_creation, account, auth_hash: @auth_hash) do |env|
       identity = nil
       completed = run_commit_hooks(:oauth_account_creation, *env.args, **env.kwargs) do |commit_env|
-        identity = persist_oauth_registration!(account, oauth_hashes)
+        @vouch_identity = identity = persist_oauth_registration!(account, oauth_hashes, &block)
         commit_env.add(identity)
         true
       end
       env.abort! unless completed
       saved = true
       clear_oauth_registration
-      clear_registration_form if registration_form_class
       if @completed_invitation_acceptance
         authentication_session.clear_invitation
         publish_invitation_acceptance
@@ -132,16 +138,15 @@ class Vouch::OmniAuthsController < ::ApplicationController
     result = sign_in_result(account, outcome)
     result.metadata.merge!(operation: :registration, committed: saved)
     result
-  rescue Vouch::RegistrationFormError, ActiveModel::ValidationError, Vouch::OperationFailed => error
-    result = registration_form_failure(error)
+  rescue ActiveModel::ValidationError, Vouch::OperationFailed => error
+    result = registration_failure(error, committed: saved)
     result.metadata.merge!(operation: :registration, committed: saved)
     result
   rescue ActiveRecord::RecordInvalid => error
-    registration_form_failure(error) if registration_form_class
     Vouch::Result.invalid(operation: :registration, record: account, committed: saved, reason: :validation, error: error)
   rescue ActiveRecord::RecordNotUnique => error
     Vouch::Result.invalid(operation: :registration, record: account, committed: saved, reason: :conflict, error: error)
-  rescue Vouch::Persistence::Cancelled => error
+  rescue ActiveRecord::RecordNotSaved => error
     Vouch::Result.cancelled(operation: :registration, record: account, committed: saved, reason: :cancelled, error: error)
   rescue Vouch::Invitable::InvitationExpiredError
     authentication_session.clear_invitation

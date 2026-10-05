@@ -83,6 +83,7 @@ RSpec.describe "documented selected recovery contact", use_transactional_fixture
           end
         end
         controller = controller_class.new
+        controller.instance_variable_set(:@vouch_account, owner)
         controller.instance_variable_set(:@account, owner)
         outcome = controller.send(:issue_password_reset)
         expect(outcome).to be_ok

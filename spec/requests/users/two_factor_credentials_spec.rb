@@ -38,13 +38,49 @@ RSpec.describe "Users::TwoFactorCredentials", type: :request do
 
   it "lets the host replace a successful creation response" do
     Users::TwoFactorCredentialsController.define_method(:create) do
-      super() { |result| render json: { id: result.value.id }, status: :created }
+      status = super()
+      render json: { id: @credential.id }, status: :created if status == :ok
     end
     sign_in(user)
     post "/users/two_factor_credentials", params: { two_factor_credential: { type: "email" } }
     expect(response).to have_http_status(:created)
     expect(account.two_factor_credentials.find(response.parsed_body.fetch("id"))).to be_present
   ensure
+    Users::TwoFactorCredentialsController.remove_method(:create)
+  end
+
+  it "keeps the default response when the host observes the status without responding" do
+    Users::TwoFactorCredentialsController.define_method(:create) do
+      status = super()
+      response.set_header("X-Operation-Status", status.to_s)
+    end
+    sign_in(user)
+
+    post "/users/two_factor_credentials", params: { two_factor_credential: { type: "email" } }
+
+    expect(response).to redirect_to("/users/two_factor_credentials")
+    expect(response.headers["X-Operation-Status"]).to eq("ok")
+  ensure
+    Users::TwoFactorCredentialsController.remove_method(:create)
+  end
+
+  it "lets the host handle validation errors on the credential after super" do
+    callback = proc { errors.add(:base, "Credential registration is unavailable") }
+    TwoFactorCredential.validate(callback)
+    Users::TwoFactorCredentialsController.define_method(:create) do
+      status = super()
+      render json: { status: status, errors: @credential.errors.full_messages }, status: :unprocessable_entity
+    end
+    sign_in(user)
+
+    expect do
+      post "/users/two_factor_credentials", params: { two_factor_credential: { type: "email" } }
+    end.not_to change(TwoFactorCredential, :count)
+
+    expect(response.parsed_body).to eq("status" => "invalid", "errors" => ["Credential registration is unavailable"])
+    expect(response.headers["Location"]).to be_nil
+  ensure
+    TwoFactorCredential.skip_callback(:validate, :before, callback) if callback
     Users::TwoFactorCredentialsController.remove_method(:create)
   end
 

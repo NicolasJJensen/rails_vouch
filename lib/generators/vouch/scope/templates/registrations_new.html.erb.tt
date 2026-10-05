@@ -1,16 +1,16 @@
 <h1>Create an account</h1>
 
-<%% if @account.errors.any? %>
-  <div role="alert"><%%= @account.errors.full_messages.to_sentence %></div>
+<%% if @<%= @controller_route_scope %>.errors.any? %>
+  <div role="alert"><%%= @<%= @controller_route_scope %>.errors.full_messages.to_sentence %></div>
 <%% end %>
 
-<%%= form_with model: @account, url: vouch_route_path(:registrations, :create), scope: :<%= @account_param_key %>, method: :post do |form| %>
+<%%= form_with model: @<%= @controller_route_scope %>, url: vouch_route_path(:registrations, :create), scope: :<%= @account_param_key %>, method: :post do |form| %>
   <p>
     <%%= form.label :email_address %>
     <%% if invitation_registration? %>
-      <%%= @account.email_address %>
+      <%%= @<%= @controller_route_scope %>.email_address %>
     <%% else %>
-      <%%= form.email_field :email_address, value: @account.email_address, autocomplete: "email", required: true %>
+      <%%= form.email_field :email_address, value: @<%= @controller_route_scope %>.email_address, autocomplete: "email", required: true %>
     <%% end %>
   </p>
 <%% unless oauth_registration? %>

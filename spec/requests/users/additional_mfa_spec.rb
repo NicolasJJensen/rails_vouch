@@ -151,11 +151,12 @@ RSpec.describe "Additional MFA", type: :request do
 
   it "lets a host replace the completion response after the proof is stored" do
     Users::TwoFactorChallengeController.define_method(:update) do
-      super() { |result| render json: { status: result.status } }
+      status = super()
+      render json: { status: status, method: @authentication_evidence.fetch("method"), return_to: @return_to }
     end
     start_challenge
     patch "/users/two_factor_challenges/#{credential.id}", params: { code: ROTP::TOTP.new(credential.otp_secret).now }
-    expect(response.parsed_body).to eq("status" => "ok")
+    expect(response.parsed_body).to eq("status" => "ok", "method" => "two_factor", "return_to" => "/protected_page")
     expect(request.session[Vouch::Session.key_for(:user, :evidence)].size).to eq(1)
     expect(response.headers["Location"]).to be_nil
   ensure
@@ -244,7 +245,8 @@ RSpec.describe "Additional MFA", type: :request do
       end
     end
     Users::TwoFactorChallengeController.define_method(:update) do
-      super() { |result| render json: { status: result.status } }
+      status = super()
+      render json: { status: status }
     end
     start_challenge
     patch "/users/two_factor_challenges/#{credential.id}", params: { code: "adapter-proof" }

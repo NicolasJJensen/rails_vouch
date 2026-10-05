@@ -88,9 +88,8 @@ RSpec.describe "OAuth request purposes", type: :request do
 
   it "lets the host replace a context-changed response" do
     Users::OmniAuthsController.define_method(:callback) do
-      super() do |result|
-        render json: { reason: result.metadata[:reason] }, status: :conflict
-      end
+      super()
+      render json: { reason: @failure_reason }, status: :conflict
     end
     request_params = start_oauth(:register)
     sign_in(create(:user))

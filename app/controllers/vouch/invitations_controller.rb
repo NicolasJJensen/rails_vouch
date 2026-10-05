@@ -7,28 +7,57 @@ class Vouch::InvitationsController < ::ApplicationController
 
   def new; end
 
-  def create(&response_handler)
+  def create
     return if performed?
 
-    result = create_invitation
-    respond_with_authentication_result(result, response_handler) do
-      render_invitation_delivery_result(result)
-    end
+    set_operation_result(create_invitation)
   end
 
-  def resend(&response_handler)
+  def resend
     return if performed?
 
-    result = resend_invitation
-    respond_with_authentication_result(result, response_handler) do
-      render_invitation_delivery_result(result)
-    end
+    set_operation_result(resend_invitation)
   end
 
-  def destroy(&response_handler)
+  def destroy
     return if performed?
-    result = revoke_invitation
-    respond_with_authentication_result(result, response_handler) do
+
+    set_operation_result(revoke_invitation)
+  end
+
+  def accept
+    return if performed?
+
+    if request.get? && @invitation && !@invitation.invitation_expired?
+      @receiving_account = current_account
+      @registration_required = invitation_requires_registration?(@invitation)
+      return
+    end
+
+    result = choose_invitation_acceptance
+    if result.pending? && auth_mapping.membership_scope?
+      session[Vouch::Session.key_for(auth_mapping.parent_scope_name, :destination_scope)] = auth_scope_name.to_s
+    end
+    set_operation_result(result)
+  end
+
+  def reject
+    return if performed?
+
+    set_operation_result(reject_invitation)
+  end
+
+  private
+
+  def default_render
+    return if performed?
+    return super unless @_vouch_operation_result
+
+    result = @_vouch_operation_result
+    case action_name
+    when "create", "resend"
+      render_invitation_delivery_result(result)
+    when "destroy"
       if result.ok?
         redirect_to root_path, notice: I18n.t("vouch.invitations.revoked")
       elsif result.error || result.cancelled?
@@ -36,51 +65,28 @@ class Vouch::InvitationsController < ::ApplicationController
       else
         redirect_to root_path, alert: I18n.t("vouch.invitations.not_found")
       end
-    end
-  end
-
-  def accept(&response_handler)
-    return if performed?
-    if request.get? && @invitation && !@invitation.invitation_expired?
-      @receiving_account = current_account
-      @registration_required = invitation_requires_registration?(@invitation)
-      return render :accept
-    end
-
-    result = choose_invitation_acceptance
-    respond_with_authentication_result(result, response_handler) do
+    when "accept"
       if result.ok?
         redirect_to (auth_mapping.membership_scope? ? new_session_path : after_sign_in_path), notice: I18n.t("vouch.invitations.joined")
       elsif result.pending?
-        mapping = if auth_mapping.membership_scope?
-          session[Vouch::Session.key_for(auth_mapping.parent_scope_name, :destination_scope)] = auth_scope_name.to_s
-          Vouch.mapping_for(auth_mapping.parent_scope_name)
-        else
-          auth_mapping
-        end
-        endpoint = result.metadata[:next_step] == :registration ? :registrations : :sessions
+        mapping = auth_mapping.membership_scope? ? Vouch.mapping_for(auth_mapping.parent_scope_name) : auth_mapping
+        endpoint = @next_step == :registration ? :registrations : :sessions
         redirect_to mapping.route_path(endpoint, :new, self)
       elsif result.error || result.cancelled?
         render plain: I18n.t("vouch.invitations.update_failed"), status: :unprocessable_content
       else
         redirect_to new_session_path, alert: I18n.t("vouch.invitations.invalid_token")
       end
-    end
-  end
-
-  def reject(&response_handler)
-    return if performed?
-    result = reject_invitation
-    respond_with_authentication_result(result, response_handler) do
+    when "reject"
       if result.ok?
         redirect_to root_path, notice: I18n.t("vouch.invitations.rejected")
       else
         redirect_to new_session_path, alert: I18n.t("vouch.invitations.invalid_token")
       end
+    else
+      super
     end
   end
-
-  private
 
   def require_account_invitation_access!
     if request.post? && Vouch::ImpersonationStack.membership_restricted?(session)
@@ -161,7 +167,7 @@ class Vouch::InvitationsController < ::ApplicationController
     identifier = params[:email_address] || params[:identifier]
     transaction_record = auth_mapping.account_class.new
     invitee = Vouch::Persistence.transaction(transaction_record) do
-      account = @account
+      account = @vouch_account
       Vouch::Persistence.save!(account) if account.new_record?
       account.lock!
       if auth_mapping.split_model?
@@ -227,21 +233,23 @@ class Vouch::InvitationsController < ::ApplicationController
 
   def set_invitation
     @invitation = if action_name == "create"
-      @account = build_invited_account(params[:email_address] || params[:identifier])
+      @vouch_account = build_invited_account(params[:email_address] || params[:identifier])
       if auth_mapping.split_model?
-        existing = existing_identity_for_invitation(@account) if @account.persisted?
+        existing = existing_identity_for_invitation(@vouch_account) if @vouch_account.persisted?
         existing || auth_mapping.identity_class.new(inviter: current_identity).tap do |invitation|
-          invitation.public_send("#{auth_mapping.account_association}=", @account)
+          invitation.public_send("#{auth_mapping.account_association}=", @vouch_account)
           assign_tenant_to_invitee(invitation, current_identity) if auth_mapping.tenant?
         end
       else
-        @account
+        @vouch_account
       end
     elsif %w[accept reject].include?(action_name)
       auth_mapping.identity_class.find_by_invitation_token(params[:token])
     else
       revocable_invitations.find_by(invitation_token: params[:invitation_token]) if params[:invitation_token].present?
     end
+    @vouch_account ||= auth_mapping.account_for(@invitation) if @invitation
+    expose_authentication_records
   end
 
   def revocable_invitations

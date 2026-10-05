@@ -1,11 +1,13 @@
 # frozen_string_literal: true
 
 class Vouch::VerificationsController < ::ApplicationController
+  include Vouch::ControllerOutcomes
+
   rescue_from Vouch::VerificationRateLimitStore::Unavailable do
     head :service_unavailable
   end
 
-  def create(&response_handler)
+  def create
     return if performed?
     require_persisted_verifiable!
     result = @verifiable.start_verification
@@ -14,10 +16,10 @@ class Vouch::VerificationsController < ::ApplicationController
       tokens[verification_record_key] = result.token
       session[:vouch_verification_tokens] = tokens
     end
-    respond_to_verification(result, response_handler)
+    set_operation_result(result)
   end
 
-  def update(&response_handler)
+  def update
     return if performed?
     require_persisted_verifiable!
     tokens = session[:vouch_verification_tokens] || {}
@@ -26,7 +28,7 @@ class Vouch::VerificationsController < ::ApplicationController
       tokens.delete(verification_record_key)
       session[:vouch_verification_tokens] = tokens
     end
-    respond_to_verification(result, response_handler)
+    set_operation_result(result)
   end
 
   private
@@ -45,17 +47,17 @@ class Vouch::VerificationsController < ::ApplicationController
     raise Vouch::ConfigurationError, "Set @verifiable through an authorized association before verifying an existing record"
   end
 
-  def respond_to_verification(result, response_handler)
-    response_handler&.call(result)
+  def default_render
     return if performed?
+    return super unless %w[create update destroy].include?(action_name) && @_vouch_operation_result
 
-    status = if result.ok? || result.already_verified?
+    status = if %i[ok already_verified].include?(@operation_status)
       :ok
-    elsif result.locked?
+    elsif @operation_status == :locked
       :too_many_requests
     else
       :unprocessable_entity
     end
-    render json: { status: result.status, errors: @verifiable.errors.to_hash }, status: status
+    render json: { status: @operation_status, errors: @verifiable.errors.to_hash }, status: status
   end
 end

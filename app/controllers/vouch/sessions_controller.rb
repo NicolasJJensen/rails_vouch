@@ -9,7 +9,7 @@ class Vouch::SessionsController < ::ApplicationController
 
   def new; end
 
-  def create(&response_handler)
+  def create
     return if performed?
 
     session[Vouch::Session.key_for(auth_scope_name, :completion)] = "sign_in"
@@ -17,37 +17,22 @@ class Vouch::SessionsController < ::ApplicationController
     session.delete(selection_session_key)
     session.delete(signed_in_via_session_key)
     warden.logout(account_scope_name)
-    account = warden.authenticate(scope: auth_scope_name, run_callbacks: false)
+    @vouch_account = warden.authenticate(scope: auth_scope_name, run_callbacks: false)
     # Warden caches strategy success even when the strategy disables storage.
     warden.set_user(nil, scope: auth_scope_name, store: false, run_callbacks: false)
 
-    unless account
-      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_credentials), response_handler) do
-        flash.now[:alert] = failed_login_message
-        render :new, status: 422
-      end
-    end
+    return set_operation_result(Vouch::Result.invalid(reason: :invalid_credentials)) unless @vouch_account
 
-    outcome = complete_sign_in(account)
-    respond_with_authentication_result(sign_in_result(account, outcome), response_handler) do
-      case outcome
-      when :signed_in
-        redirect_after_authentication
-      when :needs_two_factor
-        redirect_to two_factor_challenges_path
-      when :needs_selection
-        redirect_to select_path
-      else
-        flash.now[:alert] = I18n.t("vouch.oauth.no_identity")
-        render :new, status: 422
-      end
-    end
+    outcome = complete_sign_in(@vouch_account)
+    @vouch_identity = current_identity if outcome == :signed_in
+    set_operation_result(sign_in_result(@vouch_account, outcome))
   end
 
-  def destroy(&response_handler)
+  def destroy
     return if performed?
 
     identity = current_identity
+    @vouch_account = current_account
     signed_out = run_authentication_hooks(:sign_out, identity) do |env|
       committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
         true
@@ -56,14 +41,9 @@ class Vouch::SessionsController < ::ApplicationController
       Vouch.logout_scope(warden, session, auth_scope_name)
       true
     end
+    @vouch_identity = identity
     result = signed_out ? Vouch::Result.ok(identity) : Vouch::Result.cancelled(record: identity)
-    respond_with_authentication_result(result, response_handler) do
-      if signed_out
-        redirect_to after_sign_out_path, notice: I18n.t("vouch.sessions.signed_out")
-      else
-        head :forbidden
-      end
-    end
+    set_operation_result(result)
   end
 
   def confirmation
@@ -73,22 +53,20 @@ class Vouch::SessionsController < ::ApplicationController
     pending = session[key]
     if pending && !valid_recent_authentication_pending?(pending, scope: confirmation_scope_name)
       session.delete(key)
-      return redirect_to "/", alert: I18n.t("vouch.confirmation.expired")
+      return set_operation_result(Vouch::Result.invalid(reason: :expired))
     end
     session[key] ||= { "context" => recent_authentication_context(confirmation_scope_name),
       "issued_at" => Time.current.to_f, "return_to" => recent_authentication_return_path(params[:return_to]) }
   end
 
-  def confirm(&response_handler)
+  def confirm
     return if performed?
 
     key = Vouch::Session.key_for(confirmation_scope_name, :confirmation_pending)
     pending = session[key]
     unless valid_recent_authentication_pending?(pending, scope: confirmation_scope_name)
       session.delete(key)
-      return respond_with_authentication_result(Vouch::Result.invalid(reason: :expired), response_handler) do
-        redirect_to "/", alert: I18n.t("vouch.confirmation.expired")
-      end
+      return set_operation_result(Vouch::Result.invalid(reason: :expired))
     end
 
     result = verify_authentication_confirmation(@confirmation_actor)
@@ -110,26 +88,59 @@ class Vouch::SessionsController < ::ApplicationController
       end
       result = Vouch::Result.cancelled(record: @confirmation_actor) unless completed
     end
-    respond_with_authentication_result(result, response_handler) do
-      if result.ok?
-        redirect_to recent_authentication_return_path(pending["return_to"])
+    @confirmation_return_path = recent_authentication_return_path(pending["return_to"])
+    set_operation_result(result)
+  end
+
+  def cancel_confirmation
+    return if performed?
+
+    pending = session.delete(Vouch::Session.key_for(confirmation_scope_name, :confirmation_pending))
+    @confirmation_return_path = recent_authentication_return_path(pending&.fetch("return_to", nil))
+    set_operation_result(Vouch::Result.cancelled)
+  end
+
+  private
+
+  def default_render
+    return if performed?
+    return super unless @_vouch_operation_result
+
+    case action_name
+    when "create"
+      if @operation_status == :ok
+        redirect_after_authentication
+      elsif @next_step == :two_factor
+        redirect_to two_factor_challenges_path
+      elsif @next_step == :selection
+        redirect_to select_path
+      else
+        flash.now[:alert] = @failure_reason == :invalid_credentials ? failed_login_message : I18n.t("vouch.oauth.no_identity")
+        render :new, status: :unprocessable_entity
+      end
+    when "destroy"
+      if @operation_status == :ok
+        redirect_to after_sign_out_path, notice: I18n.t("vouch.sessions.signed_out")
+      else
+        head :forbidden
+      end
+    when "confirmation"
+      redirect_to "/", alert: I18n.t("vouch.confirmation.expired")
+    when "confirm"
+      if @operation_status == :ok
+        redirect_to @confirmation_return_path
+      elsif @failure_reason == :expired
+        redirect_to "/", alert: I18n.t("vouch.confirmation.expired")
       else
         flash.now[:alert] = I18n.t("vouch.confirmation.failed")
         render :confirmation, status: :unprocessable_entity
       end
+    when "cancel_confirmation"
+      redirect_to @confirmation_return_path
+    else
+      super
     end
   end
-
-  def cancel_confirmation(&response_handler)
-    return if performed?
-
-    pending = session.delete(Vouch::Session.key_for(confirmation_scope_name, :confirmation_pending))
-    respond_with_authentication_result(Vouch::Result.cancelled, response_handler) do
-      redirect_to recent_authentication_return_path(pending&.fetch("return_to", nil))
-    end
-  end
-
-  private
 
   def confirmation_scope_name
     @confirmation_scope_name
@@ -150,6 +161,8 @@ class Vouch::SessionsController < ::ApplicationController
       return head :forbidden
     end
     @confirmation_actor = recent_authentication_actor(@confirmation_scope_name)
+    @vouch_account = @confirmation_actor
+    expose_authentication_records
   rescue ArgumentError
     head :forbidden
   end

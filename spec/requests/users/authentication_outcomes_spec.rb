@@ -8,7 +8,8 @@ RSpec.describe "Host authentication responses", type: :request do
 
   def with_action_response(controller, action, handler)
     controller.define_method(action) do
-      super() { |result| instance_exec(result, &handler) }
+      status = super()
+      instance_exec(status, &handler)
     end
     yield
   ensure
@@ -20,7 +21,7 @@ RSpec.describe "Host authentication responses", type: :request do
   end
 
   it "lets the host render a successful sign-in response without a second redirect" do
-    handler = ->(result) { render json: {status: result.status, account_id: result.value.id} }
+    handler = ->(status) { render json: {status: status, account_id: @account.id} }
 
     with_action_response(Users::SessionsController, :create, handler) { sign_in_request }
 
@@ -30,7 +31,7 @@ RSpec.describe "Host authentication responses", type: :request do
   end
 
   it "lets the host handle invalid credentials" do
-    handler = ->(result) { render json: {status: result.status, reason: result.metadata[:reason]}, status: :unprocessable_entity }
+    handler = ->(status) { render json: {status: status, reason: @failure_reason}, status: :unprocessable_entity }
 
     with_action_response(Users::SessionsController, :create, handler) { sign_in_request(password: "incorrect") }
 
@@ -41,8 +42,8 @@ RSpec.describe "Host authentication responses", type: :request do
   it "exposes MFA as pending without publishing a signed-in identity" do
     account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
     account.enable_two_factor!
-    handler = ->(result) {
-      render json: {status: result.status, next_step: result.metadata[:next_step], signed_in: current_identity.present?}, status: :accepted
+    handler = ->(status) {
+      render json: {status: status, next_step: @next_step, signed_in: current_identity.present?}, status: :accepted
     }
 
     with_action_response(Users::SessionsController, :create, handler) { sign_in_request }
@@ -53,7 +54,7 @@ RSpec.describe "Host authentication responses", type: :request do
 
   it "keeps the default response when the host observes without rendering" do
     observed = []
-    handler = ->(result) { observed << result.status }
+    handler = ->(status) { observed << status }
 
     with_action_response(Users::SessionsController, :create, handler) { sign_in_request }
 
@@ -63,7 +64,7 @@ RSpec.describe "Host authentication responses", type: :request do
 
   it "lets the host replace the sign-out response after the session is cleared" do
     sign_in(identity)
-    handler = ->(result) { render json: {status: result.status, signed_in: current_identity.present?} }
+    handler = ->(status) { render json: {status: status, signed_in: current_identity.present?} }
 
     with_action_response(Users::SessionsController, :destroy, handler) { delete "/users/sign_out" }
 
@@ -75,7 +76,7 @@ RSpec.describe "Host authentication responses", type: :request do
     hooks = Users::SessionsController.__hooks
     Users::SessionsController.before_sign_out { throw(:abort) }
     sign_in(identity)
-    handler = ->(result) { render json: {status: result.status, signed_in: current_identity.present?} }
+    handler = ->(status) { render json: {status: status, signed_in: current_identity.present?} }
 
     with_action_response(Users::SessionsController, :destroy, handler) { delete "/users/sign_out" }
 
@@ -88,7 +89,7 @@ RSpec.describe "Host authentication responses", type: :request do
     create(:user, account: account)
     sign_in_request
     expect(response).to redirect_to("/users/select")
-    handler = ->(result) { render json: {status: result.status, identity_id: current_identity.id} }
+    handler = ->(status) { render json: {status: status, identity_id: current_identity.id} }
 
     with_action_response(Users::MembershipSessionsController, :create, handler) do
       post "/users/select", params: {identity_id: identity.id}
@@ -101,7 +102,7 @@ RSpec.describe "Host authentication responses", type: :request do
   it "lets the host handle a rejected membership selection" do
     create(:user, account: account)
     sign_in_request
-    handler = ->(result) { render json: {status: result.status}, status: :unprocessable_entity }
+    handler = ->(status) { render json: {status: status}, status: :unprocessable_entity }
 
     with_action_response(Users::MembershipSessionsController, :create, handler) do
       post "/users/select", params: {identity_id: "missing"}
@@ -109,5 +110,59 @@ RSpec.describe "Host authentication responses", type: :request do
 
     expect(response).to have_http_status(:unprocessable_entity)
     expect(response.parsed_body).to eq("status" => "invalid")
+  end
+
+  it "does not add Vouch's failure flash before a custom response" do
+    handler = ->(status) { render json: { status: status, alert: flash[:alert], account: @account } }
+
+    with_action_response(Users::SessionsController, :create, handler) { sign_in_request(password: "incorrect") }
+
+    expect(response.parsed_body).to eq("status" => "invalid", "alert" => nil, "account" => nil)
+    expect(flash[:alert]).to be_nil
+  end
+
+  it "renders the ordinary failure page when the host handles only success" do
+    handler = ->(status) { head :created if status == :ok }
+
+    with_action_response(Users::SessionsController, :create, handler) { sign_in_request(password: "incorrect") }
+
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(response.body).to include("Sign In")
+    expect(flash[:alert]).to eq(I18n.t("vouch.sessions.invalid_credentials"))
+  end
+
+  it "keeps the MFA continuation when a host handles only completed sign-in" do
+    account.two_factor_credentials.create!(verified_at: Time.current, two_factor_enabled_at: Time.current)
+    account.enable_two_factor!
+    observed = []
+    handler = ->(status) {
+      observed << [status, @account.id, @user, @next_step]
+      head :created if status == :ok
+    }
+
+    with_action_response(Users::SessionsController, :create, handler) { sign_in_request }
+
+    expect(response).to redirect_to("/users/two_factor_challenges")
+    expect(observed).to eq([[:pending, account.id, nil, :two_factor]])
+  end
+
+  it "allows a host to override default_render after observing the action outcome" do
+    Users::SessionsController.class_eval do
+      private
+
+      def default_render
+        return super unless action_name == "create" && @operation_status == :invalid
+
+        render json: { reason: @failure_reason }, status: :conflict
+      end
+    end
+
+    sign_in_request(password: "incorrect")
+
+    expect(response).to have_http_status(:conflict)
+    expect(response.parsed_body).to eq("reason" => "invalid_credentials")
+    expect(flash[:alert]).to be_nil
+  ensure
+    Users::SessionsController.remove_method(:default_render)
   end
 end

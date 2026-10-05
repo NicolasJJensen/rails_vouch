@@ -30,9 +30,8 @@ RSpec.describe "Registration outcomes", type: :request do
 
   it "lets a host handle the committed outcome without a second response" do
     Users::RegistrationsController.define_method(:create) do
-      super() do |result|
-        render json: { status: result.status, committed: result.metadata[:committed], id: result.value.id }
-      end
+      status = super()
+      render json: { status: status, committed: @registration_committed, id: @account.id }
     end
 
     submit_registration
@@ -52,9 +51,22 @@ RSpec.describe "Registration outcomes", type: :request do
     expect(controller.view_assigns.fetch("account").errors[:base]).not_to be_empty
   end
 
-  it "does not rescue an exception raised by the host response block" do
+  it "keeps database conflict details out of the rendered form" do
+    error = ActiveRecord::RecordNotUnique.new("PG::UniqueViolation: secret SQL detail")
+    allow_any_instance_of(Account).to receive(:save!).and_raise(error)
+
+    submit_registration
+
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(response.body).not_to include("PG::UniqueViolation", "secret SQL detail")
+    expect(controller.view_assigns.fetch("account").errors[:base]).to eq([I18n.t("vouch.registrations.failed")])
+    expect(controller.view_assigns.fetch("operation_error")).to equal(error)
+  end
+
+  it "does not rescue an exception raised by host code after super" do
     Users::RegistrationsController.define_method(:create) do
-      super() { raise ActiveRecord::RecordInvalid.new(Account.new) }
+      super()
+      raise ActiveRecord::RecordInvalid.new(Account.new)
     end
 
     submit_registration

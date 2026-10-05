@@ -7,10 +7,13 @@ RSpec.describe Vouch::TemporaryVerificationsController, type: :controller do
     before_action :set_existing_verifiable, only: [:create, :update]
 
     def update
-      super do |result|
-        if result.ok? && params[:attach] == "fail"
-          render json: { attachment: "failed", verified: @verifiable.verified? }, status: :unprocessable_entity
-        end
+      status = super
+      if status == :ok && params[:attach] == "fail"
+        render json: { attachment: "failed", verified: @verifiable.verified? }, status: :unprocessable_entity
+      elsif status == :ok && params[:attach] == "yes"
+        @verifiable.save!
+        forget_temporary_verification
+        render json: { id: @verifiable.id }, status: :created
       end
     end
 
@@ -63,6 +66,18 @@ RSpec.describe Vouch::TemporaryVerificationsController, type: :controller do
     restored = PhoneVerification.new
     restored.restore_verification_state!(state)
     expect(restored).to be_verified
+  end
+
+  it "allows the host to attach and discard verified state before choosing the response" do
+    post :create, params: input
+
+    expect do
+      patch :update, params: input.merge(code: @code, attach: "yes")
+    end.to change(PhoneVerification, :count).by(1)
+
+    expect(response).to have_http_status(:created)
+    expect(PhoneVerification.find(response.parsed_body.fetch("id"))).to be_verified
+    expect(session[:vouch_temporary_verifications]["phone"]).to be_empty
   end
 
   it "retains attempts and locks after repeated wrong codes" do

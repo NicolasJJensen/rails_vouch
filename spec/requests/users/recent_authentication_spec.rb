@@ -205,4 +205,22 @@ RSpec.describe "Recent authentication", type: :request do
     Users::SessionsController.remove_method(:create)
   end
 
+  it "lets a host respond after an expired confirmation page returns its status" do
+    get "/users/confirmation"
+    Users::SessionsController.define_method(:confirmation) do
+      status = super()
+      render json: { status: status, reason: @failure_reason }, status: :gone
+    end
+
+    travel Vouch.configuration.pending_authentication_ttl + 1.second do
+      get "/users/confirmation"
+    end
+
+    expect(response).to have_http_status(:gone)
+    expect(response.parsed_body).to eq("status" => "invalid", "reason" => "expired")
+    expect(response.headers["Location"]).to be_nil
+    expect(request.session[Vouch::Session.key_for(:user, :confirmation_pending)]).to be_nil
+  ensure
+    Users::SessionsController.remove_method(:confirmation)
+  end
 end

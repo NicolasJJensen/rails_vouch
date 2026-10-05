@@ -193,7 +193,7 @@ RSpec.describe "Vouch generators" do
     expect(routes).to include("auth.sessions\n      auth.impersonation controller: \"users/impersonations\"")
     expect(controller).to include("class Users::ImpersonationsController < Vouch::ImpersonationsController")
     expect(controller).not_to include("auth_scope :user")
-    expect(controller).to include("def create", "@identity", "super")
+    expect(controller).to include("def create", "@user", "super")
     expect(controller).not_to include("authorize_impersonation!", "head :forbidden")
   end
 

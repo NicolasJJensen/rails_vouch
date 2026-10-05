@@ -7,6 +7,7 @@ module Vouch
     include Vouch::InvitationHelpers
     include Vouch::LifecycleHooks
     include Vouch::AuthenticationCompletion
+    include Vouch::ControllerOutcomes
 
     AUTH_LIFECYCLE_HOOKS = %i[
       authentication_confirmation
@@ -98,11 +99,6 @@ module Vouch
     end
 
     private
-
-    def respond_with_authentication_result(result, response_handler)
-      response_handler&.call(result)
-      yield unless performed?
-    end
 
     def sign_in_result(account, outcome)
       case outcome

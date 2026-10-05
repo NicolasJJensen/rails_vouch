@@ -11,10 +11,6 @@ en:
       invalid_token: "Invalid or expired reset link."
       password_updated: "Password updated. Sign in."
     registrations:
-      expired: "Your registration expired. Please start again."
-      invalid_verification: "A registration credential must be verified again."
-      context_changed: "Your registration changed. Please start again."
-      registration_too_large: "The registration contains too much information to retain."
       account_created: "%{model} created."
       sign_in_method_required: "Choose a password or connect a sign-in provider."
       sign_in_failed: "Something went wrong signing in, please try again."

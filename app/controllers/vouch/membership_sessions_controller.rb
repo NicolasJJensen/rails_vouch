@@ -8,54 +8,59 @@ class Vouch::MembershipSessionsController < ::ApplicationController
   before_action :require_unimpersonated_selection!, only: %i[new create]
   before_action :require_account_session!
 
-  def new(&response_handler)
+  def new
     return if performed?
 
     unless auth_mapping.membership_scope?
       pending = authentication_session.load_selection
-      return redirect_to(new_session_path) unless pending
+      return set_operation_result(Vouch::Result.invalid(reason: :invalid_continuation)) unless pending
 
-      @account = pending.account
-      @identities = pending_candidate_identities(@account, pending.context)
+      @vouch_account = pending.account
+      @vouch_identities = pending_candidate_identities(@vouch_account, pending.context)
+      expose_authentication_records
       return
     end
-    @account = current_account
-    @identities = candidate_identities_for(@account).to_a
-    return head(:forbidden) if @identities.empty?
+    @vouch_account = current_account
+    @vouch_identities = candidate_identities_for(@vouch_account).to_a
+    return set_operation_result(Vouch::Result.invalid(reason: :no_identity)) if @vouch_identities.empty?
 
-    context = Vouch::PendingAuthentication.build(@account, identities: @identities,
+    context = Vouch::PendingAuthentication.build(@vouch_account, identities: @vouch_identities,
       method: :session, hook: :sign_in)
-    return head(:forbidden) unless authentication_allowed?(@account, context)
+    return set_operation_result(Vouch::Result.invalid(reason: :denied)) unless authentication_allowed?(@vouch_account, context)
 
     session[selection_session_key] = context
-    if @identities.one?
-      establish_membership(@identities.first, context, &response_handler)
+    if @vouch_identities.one?
+      establish_membership(@vouch_identities.first, context)
+    else
+      expose_authentication_records
+      nil
     end
   end
 
-  def create(&response_handler)
+  def create
     return if performed?
 
-    return complete_combined_scope(&response_handler) unless auth_mapping.membership_scope?
+    return complete_combined_scope unless auth_mapping.membership_scope?
 
     context = session[selection_session_key]
-    account = current_account
-    unless Vouch::PendingAuthentication.valid?(context, account)
-      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_continuation), response_handler) { head :forbidden }
+    @vouch_account = current_account
+    unless Vouch::PendingAuthentication.valid?(context, @vouch_account)
+      return set_operation_result(Vouch::Result.invalid(reason: :invalid_continuation))
     end
 
-    identity = pending_candidate_identities(account, context).detect { |candidate| Vouch::RecordKey.to_param(candidate) == params[:identity_id].to_s }
+    identity = pending_candidate_identities(@vouch_account, context).detect { |candidate| Vouch::RecordKey.to_param(candidate) == params[:identity_id].to_s }
     unless identity
-      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_selection), response_handler) { head :forbidden }
+      return set_operation_result(Vouch::Result.invalid(reason: :invalid_selection))
     end
 
-    establish_membership(identity, context, &response_handler)
+    establish_membership(identity, context)
   end
 
-  def destroy(&response_handler)
+  def destroy
     return if performed?
 
     identity = current_identity
+    @vouch_account = current_account
     completed = run_authentication_hooks(:sign_out, identity) do |env|
       committed = run_commit_hooks(:sign_out, *env.args, **env.kwargs) do
         true
@@ -65,12 +70,33 @@ class Vouch::MembershipSessionsController < ::ApplicationController
       true
     end
     result = completed ? Vouch::Result.ok(identity) : Vouch::Result.cancelled(record: identity)
-    respond_with_authentication_result(result, response_handler) do
-      completed ? redirect_to(after_sign_out_path) : head(:forbidden)
-    end
+    @vouch_identity = identity
+    set_operation_result(result)
   end
 
   private
+
+  def default_render
+    return if performed?
+    return super unless @_vouch_operation_result
+
+    case action_name
+    when "new", "create"
+      if @operation_status == :ok
+        redirect_after_authentication
+      elsif auth_mapping.membership_scope?
+        head :forbidden
+      elsif @failure_reason == :invalid_continuation
+        redirect_to new_session_path
+      else
+        redirect_to new_session_path, alert: I18n.t("vouch.user_selection.invalid_selection")
+      end
+    when "destroy"
+      @operation_status == :ok ? redirect_to(after_sign_out_path) : head(:forbidden)
+    else
+      super
+    end
+  end
 
   def require_unimpersonated_selection!
     Vouch::ImpersonationStack.discard_invalid!(warden: warden, session: session)
@@ -91,29 +117,23 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     redirect_to parent.route_path(:sessions, :new, self)
   end
 
-  def complete_combined_scope(&response_handler)
+  def complete_combined_scope
     pending = authentication_session.load_selection
     unless pending
-      return respond_with_authentication_result(Vouch::Result.invalid(reason: :invalid_continuation), response_handler) do
-        redirect_to new_session_path
-      end
+      return set_operation_result(Vouch::Result.invalid(reason: :invalid_continuation))
     end
 
-    identity = pending_candidate_identities(pending.account, pending.context).detect do |candidate|
+    @vouch_account = pending.account
+    @vouch_identity = pending_candidate_identities(@vouch_account, pending.context).detect do |candidate|
       Vouch::RecordKey.to_param(candidate) == params[:identity_id].to_s
     end
-    outcome = identity ? bind_identity(pending.account, identity, pending.context) : :invalid_selection
-    respond_with_authentication_result(sign_in_result(pending.account, outcome), response_handler) do
-      if outcome == :signed_in
-        redirect_after_authentication
-      else
-        redirect_to new_session_path, alert: I18n.t("vouch.user_selection.invalid_selection")
-      end
-    end
+    outcome = @vouch_identity ? bind_identity(@vouch_account, @vouch_identity, pending.context) : :invalid_selection
+    set_operation_result(sign_in_result(@vouch_account, outcome))
   end
 
-  def establish_membership(identity, context, &response_handler)
-    account = current_account
+  def establish_membership(identity, context)
+    @vouch_identity = identity
+    @vouch_account = account = current_account
     result = begin
       invitation = nil
       completed = run_authentication_hooks_with_invitation(:sign_in, account, identity,
@@ -147,8 +167,6 @@ class Vouch::MembershipSessionsController < ::ApplicationController
     rescue Vouch::Persistence::Cancelled => error
       Vouch::Result.cancelled(error: error, record: identity)
     end
-    respond_with_authentication_result(result, response_handler) do
-      result.ok? ? redirect_after_authentication : head(:forbidden)
-    end
+    set_operation_result(result)
   end
 end

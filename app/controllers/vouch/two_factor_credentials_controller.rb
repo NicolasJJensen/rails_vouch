@@ -10,33 +10,41 @@ class Vouch::TwoFactorCredentialsController < ::ApplicationController
   def new
   end
 
-  def create(&response_handler)
+  def create
     return if performed?
 
-    result = credential_operation { Vouch::Persistence.save!(@credential) }
-    respond_with_authentication_result(result, response_handler) do
-      if result.ok?
+    set_operation_result(credential_operation { Vouch::Persistence.save!(@credential) })
+  end
+
+  def destroy
+    return if performed?
+
+    set_operation_result(credential_operation { Vouch::Persistence.destroy!(@credential) })
+  end
+
+  private
+
+  def default_render
+    return if performed?
+    return super unless @_vouch_operation_result
+
+    case action_name
+    when "create"
+      if @operation_status == :ok
         redirect_to two_factor_credentials_path, notice: I18n.t("vouch.two_factor_credentials.added")
       else
         render :new, status: :unprocessable_entity
       end
-    end
-  end
-
-  def destroy(&response_handler)
-    return if performed?
-
-    result = credential_operation { Vouch::Persistence.destroy!(@credential) }
-    respond_with_authentication_result(result, response_handler) do
-      if result.ok?
+    when "destroy"
+      if @operation_status == :ok
         redirect_to two_factor_credentials_path, notice: I18n.t("vouch.two_factor_credentials.removed")
       else
         redirect_to two_factor_credentials_path, alert: I18n.t("vouch.two_factor_credentials.removal_failed")
       end
+    else
+      super
     end
   end
-
-  private
 
   def build_credential
     @credential = credential_relation.new(action_name == "create" ? credential_params : {})
@@ -49,7 +57,9 @@ class Vouch::TwoFactorCredentialsController < ::ApplicationController
   end
 
   def credential_relation
-    two_factor_credentials_for(current_account, exclude_primary: false)
+    @vouch_account = current_account
+    expose_authentication_records
+    two_factor_credentials_for(@vouch_account, exclude_primary: false)
   end
 
   def credential_operation

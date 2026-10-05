@@ -129,4 +129,33 @@ RSpec.describe "Invitation acceptance choices", type: :request do
     expect(invitation.invitation_token).to eq(token)
   end
 
+  it "lets the host render the invitation page after super prepares its records" do
+    Users::InvitationsController.define_method(:accept) do
+      super()
+      render json: { invitation_id: @invitation.id, registration_required: @registration_required }
+    end
+
+    get "/users/invitation/accept", params: { token: invitation.invitation_token }
+
+    expect(response.parsed_body).to eq("invitation_id" => invitation.id, "registration_required" => true)
+    expect(invitation.reload.invitation_accepted_at).to be_nil
+  ensure
+    Users::InvitationsController.remove_method(:accept)
+  end
+
+  it "returns the selected continuation before a host invitation response" do
+    Users::InvitationsController.define_method(:accept) do
+      status = super()
+      render json: { status: status, next_step: @next_step, invitation_id: @invitation.id }
+    end
+
+    post "/users/invitation/accept", params: { token: invitation.invitation_token, choice: "new" }
+
+    expect(response.parsed_body).to eq("status" => "pending", "next_step" => "registration", "invitation_id" => invitation.id)
+    expect(response.headers["Location"]).to be_nil
+    post "/users/sign_up", params: { account: { password: "chosen-password", password_confirmation: "chosen-password" } }
+    expect(invitation.reload.invitation_accepted_at).to be_present
+  ensure
+    Users::InvitationsController.remove_method(:accept)
+  end
 end

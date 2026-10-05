@@ -82,7 +82,8 @@ RSpec.describe "Users::RecoveryCodes", type: :request do
 
   it "allows a host to replace the successful generation response" do
     Users::RecoveryCodesController.define_method(:create) do
-      super() { |result| render json: { count: result.value.size }, status: :created }
+      status = super()
+      render json: { count: @recovery_codes.size }, status: :created if status == :ok
     end
     sign_in(user)
     post "/users/recovery_codes"

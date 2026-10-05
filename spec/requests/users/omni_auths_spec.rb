@@ -73,6 +73,7 @@ RSpec.describe "Users::OmniAuths", type: :request do
         source = File.read(Rails.root.join("..", "..", "lib/generators/vouch/scope/templates/registrations_new.html.erb.tt"))
         context = Object.new
         context.instance_variable_set(:@account_param_key, "account")
+        context.instance_variable_set(:@controller_route_scope, "account")
         context.instance_variable_set(:@tenant_class, "Organisation")
         context.instance_variable_set(:@tenant_param_key, "organisation")
         template = ERB.new(source).result(context.instance_eval { binding })

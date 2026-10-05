@@ -7,7 +7,7 @@ module Vouch
       invitation && invitation_requires_registration?(invitation) ? true : false
     end
 
-    def persist_oauth_registration!(account, oauth_hashes)
+    def persist_oauth_registration!(account, oauth_hashes, &block)
       invitation = pending_invited_identity
       if session[invited_user_session_key].present? && (!invitation || !invitation_requires_registration?(invitation))
         raise Vouch::Invitable::InvitationExpiredError
@@ -19,7 +19,7 @@ module Vouch
           raise Vouch::Invitable::InvitationExpiredError
         end
       end
-      persist_registration_record!(account)
+      persist_registration_record!(account, &block)
       oauth_hashes.each do |oauth|
         Vouch::Persistence.create!(
           account.public_send(auth_mapping.oauth_identity_association.name),
@@ -35,6 +35,35 @@ module Vouch
       else
         create_registration_identity!(account)
       end
+    end
+
+    def persist_registration_record!(record)
+      return Vouch::Persistence.save!(record) unless block_given?
+
+      expose_authentication_records
+      value = yield record
+      if value == false || !record.persisted?
+        raise Vouch::Persistence::Cancelled.new("Registration persistence was cancelled", record)
+      end
+      true
+    end
+
+    def lock_registration_record!(record)
+      changed_attributes = record.changes.transform_values(&:last)
+      associations = record.class.reflect_on_all_associations.filter_map do |reflection|
+        [reflection.name, record.association(reflection.name).target] if record.association_cached?(reflection.name)
+      end
+      record.reload(lock: true)
+      record.assign_attributes(changed_attributes)
+      associations.each { |name, target| record.association(name).target = target }
+    end
+
+    def registration_failure(error, committed:, status: :invalid)
+      if @vouch_account && @vouch_account.errors.empty?
+        message = error.is_a?(ActiveRecord::RecordNotUnique) ? I18n.t("vouch.registrations.failed") : error.message
+        @vouch_account.errors.add(:base, message)
+      end
+      Vouch::Result.new(status, nil, record: @vouch_account, error: error, committed: committed)
     end
 
     def validate_submitted_registration_password!(account, attributes)

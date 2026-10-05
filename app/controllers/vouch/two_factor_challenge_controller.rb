@@ -17,17 +17,16 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
   def show
     return if performed?
 
-    issue_challenge!(@credential) or return
+    issue_challenge(@credential)
   end
 
   def send_code
     return if performed?
 
-    return unless issue_challenge!(@credential)
-    render :show
+    issue_challenge(@credential)
   end
 
-  def update(&response_handler)
+  def update
     return if performed?
 
     challenge = session[two_factor_token_session_key(@credential)]
@@ -42,80 +41,100 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     if result.ok?
       session.delete(two_factor_token_session_key(@credential))
       method = result.recovery_code? ? :recovery_code : :two_factor
-      return complete_additional_authentication(method, @credential, @credential, &response_handler) if additional_authentication?
-      return finish_sign_in(method, @credential, @credential, &response_handler)
+      return complete_additional_authentication(method, @credential, @credential) if additional_authentication?
+      return finish_sign_in(method, @credential, @credential)
     end
 
     if result.locked? || @credential.two_factor_locked?
-      return additional_authentication_failed(result, &response_handler) if additional_authentication?
+      result = Vouch::Result.locked(**result.metadata.merge(record: @credential)) unless result.locked?
+      return additional_authentication_failed(result) if additional_authentication?
       clear_challenge_context
-      respond_with_authentication_result(result, response_handler) do
-        redirect_to new_session_path, alert: I18n.t("vouch.two_factor.attempts_exceeded")
-      end
-    else
-      respond_with_authentication_result(result, response_handler) do
-        flash.now[:alert] = I18n.t("vouch.two_factor.invalid_code")
-        render :show, status: :unprocessable_entity
-      end
     end
+    set_operation_result(result)
   end
 
   # Recovery codes complete the same pending password/OAuth sign-in. They do
   # not create a second, weaker login flow or ask for the password again.
   def recovery
     @recovery_owners = recovery_owners
-    return redirect_to(two_factor_challenges_path, alert: I18n.t("vouch.two_factor.recovery_unavailable")) if @recovery_owners.empty?
+    set_operation_result(Vouch::Result.invalid(reason: :recovery_unavailable)) if @recovery_owners.empty?
   end
 
-  def consume_recovery(&response_handler)
+  def consume_recovery
     return if performed?
 
     owner = @recovery_owner
     result = owner ? owner.consume_recovery_code(params[:recovery_code]) : Vouch::Result.invalid
     if result.ok?
-      return complete_additional_authentication(:recovery_code, nil, owner, &response_handler) if additional_authentication?
-      return finish_sign_in(:recovery_code, nil, owner, &response_handler)
+      return complete_additional_authentication(:recovery_code, nil, owner) if additional_authentication?
+      return finish_sign_in(:recovery_code, nil, owner)
     end
     if result.locked?
-      return additional_authentication_failed(result, &response_handler) if additional_authentication?
+      return additional_authentication_failed(result) if additional_authentication?
       clear_challenge_context
-      respond_with_authentication_result(result, response_handler) do
-        redirect_to new_session_path, alert: I18n.t("vouch.two_factor.attempts_exceeded")
-      end
     else
       @recovery_owners = recovery_owners
-      respond_with_authentication_result(result, response_handler) do
-        flash.now[:alert] = I18n.t("vouch.two_factor.invalid_code")
-        render :recovery, status: :unprocessable_entity
-      end
     end
+    set_operation_result(result)
   end
 
-  def destroy(&response_handler)
+  def destroy
     return if performed?
 
-    destination = additional_authentication? ? @authentication_context.fetch("return_to", "/") : new_session_path
+    @return_to = additional_authentication? ? @authentication_context.fetch("return_to", "/") : new_session_path
     clear_challenge_context
-    respond_with_authentication_result(Vouch::Result.ok(@account), response_handler) { redirect_to destination }
+    set_operation_result(Vouch::Result.ok(@vouch_account))
   end
 
   private
+
+  def default_render
+    return if performed?
+    return super unless @_vouch_operation_result
+
+    case action_name
+    when "show", "send_code"
+      if @operation_status == :ok
+        render :show
+      elsif @return_to
+        redirect_to @return_to, alert: I18n.t("vouch.two_factor.invalid_code")
+      else
+        redirect_to new_session_path, alert: I18n.t("vouch.two_factor.attempts_exceeded")
+      end
+    when "update", "consume_recovery"
+      if @return_to
+        options = @operation_status == :ok ? {} : { alert: I18n.t("vouch.two_factor.invalid_code") }
+        redirect_to @return_to, **options
+      elsif @_vouch_sign_in_outcome
+        case @_vouch_sign_in_outcome
+        when :signed_in then redirect_after_authentication
+        when :needs_selection then redirect_to select_path
+        else redirect_to new_session_path, alert: I18n.t("vouch.two_factor.no_identity")
+        end
+      elsif @operation_status == :locked
+        redirect_to new_session_path, alert: I18n.t("vouch.two_factor.attempts_exceeded")
+      else
+        flash.now[:alert] = I18n.t("vouch.two_factor.invalid_code")
+        render(action_name == "update" ? :show : :recovery, status: :unprocessable_entity)
+      end
+    when "recovery"
+      redirect_to two_factor_challenges_path, alert: I18n.t("vouch.two_factor.recovery_unavailable")
+    when "destroy"
+      redirect_to @return_to
+    else
+      super
+    end
+  end
 
   def credential_management_available?
     _routes.url_helpers.respond_to?(auth_mapping.route_helper(:two_factor_credentials, :index))
   end
 
-  def finish_sign_in(method, credential, owner, &response_handler)
-    outcome = complete_sign_in(@account, context: session[two_factor_session_key], credential: credential,
+  def finish_sign_in(method, credential, owner)
+    @_vouch_sign_in_outcome = complete_sign_in(@vouch_account, context: session[two_factor_session_key], credential: credential,
       evidence_method: method, recovery_owner: owner)
-    session.delete(two_factor_session_key) if %i[signed_in needs_selection].include?(outcome)
-    respond_with_authentication_result(sign_in_result(@account, outcome), response_handler) do
-      case outcome
-      when :signed_in then redirect_after_authentication
-      when :needs_selection then redirect_to select_path
-      else redirect_to new_session_path, alert: I18n.t("vouch.two_factor.no_identity")
-      end
-    end
+    session.delete(two_factor_session_key) if %i[signed_in needs_selection].include?(@_vouch_sign_in_outcome)
+    set_operation_result(sign_in_result(@vouch_account, @_vouch_sign_in_outcome))
   end
 
   def set_credential
@@ -128,37 +147,34 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     @authentication_context&.fetch("additional_mfa", false) == true
   end
 
-  def complete_additional_authentication(method, credential, owner, &response_handler)
-    @account.reload
+  def complete_additional_authentication(method, credential, owner)
+    @vouch_account.reload
     principal = current_account
-    unless principal && Vouch::RecordKey.same?(principal, @account, model: @account.class) &&
-        Vouch::PendingAuthentication.valid?(@authentication_context, @account, hook: :two_factor_verification) &&
+    unless principal && Vouch::RecordKey.same?(principal, @vouch_account, model: @vouch_account.class) &&
+        Vouch::PendingAuthentication.valid?(@authentication_context, @vouch_account, hook: :two_factor_verification) &&
         additional_context_current?
-      return additional_authentication_failed(Vouch::Result.invalid, &response_handler)
+      return additional_authentication_failed
     end
-    proof = Vouch::AuthenticationEvidence.build(method: method, account: @account,
+    proof = Vouch::AuthenticationEvidence.build(method: method, account: @vouch_account,
       credential: (credential unless method == :recovery_code), owner: owner)
-    return additional_authentication_failed(Vouch::Result.invalid, &response_handler) unless Vouch::AuthenticationEvidence.valid?(proof, account: @account, mapping: auth_mapping)
+    return additional_authentication_failed unless Vouch::AuthenticationEvidence.valid?(proof, account: @vouch_account, mapping: auth_mapping)
 
-    authentication_session.store_evidence!(proof, account: @account)
-    run_hooks(:two_factor_verification, @account, current_identity, credential, evidence: proof, additional: true)
-    destination = @authentication_context.fetch("return_to", "/")
+    authentication_session.store_evidence!(proof, account: @vouch_account)
+    run_hooks(:two_factor_verification, @vouch_account, current_identity, credential, evidence: proof, additional: true)
+    @authentication_evidence = proof
+    @return_to = @authentication_context.fetch("return_to", "/")
     clear_challenge_context
-    result = Vouch::Result.ok(@account, evidence: proof, credential: credential)
-    respond_with_authentication_result(result, response_handler) { redirect_to destination }
+    set_operation_result(Vouch::Result.ok(@vouch_account, evidence: proof, credential: credential))
   end
 
   def additional_context_current?
     @authentication_context["authentication_context"] == authentication_session.context_id
   end
 
-  def additional_authentication_failed(result = Vouch::Result.invalid, &response_handler)
-    destination = @authentication_context.fetch("return_to", "/")
+  def additional_authentication_failed(result = Vouch::Result.invalid)
+    @return_to = @authentication_context.fetch("return_to", "/")
     clear_challenge_context
-    respond_with_authentication_result(result, response_handler) do
-      redirect_to destination, alert: I18n.t("vouch.two_factor.invalid_code")
-    end
-    false
+    set_operation_result(result)
   end
 
   def clear_challenge_context
@@ -177,34 +193,32 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     "/"
   end
 
-  def issue_challenge!(credential)
+  def issue_challenge(credential)
     result = credential.challenge
     if result.ok?
       session[two_factor_token_session_key(credential)] = { "token" => result.token,
         "enabled_at" => credential.two_factor_enabled_at&.utc&.iso8601(6) }
-      true
     else
-      return additional_authentication_failed if additional_authentication?
+      return additional_authentication_failed(result) if additional_authentication?
       session.delete(two_factor_session_key)
       session.delete(two_factor_token_session_key(credential))
-      redirect_to new_session_path, alert: I18n.t("vouch.two_factor.attempts_exceeded")
-      false
     end
+    set_operation_result(result)
   end
 
   def recovery_owners
     owners = []
-    owners << @account if @account.respond_to?(:consume_recovery_code!)
-    owners.concat(two_factor_credentials_for(@account).enabled.select { |credential| credential.respond_to?(:consume_recovery_code!) })
+    owners << @vouch_account if @vouch_account.respond_to?(:consume_recovery_code!)
+    owners.concat(two_factor_credentials_for(@vouch_account).enabled.select { |credential| credential.respond_to?(:consume_recovery_code!) })
     owners
   end
 
   def eligible_credentials
-    two_factor_credentials_for(@account).enabled
+    two_factor_credentials_for(@vouch_account).enabled
   end
 
   def set_recovery_owner
-    @recovery_owner = select_recovery_owner(recovery_owners, account: @account,
+    @recovery_owner = select_recovery_owner(recovery_owners, account: @vouch_account,
       type: params[:recovery_owner_type], id: params[:recovery_owner_id])
   end
 
@@ -212,28 +226,29 @@ class Vouch::TwoFactorChallengeController < ::ApplicationController
     previous_context = session[two_factor_session_key]
     pending = authentication_session.load_second_factor
     if pending
-      @account = pending.account
+      @vouch_account = pending.account
       @authentication_context = pending.context
-      if additional_authentication? && (!current_account || !Vouch::RecordKey.same?(current_account, @account, model: @account.class) || !additional_context_current?)
+      if additional_authentication? && (!current_account || !Vouch::RecordKey.same?(current_account, @vouch_account, model: @vouch_account.class) || !additional_context_current?)
         clear_challenge_context
-        @account = nil
+        @vouch_account = nil
       end
     elsif action_name == "index" && current_account
-      @account = current_account
+      @vouch_account = current_account
       evidence_key = Vouch::Session.key_for(auth_mapping.evidence_scope_name, :evidence)
-      proofs = Vouch::AuthenticationEvidence.current(session[evidence_key], account: @account, mapping: auth_mapping)
+      proofs = Vouch::AuthenticationEvidence.current(session[evidence_key], account: @vouch_account, mapping: auth_mapping)
       proofs.empty? ? session.delete(evidence_key) : session[evidence_key] = proofs
-      @authentication_context = Vouch::PendingAuthentication.build(@account, identities: [current_identity], method: :additional_mfa, hook: :two_factor_verification)
+      @authentication_context = Vouch::PendingAuthentication.build(@vouch_account, identities: [current_identity], method: :additional_mfa, hook: :two_factor_verification)
       @authentication_context["additional_mfa"] = true
       @authentication_context["authentication_context"] = authentication_session.context_id
       @authentication_context["return_to"] = additional_return_path || "/"
       session[two_factor_session_key] = @authentication_context
     end
-    if !@account && current_account && previous_context.is_a?(Hash) && previous_context["additional_mfa"] == true
+    if !@vouch_account && current_account && previous_context.is_a?(Hash) && previous_context["additional_mfa"] == true
       clear_challenge_context
       return redirect_to(additional_return_path(previous_context["return_to"]) || "/",
         alert: I18n.t('vouch.two_factor.session_expired'))
     end
-    redirect_to new_session_path, alert: I18n.t('vouch.two_factor.session_expired') unless @account
+    expose_authentication_records
+    redirect_to new_session_path, alert: I18n.t('vouch.two_factor.session_expired') unless @vouch_account
   end
 end

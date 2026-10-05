@@ -62,6 +62,19 @@ RSpec.describe "Custom authentication route names", type: :request do
     expect(response).to redirect_to("/portal/login")
   end
 
+  it "exposes the configured account after super rather than the controller namespace" do
+    Portal::SessionsController.define_method(:create) do
+      status = super()
+      render json: { status: status, account_id: @account.id, portal_defined: instance_variable_defined?(:@portal) }
+    end
+    account = create(:account)
+
+    post "/portal/login", params: { email_address: account.email_address, password: "password123" }
+
+    expect(response.parsed_body).to eq("status" => "ok", "account_id" => account.id, "portal_defined" => false)
+    expect(response.headers["Location"]).to be_nil
+  end
+
   it "uses custom helpers in the Warden failure destination" do
     mapping = Vouch.mapping_for(:account)
     expect(mapping.failure_path_for(nil, Rails.application.routes.url_helpers)).to eq("/portal/login")

@@ -52,6 +52,47 @@ RSpec.describe "Users::TwoFactorChallenge", type: :request do
   end
 
   describe "with 2FA session" do
+    it "returns pending membership selection after verifying MFA without authenticating a membership" do
+      create(:user, account: account)
+      Users::TwoFactorChallengeController.define_method(:update) do
+        status = super()
+        render json: {
+          status: status,
+          next_step: @next_step,
+          account_id: @account.id,
+          credential_id: @credential.id,
+          signed_in: warden.authenticated?(:user)
+        }
+      end
+      establish_2fa_session
+      get "/users/two_factor_challenges/#{credential.id}"
+
+      patch "/users/two_factor_challenges/#{credential.id}", params: { code: ROTP::TOTP.new(credential.otp_secret).now }
+
+      expect(response.parsed_body).to eq("status" => "pending", "next_step" => "selection",
+        "account_id" => account.id, "credential_id" => credential.id, "signed_in" => false)
+      expect(request.session[Vouch::Session.key_for(:user, :selection)]).to be_present
+      expect(response.headers["Location"]).to be_nil
+    ensure
+      Users::TwoFactorChallengeController.remove_method(:update)
+    end
+
+    it "lets a host replace challenge delivery's default show response" do
+      Users::TwoFactorChallengeController.define_method(:send_code) do
+        status = super()
+        render json: { status: status, credential_id: @credential.id }, status: :accepted
+      end
+      establish_2fa_session
+
+      post "/users/two_factor_challenges/#{credential.id}/send_code"
+
+      expect(response).to have_http_status(:accepted)
+      expect(response.parsed_body).to eq("status" => "ok", "credential_id" => credential.id)
+      expect(request.session.keys.grep(/two_factor_token/)).not_to be_empty
+    ensure
+      Users::TwoFactorChallengeController.remove_method(:send_code)
+    end
+
     it "requires a fresh TOTP challenge after the factor is disabled and enabled again" do
       establish_2fa_session
       get "/users/two_factor_challenges/#{credential.id}"

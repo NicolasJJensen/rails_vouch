@@ -195,7 +195,6 @@ module Vouch
       signed_in_via: "signed_in_via",
       selection: "selection",
       oauth_registration: "oauth_registration",
-      registration_form: "registration_form",
       destination_scope: "destination_scope",
       completion: "completion",
       confirmation: "confirmation",

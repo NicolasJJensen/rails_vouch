@@ -24,10 +24,12 @@ RSpec.describe "Users::Impersonations", type: :request do
       verified_at: Time.current, two_factor_enabled_at: Time.current)
     admin_account.enable_two_factor!
     Users::ImpersonationsController.define_method(:create) do
-      super() { render json: { evidence: authentication_evidence(scope: :user) } }
+      super()
+      render json: { evidence: authentication_evidence(scope: :user) }
     end
     Users::ImpersonationsController.define_method(:destroy) do
-      super() { render json: { evidence: authentication_evidence(scope: :user) } }
+      super()
+      render json: { evidence: authentication_evidence(scope: :user) }
     end
     sign_in_via_login
     get "/users/two_factor_challenges/#{credential.id}"
@@ -50,7 +52,7 @@ RSpec.describe "Users::Impersonations", type: :request do
   it "prepares the actual target before host action authorization and does not switch after denial" do
     target_id = target_user.id
     Users::ImpersonationsController.define_method(:create) do
-      raise "Target was not prepared" unless @identity.id == target_id
+      raise "Target was not prepared" unless @user.id == target_id
       head :forbidden
       super()
     end
@@ -66,11 +68,10 @@ RSpec.describe "Users::Impersonations", type: :request do
     Users::ImpersonationsController.remove_method(:create)
   end
 
-  it "yields a completed switch for a host response without a second redirect" do
+  it "returns a completed switch for a host response without a second redirect" do
     Users::ImpersonationsController.define_method(:create) do
-      super() do |result|
-        render json: { status: result.status, identity_id: result.value.id }
-      end
+      status = super()
+      render json: { status: status, identity_id: @user.id }
     end
     sign_in_via_login
 
@@ -83,11 +84,12 @@ RSpec.describe "Users::Impersonations", type: :request do
     Users::ImpersonationsController.remove_method(:create)
   end
 
-  it "yields a cancelled switch without creating impersonation state" do
+  it "returns a cancelled switch without creating impersonation state" do
     hooks = Users::ImpersonationsController.__hooks
     Users::ImpersonationsController.before_impersonation_start { throw :abort }
     Users::ImpersonationsController.define_method(:create) do
-      super() { |result| render json: { status: result.status } }
+      status = super()
+      render json: { status: status }
     end
     sign_in_via_login
 
@@ -120,11 +122,10 @@ RSpec.describe "Users::Impersonations", type: :request do
   end
 
   %i[destroy destroy_all].each do |action|
-    it "yields #{action} after restoring the operator" do
+    it "returns #{action} after restoring the operator" do
       Users::ImpersonationsController.define_method(action) do
-        super() do |result|
-          render json: { status: result.status, restored_id: current_identity.id }
-        end
+        status = super()
+        render json: { status: status, restored_id: @user.id }
       end
       sign_in_via_login
       post "/users/impersonations/#{target_user.id}"

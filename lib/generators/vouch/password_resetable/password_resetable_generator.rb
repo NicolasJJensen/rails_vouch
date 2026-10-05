@@ -227,6 +227,23 @@ module Vouch
         model_metadata.param_key
       end
 
+      def password_reset_record_name
+        if generating_current_host? && (mapping = Vouch.mappings[auth_scope_name.to_sym]) &&
+            mapping.account_class_name.delete_prefix("::") == model_metadata.class_name
+          return mapping.parent_scope_name if mapping.membership_scope?
+          return model_metadata.param_key if mapping.split_model?
+        end
+
+        declaration = route_declaration_for(model_metadata.class_name, auth_scope_name) ||
+          route_declaration_for(model_metadata.class_name)
+        if declaration&.match?(/\baccount:\s*["']#{Regexp.escape(model_metadata.class_name)}["']/)
+          model_metadata.param_key
+        else
+          parent_scope = declaration&.match(/\baccount_scope:\s*(?::([a-zA-Z_][a-zA-Z0-9_]*)|["']([a-zA-Z_][a-zA-Z0-9_]*)["'])/)
+          parent_scope&.captures&.compact&.first || auth_scope_name
+        end
+      end
+
       def ui_enabled?
         !options[:model_only] && auth_scope_name.present?
       end

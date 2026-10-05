@@ -45,6 +45,40 @@ RSpec.describe "Users::Passwords", type: :request do
       expect(response).to redirect_to("/users/sign_in")
     end
 
+    it "preserves the same public response when the host observes either internal status" do
+      statuses = []
+      Users::PasswordResetsController.define_method(:create) do
+        statuses << super()
+      end
+
+      post "/users/password_reset", params: { email_address: account.email_address }
+      expect(response).to redirect_to("/users/sign_in")
+      notice = flash[:notice]
+      post "/users/password_reset", params: { email_address: "nobody@example.com" }
+
+      expect(statuses).to eq([:ok, :invalid])
+      expect(response).to redirect_to("/users/sign_in")
+      expect(flash[:notice]).to eq(notice)
+    ensure
+      Users::PasswordResetsController.remove_method(:create)
+    end
+
+    it "lets the host render after token issuance" do
+      Users::PasswordResetsController.define_method(:create) do
+        status = super()
+        render json: { accepted: status == :ok }, status: :accepted
+      end
+
+      post "/users/password_reset", params: { email_address: account.email_address }
+
+      expect(response).to have_http_status(:accepted)
+      expect(response.parsed_body).to eq("accepted" => true)
+      expect(account.reload.password_reset_token_digest).to be_present
+      expect(response.headers["Location"]).to be_nil
+      expect(flash[:notice]).to be_nil
+    ensure
+      Users::PasswordResetsController.remove_method(:create)
+    end
   end
 
   describe "GET /users/password_reset/edit" do
@@ -77,6 +111,27 @@ RSpec.describe "Users::Passwords", type: :request do
   end
 
   describe "PATCH /users/password_reset" do
+    it "exposes the changed account before the host chooses a response" do
+      token = account.generate_password_reset_token!.value
+      Users::PasswordResetsController.define_method(:update) do
+        status = super()
+        if status == :ok
+          render json: { id: @account.id, password_changed: @account.authenticate("newpassword1").present? }
+        end
+      end
+
+      patch "/users/password_reset", params: {
+        token: token,
+        account: { password: "newpassword1", password_confirmation: "newpassword1" }
+      }
+
+      expect(response.parsed_body).to eq("id" => account.id, "password_changed" => true)
+      expect(response.headers["Location"]).to be_nil
+      expect(Account.find_by_auth_password_reset_token(token)).to be_nil
+    ensure
+      Users::PasswordResetsController.remove_method(:update)
+    end
+
     it "updates the password with a valid token" do
       token = account.generate_password_reset_token!.value
       patch "/users/password_reset", params: {

@@ -175,9 +175,8 @@ RSpec.describe "Users::Invitations", type: :request do
       invitation
       original = Users::InvitationsController.instance_method(:create)
       Users::InvitationsController.define_method(:create) do
-        super() do |result|
-          render json: {reason: result.metadata[:reason], id: result.error.invitation.id}, status: :conflict
-        end
+        super()
+        render json: {reason: @failure_reason, id: @operation_error.invitation.id}, status: :conflict
       end
       post "/users/invitation", params: {email_address: invitation.account.email_address}
       expect(response).to have_http_status(:conflict)

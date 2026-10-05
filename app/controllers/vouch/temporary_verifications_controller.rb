@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 class Vouch::TemporaryVerificationsController < Vouch::VerificationsController
-  def create(&response_handler)
+  def create
     return if performed?
     require_temporary_verifiable!
     result = saved_verification_result
@@ -11,22 +11,22 @@ class Vouch::TemporaryVerificationsController < Vouch::VerificationsController
       Vouch::Result.invalid(record: @verifiable)
     end
     store_temporary_verification unless result.already_verified?
-    respond_to_verification(result, response_handler)
+    set_operation_result(result)
   end
 
-  def update(&response_handler)
+  def update
     return if performed?
     require_temporary_verifiable!
     result = saved_verification_result || @verifiable.complete_verification(params.require(:code))
     store_temporary_verification unless result.already_verified?
-    respond_to_verification(result, response_handler)
+    set_operation_result(result)
   end
 
-  def destroy(&response_handler)
+  def destroy
     return if performed?
     require_temporary_verifiable!
     forget_temporary_verification
-    respond_to_verification(Vouch::Result.ok(@verifiable), response_handler)
+    set_operation_result(Vouch::Result.ok(@verifiable))
   end
 
   private
