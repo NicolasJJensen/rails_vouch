@@ -4,6 +4,7 @@
 
 - [Add GitHub sign-in](#add-github-sign-in)
 - [Choose registration behavior](#choose-registration-behavior)
+- [Customize automatic registration](#customize-automatic-registration)
 - [Connect a provider to an existing account](#connect-a-provider-to-an-existing-account)
 - [Prefill and extend the registration form](#prefill-and-extend-the-registration-form)
 - [Connect several providers during registration](#connect-several-providers-during-registration)
@@ -143,12 +144,38 @@ class Users::OmniAuthsController < Vouch::OmniAuthsController
   private
 
   def oauth_registration_required?
-    !@account.valid?
+    !@user.valid?
   end
 end
 ```
 
 Vouch has already applied the verified provider information to the unsaved account before this decision. This example attempts automatic creation when that record validates and shows the form otherwise; creation can still fail later because of a uniqueness race or a related record. Keep the default form mode if registration must collect consent or other inputs beyond model validations.
+
+## Customize automatic registration
+
+The callback's `super` accepts a saving block for automatic registration. Use it when a host form object or additional records must be saved with the new user:
+
+```ruby
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
+  def callback
+    status = super do |user|
+      @signup_form = SignupForm.new(user)
+      @signup_form.save!
+    end
+
+    if status == :ok && @operation == :registration
+      redirect_to root_path, notice: "Your account is ready."
+    end
+  end
+end
+```
+
+`SignupForm` is your form object; the [complete registration example](registration.md#custom-registration-forms) shows its structure and how to restore its draft. Vouch supplies the user with provider attributes already applied. Your block replaces the default user save and runs in the same transaction as the OAuth links and registration hooks. Save the supplied user and associated records there. An explicit `false` cancels the transaction; a `nil` return is allowed after saving the user.
+
+The block runs only when this callback performs automatic registration. It does not run during sign-in, provider linking, or a redirect to the registration form. Form-based OAuth registration uses `Users::RegistrationsController#create`, where the same saving-block pattern is available. Both controllers can use your `SignupForm`.
+
+> Put response customization after `super`, once Vouch knows whether registration and authentication completed. If MFA is pending and your action does not respond, Vouch redirects to the challenge.
 
 ## Connect a provider to an existing account
 
@@ -205,7 +232,7 @@ end
 
 On submission, Vouch restores the retained attributes and applies permitted form values. Validation errors re-render that record with its errors. A successful submission saves the account and OAuth links in the same transaction. Mapping does not run again during rendering or submission, so later edits are preserved. The provider and UID come from the retained callback, never from editable form fields.
 
-For multi-tenant registration, that transaction also saves the organisation and membership constructed by your registration methods. See [registration construction](registration.md#construct-records-transactionally) for the organisation name input and shared construction methods. After registration and required authentication steps, [the sign-up redirect](registration.md#send-people-to-onboarding) can send the person to onboarding.
+For multi-tenant registration, that transaction also saves the organisation and membership constructed by your registration methods. See [registration construction](registration.md#construct-records-transactionally) for tenant fields and the methods that build these records. After registration and required authentication steps, [the sign-up redirect](registration.md#send-people-to-onboarding) can send the person to onboarding.
 
 ## Connect several providers during registration
 
@@ -213,13 +240,9 @@ With form registration, another `purpose: :register` provider button returns to 
 
 A provider button does not submit unsaved browser inputs to the registration controller. For the standard generated form, connect providers before entering the remaining details.
 
-For a multi-step form, declare the same [registration form](registration.md#custom-registration-forms) on your registration and OAuth controllers, or their shared parent:
+For a multistep form, your registration action saves permitted fields in its own session draft before leaving for another provider. On return, Vouch restores its verified provider information; your action restores your form around that user and applies the draft fields you want to retain. See the [complete host-owned form example](registration.md#custom-registration-forms) for the controller, form and session serialization.
 
-1. Your form action assigns permitted fields and calls `save_registration_form` before leaving for another provider.
-2. The callback restores the form around the mapped account before applying the new provider information.
-3. Vouch retains the updated form for the next registration step.
-
-Your application supplies the steps and decides which fields each step accepts. The provider POST does not infer or save browser inputs.
+Your form decides whether an edited value wins over a provider prefill. Keep provider proofs in Vouch's continuation state rather than reconstructing them from the form. The provider POST does not submit or save browser inputs, and Vouch does not serialize an arbitrary host form for you.
 
 `pending_oauth_providers` returns entries such as:
 
@@ -250,7 +273,7 @@ Apply the same override in the registrations controller when its form retains ad
 
 ## Expired providers and reconnection
 
-Each proof expires independently after `pending_authentication_ttl`; [configure that timeout here](authentication-policy.md#pending-sign-in-timeout). Adding another provider does not extend an earlier proof. Expired entries remain visible through `pending_oauth_providers`, and registration returns an invalid result with `metadata[:reason] == :expired_providers` and the affected entries in `metadata[:providers]`.
+Each proof expires independently after `pending_authentication_ttl`; [configure that timeout here](authentication-policy.md#pending-sign-in-timeout). Adding another provider does not extend an earlier proof. Expired entries remain visible through `pending_oauth_providers`. Registration returns `:invalid` with `@failure_reason == :expired_providers`; select the affected entries with `pending_oauth_providers.select { |provider| provider[:expired] }`.
 
 Reconnect the same provider identity explicitly:
 
@@ -339,52 +362,59 @@ An automatic signup can fail because a required attribute is missing, an email i
 
 The initiation page is captured in the Rails session when the POST to the provider starts. The provider callback's referrer is not used. This return path affects registration failure only; successful registration keeps its normal sign-up destination.
 
-Expected failures call `oauth_registration_failed`. Override it to add reporting while retaining the redirect:
-
-```ruby
-# app/controllers/users/omni_auths_controller.rb
-class Users::OmniAuthsController < Vouch::OmniAuthsController
-  private
-
-  def oauth_registration_failed(reason:, error: nil)
-    Rails.logger.info("OAuth registration failed: #{reason}")
-    Rails.error.report(error, handled: true) if error
-    super
-  end
-end
-```
-
-Reasons are `:validation`, `:conflict`, `:cancelled`, or `:aborted`. If registration commits but subsequent sign-in fails, Vouch keeps the account and redirects to sign-in with a creation notice and failure alert. This is separate from a failed registration form submission, which redisplays validation errors. Expected failures are not automatically sent to an error reporter. Unexpected exceptions propagate through Rails error handling. Provider authentication failure itself uses the `failure` action and returns to sign-in.
-
-## Customize callback responses
-
-Override `callback` and pass a block to `super` to handle an outcome. The operation has already run when the block receives its `Vouch::Result`:
+Inspect the outcome after `super` when adding reporting. If you leave the response untouched, Vouch retains its normal redirect:
 
 ```ruby
 # app/controllers/users/omni_auths_controller.rb
 class Users::OmniAuthsController < Vouch::OmniAuthsController
   def callback
-    super do |result|
-      if result.metadata[:reason] == :not_registered
-        redirect_to new_user_registration_path, alert: "Create an account to connect this provider."
-      end
+    status = super
+
+    if @operation == :registration && !@registration_committed &&
+        [:invalid, :cancelled].include?(status)
+      Rails.logger.info("OAuth registration failed: #{@failure_reason || status}")
+      Rails.error.report(@operation_error, handled: true) if @operation_error
     end
   end
 end
 ```
 
-Rendering or redirecting in the block replaces Vouch's response. Doing neither keeps the normal redirect. `failure` accepts the same block for provider authentication failures. Errors raised by your response block propagate to Rails; Vouch does not treat them as failed registration attempts.
+Failure reasons include `:validation`, `:conflict`, `:cancelled`, and `:aborted`. Expected failures retain their original exception in `@operation_error` when there is one; Vouch does not automatically report it.
 
-| Outcome | Result |
+If registration commits but subsequent sign-in fails, `@registration_committed` is `true`. Vouch keeps the account and redirects to sign-in with a creation notice and failure alert. A failed registration form submission instead redisplays the form with validation errors. Unexpected exceptions propagate through Rails error handling. Provider authentication failure uses the separate `failure` action and returns to sign-in.
+
+## Customize callback responses
+
+Override `callback`, call `super`, then use its status and the controller variables to choose a response:
+
+```ruby
+# app/controllers/users/omni_auths_controller.rb
+class Users::OmniAuthsController < Vouch::OmniAuthsController
+  def callback
+    status = super
+
+    if status == :invalid && @failure_reason == :not_registered
+      redirect_to new_user_registration_path,
+        alert: "Create an account to connect this provider."
+    end
+  end
+end
+```
+
+Rendering, redirecting, or calling `head` replaces Vouch's response. Otherwise, Rails calls Vouch's `default_render` after the complete action returns, and Vouch supplies the normal redirect. The `failure` action follows the same status-and-response convention. Exceptions raised by your code after `super` propagate to Rails; they do not become registration failures.
+
+| Outcome | Status and controller variables |
 | --- | --- |
-| Signed in, linked, or completed automatic registration | `ok?`; `value` is the account or linked OAuth identity |
-| Continue to registration | `pending?`, `metadata[:next_step] == :registration` |
-| Complete MFA or select a membership | `pending?`, with `:two_factor` or `:selection` as the next step |
-| Invalid request, conflicting provider or failed validation | `invalid?`; inspect `metadata[:reason]` and `error` |
-| A lifecycle callback cancels the operation | `cancelled?` |
-| Account saved but subsequent sign-in failed | A failed result with `metadata[:committed] == true`; do not create another account |
+| Signed in, linked, or completed automatic registration | `:ok`; `@user` holds the credentials record, and a successful link also sets `@oauth_identity` |
+| Continue to registration | `:pending`, `@next_step == :registration` |
+| Complete MFA or select a membership | `:pending`, with `@next_step` set to `:two_factor` or `:selection` |
+| Invalid request, conflicting provider or failed validation | `:invalid`; inspect `@failure_reason`, `@operation_error`, and the record's errors |
+| A lifecycle callback or saving block cancels the operation | `:cancelled` |
+| Account saved but subsequent sign-in failed | An unsuccessful status with `@registration_committed == true`; do not create another account |
 
-`metadata[:operation]` distinguishes `:sign_in`, `:link` and `:registration` after request validation. Request failures occur before an operation starts. Expected persistence failures retain their original exception in `error`.
+`@operation` distinguishes `:sign_in`, `:link`, and `:registration` after request validation. Request failures happen before an operation starts. Record names follow the configured authentication scope: for an `Account` scope the credentials record is `@account` instead of `@user`.
+
+> A block passed to `callback`'s `super` customizes automatic registration persistence. It does not customize the HTTP response. Choose your response in the action after `super` returns.
 
 ## Routes and custom controllers
 

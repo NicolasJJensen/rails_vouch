@@ -32,13 +32,13 @@ For an existing `:user` scope:
 bin/rails generate vouch:impersonation users
 ```
 
-The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. Add your application’s permission check to the generated action. Vouch prepares `@identity` before the action runs:
+The generator creates `Users::ImpersonationsController` and adds `auth.impersonation` to the scope. Add your application’s permission check to the generated action. Vouch prepares `@user` before the action runs (a custom scope uses its own name):
 
 ```ruby
 # app/controllers/users/impersonations_controller.rb
 class Users::ImpersonationsController < Vouch::ImpersonationsController
   def create
-    # Authorize impersonator's access to @identity here.
+    # Authorize impersonator's access to @user here.
     return head :forbidden unless impersonator.support_access?
 
     super
@@ -198,20 +198,19 @@ This copies the actions into your controller while preserving its authorization 
 
 ## Customize action responses
 
-The switching actions yield a result before their default redirect. This block runs after the operation; put authorization before `super`.
+The switching actions return `:ok`, `:cancelled`, or `:invalid` from `super`. Put authorization before `super`, then choose your response afterward. The configured identity is exposed as `@user` in a user scope or `@account` in an account scope; a custom scope uses its own name.
 
 ```ruby
 # app/controllers/users/impersonations_controller.rb
 class Users::ImpersonationsController < Vouch::ImpersonationsController
   def create
-    # Authorize impersonator's access to @identity here.
-    super do |result|
-      next unless request.format.json?
+    # Authorize impersonator's access to @user here.
+    status = super
+    return unless request.format.json?
 
-      render json: { status: result.status }, status: result.ok? ? :ok : :unprocessable_content
-    end
+    render json: { status: status }, status: status == :ok ? :ok : :unprocessable_content
   end
 end
 ```
 
-Use the same pattern in `destroy` or `destroy_all` to customize one-level or complete restoration. An operation cancelled by a lifecycle callback yields `result.cancelled?`; invalid restoration yields `result.invalid?`. Rendering or redirecting suppresses the default response. Record lookup and authentication filters run before the action, so their boundary failures use the normal Rails response handling instead of this result block.
+Use the same pattern in `destroy` or `destroy_all` to customize one-level or complete restoration. After either stop action, the scoped record variable contains the identity currently signed into that scope, or `nil` if restoration left it signed out. A cancelled stop keeps the current target; a cancelled `create` keeps the attempted target available for error handling. A lifecycle cancellation returns `:cancelled`; invalid restoration returns `:invalid` with `@failure_reason == :invalid_impersonation`. If your action does not render, redirect, or call `head`, Vouch's `default_render` supplies the default response after the action finishes. Record lookup and authentication filters run before the action, so their failures use normal Rails response handling.

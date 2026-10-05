@@ -208,11 +208,11 @@ Expiry does not delete a pending account. Invitations are checked again when the
 
 Membership-only impersonation cannot submit an acceptance choice. Full account impersonation follows the current account, subject to your action authorization.
 
-The `accept`, `reject` and `destroy` actions accept the same response block as `create` and `resend`. Authorize the prepared `@invitation` in your action where your application requires it, then call `super`; Vouch still validates the token and account relationship.
+The `accept`, `reject` and `destroy` actions return a status from `super`, like `create` and `resend`. Authorize the prepared `@invitation` before calling `super`, then render or redirect afterward if you want a custom response. Vouch still validates the token and account relationship. Without a custom response, its `default_render` supplies the appropriate page or redirect after your action finishes.
 
 ## Resend an invitation
 
-Creating another invitation for the same pending membership returns `:already_invited`. An existing joined membership returns `:already_joined`. Neither case sends another email or changes the invitation token.
+Creating another invitation for the same pending membership returns `:invalid` and sets `@failure_reason` to `:already_invited`. An existing joined membership sets it to `:already_joined`. Neither case sends another email or changes the invitation token.
 
 Use the separate resend action to send a replacement link:
 
@@ -237,24 +237,22 @@ end
 
 Omit the assignment to retain the original inviter. Changing it also changes which user's default `revocable_invitations` relation contains the invitation.
 
-Both `create` and `resend` accept a response block. You can display a resend link in your own error view instead of the default alert:
+Both `create` and `resend` return the operation status. The prepared record remains available as `@invitation`; failures also expose `@failure_reason` and `@operation_error`. You can display a resend link in your own error view:
 
 ```ruby
 # app/controllers/users/invitations_controller.rb
 class Users::InvitationsController < Vouch::InvitationsController
   def create
     # Authorize @invitation using your application's permissions.
-    super do |result|
-      if result.metadata[:reason] == :already_invited
-        @invitation = result.error.invitation
-        render :already_invited, status: :conflict
-      end
+    status = super
+    if status == :invalid && @failure_reason == :already_invited
+      render :already_invited, status: :conflict
     end
   end
 end
 ```
 
-> Supply `app/views/users/invitations/already_invited.html.erb` when using this override. Rendering or redirecting in the block suppresses the default response; otherwise Vouch continues with its normal notice or alert.
+> Add `app/views/users/invitations/already_invited.html.erb` for this override. If your action renders, redirects, or calls `head`, Vouch leaves that response in place. Otherwise its default notice or alert is applied after the action finishes.
 
 ## Revoke an invitation
 

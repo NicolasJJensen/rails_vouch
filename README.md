@@ -151,7 +151,7 @@ See [the generated models and schema](docs/model-mapping.md#multi-tenant-models)
 
 ## Customization and reference
 
-- [Registration](docs/registration.md), including [custom registration forms](docs/registration.md#custom-registration-forms), and [sign-in customization](docs/sign-in-customization.md)
+- [Registration](docs/registration.md), including [host-owned registration forms](docs/registration.md#custom-registration-forms), and [sign-in customization](docs/sign-in-customization.md)
 - [Controllers, route paths, and ejection](docs/controllers.md)
 - [Models, primary keys, and advanced scopes](docs/model-mapping.md)
 - [Authentication policy and session invalidation](docs/authentication-policy.md)

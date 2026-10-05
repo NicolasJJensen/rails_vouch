@@ -135,13 +135,15 @@ The generator adds delivery methods that raise until you implement them. Replace
 
 ```ruby
 # app/models/phone.rb
- def deliver_verification_code(code)
-   SmsService.deliver(e164, "Your verification code is #{code}")
- end
+class Phone < ApplicationRecord
+  def deliver_verification_code(code)
+    SmsService.deliver(e164, "Your verification code is #{code}")
+  end
 
- def deliver_two_factor_code(code)
-   SmsService.deliver(e164, "Your sign-in code is #{code}")
- end
+  def deliver_two_factor_code(code)
+    SmsService.deliver(e164, "Your sign-in code is #{code}")
+  end
+end
 ```
 
 `SmsService` represents a service you implement using your SMS provider. Add phone normalization and validation to `Phone` as appropriate for the numbers you accept.
@@ -165,14 +167,13 @@ The generated controller looks up phones through the authenticated owner’s ass
 class Users::TwoFactorCredentialsController < Vouch::TwoFactorCredentialsController
   def destroy
     # Authorize removal of @credential with your application's permissions.
-    super do |result|
-      redirect_to security_settings_path, notice: "Phone removed" if result.ok?
-    end
+    status = super
+    redirect_to security_settings_path, notice: "Phone removed" if status == :ok
   end
 end
 ```
 
-The block receives the operation's result. Rendering or redirecting in that block replaces the generated response; otherwise Vouch uses its normal response. A response issued before `super`, such as `head :forbidden`, prevents the mutation.
+`super` returns a status such as `:ok`, `:invalid` or `:cancelled`. The selected phone remains in `@credential`, including its validation errors. Your action can render, redirect or call `head` after the operation. Otherwise the generated controller's `default_render` supplies its normal response once your action finishes. A response issued before `super`, such as `head :forbidden`, prevents the mutation.
 
 ## Sign in with MFA
 
@@ -237,7 +238,9 @@ When several fields together identify the recipient, configure them as an array:
 
 ```ruby
 # app/models/email_address.rb
-self.verifiable_subject_attribute = [:local_part, :domain]
+class EmailAddress < ApplicationRecord
+  self.verifiable_subject_attribute = [:local_part, :domain]
+end
 ```
 
 Or generate that configuration with:
@@ -320,7 +323,7 @@ Filter the available factors in the generated challenge controller. `additional_
 ```ruby
 # app/controllers/users/two_factor_challenge_controller.rb
 class Users::TwoFactorChallengeController < Vouch::TwoFactorChallengeController
-  def update(&response_handler)
+  def update
     # Authorize @credential using your application's permissions system.
     super
   end
@@ -340,7 +343,7 @@ class Users::TwoFactorChallengeController < Vouch::TwoFactorChallengeController
 end
 ```
 
-Apply your normal action authorization to the challenge controller. Vouch prepares `@account` before every action and `@credential` before `show`, `send_code` and `update`. The eligibility filter applies to lookup and submission as well as the displayed list. The recovery filter in this example excludes recovery codes because this particular page requires actual TOTP use.
+Apply your normal action authorization to the challenge controller. Vouch prepares `@user` for this single-model scope before every action and `@credential` before `show`, `send_code` and `update`. An `:account` credentials scope exposes `@account` instead. The eligibility filter applies to lookup and submission as well as the displayed list. The recovery filter in this example excludes recovery codes because this particular page requires actual TOTP use.
 
 Successful completion returns to `return_to`, which must be on the application's own origin. The page checks its permissions again. Only a GET destination is retained; Vouch does not replay a previous form submission.
 
@@ -352,6 +355,22 @@ Successful completion returns to `return_to`, which must be on the application's
 | `DELETE /users/two_factor_challenges` | Cancels the challenge and returns without signing out. |
 
 The generated pages include a Cancel button. Failed codes, expiration and cancellation do not end the existing login. Refreshing the selector does not extend the active continuation's `pending_authentication_ttl`.
+
+To customize a challenge response, inspect the status after `super`. For additional MFA, successful completion has already stored `@authentication_evidence` and retains the destination in `@return_to`:
+
+```ruby
+# app/controllers/users/two_factor_challenge_controller.rb
+class Users::TwoFactorChallengeController < Vouch::TwoFactorChallengeController
+  def update
+    status = super
+    if status == :ok && additional_authentication?
+      redirect_to @return_to, notice: "Authenticator confirmed."
+    end
+  end
+end
+```
+
+Unhandled outcomes use Vouch's `default_render`. During sign-in, successful code verification may return `:pending` with `@next_step == :selection` when a membership still needs selecting; that is not a completed membership login. An invalid code returns `:invalid`, and an exhausted attempt budget returns `:locked`.
 
 A successful challenge runs `on_two_factor_verification` once with the account, identity and credential, plus `evidence:` and `additional:` keywords. Recovery may have a nil credential; its evidence identifies the recovery owner. An additional challenge does not rerun sign-in callbacks.
 

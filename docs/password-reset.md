@@ -268,8 +268,8 @@ class Users::PasswordResetsController < Vouch::PasswordResetsController
   private
 
   def password_reset_recipient
-    @account.emails.where.not(verified_at: nil)
-      .find_by(id: @account.primary_email_id)&.address
+    @user.emails.where.not(verified_at: nil)
+      .find_by(id: @user.primary_email_id)&.address
   end
 end
 ```
@@ -282,18 +282,21 @@ The controller captures the selected address while holding the user lock. Pass t
 
 ## Customize responses and token operations
 
-Actions yield their result before their default response. An override can render or redirect to replace that response:
+Call `super` to perform the operation, then use its status to choose a response. The affected record is available as `@user` for the `:user` scope (`@account` for an `:account` scope):
 
 ```ruby
 # app/controllers/users/password_resets_controller.rb
 class Users::PasswordResetsController < Vouch::PasswordResetsController
   def update
-    super do |result|
-      redirect_to new_user_session_path, notice: "Password changed." if result.ok?
-    end
+    status = super
+    redirect_to new_user_session_path, notice: "Password changed." if status == :ok
   end
 end
 ```
+
+If your action does not respond, Vouch's `default_render` runs after it finishes. A successful reset returns to sign-in; invalid passwords redisplay the form with `@user.errors`, and an invalid token returns to sign-in. Recognized failures return statuses such as `:invalid` or `:cancelled`; `@operation_error` contains an underlying exception when available.
+
+> The request action's default response stays the same whether a user exists, is eligible, or an expected delivery failure occurs. Preserve that behavior when customizing `create` so the endpoint does not disclose registered email addresses.
 
 For a custom service, the model operations are:
 

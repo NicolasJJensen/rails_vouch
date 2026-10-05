@@ -110,40 +110,79 @@ Here, `Portal` does not identify the `:user` scope, so the declaration makes tha
 
 ## Customize action responses
 
-Session creation, sign-out and membership selection yield their outcome before sending the default response. Override the action and pass a block to `super` to supply your own response:
+Call `super` to perform the operation, then render, redirect or call `head` in your action. The action returns a status symbol and exposes the prepared records as instance variables:
 
 ```ruby
 # app/controllers/users/sessions_controller.rb
 class Users::SessionsController < Vouch::SessionsController
   def create
-    super do |result|
-      next unless request.format.json?
+    status = super
+    return unless request.format.json?
 
-      status = case result.status
-      when :ok then :ok
-      when :pending then :accepted
-      else :unprocessable_content
-      end
+    http_status = case status
+    when :ok then :ok
+    when :pending then :accepted
+    else :unprocessable_entity
+    end
 
-      render json: {
-        status: result.status,
-        next_step: result.metadata[:next_step]
-      }, status: status
+    render json: { status: status, next_step: @next_step }, status: http_status
+  end
+end
+```
+
+Vouch waits until your whole action returns before sending its default response. Rails calls the controller's `default_render` only when no response has been performed. In this example JSON gets your response and HTML retains Vouch's normal redirect or validation page. Permission checks belong before `super`, because the operation has already happened when it returns.
+
+| Status | Meaning |
+| --- | --- |
+| `:ok` | The operation completed. |
+| `:pending` | Another step is required; `@next_step` identifies it, such as `:two_factor` or `:selection`. |
+| `:invalid` | The submitted fields, credentials, selection or continuation were rejected. |
+| `:cancelled` | A callback or persistence operation cancelled the change. |
+| `:locked` | The credential's attempt limit prevents this attempt. |
+| `:already_verified` | The verification subject was already verified and saved. |
+
+These statuses apply to operation actions. An ordinary page action, such as registration `new`, prepares variables and uses Rails template rendering; its return value has no outcome contract. Authentication guards can respond before an action runs.
+
+### Records and errors
+
+The configured authentication scope determines the current operation's record variable:
+
+| Configuration | Prepared variables |
+| --- | --- |
+| Single-model `:user` scope | `@user` |
+| `:operator` scope backed by `User` | `@operator` |
+| `:user` membership linked to `:account` | `@account`, `@user`; membership selection exposes `@users` |
+| MFA enrollment or challenge | `@credential`, alongside the credentials-scope record |
+| Generic verification | `@verifiable` |
+| Invitation | `@invitation` |
+| Recovery-code generation | `@recovery_owner`, `@recovery_codes` |
+
+These are operation records, not authenticated-current-record helpers: a failed registration can expose an unsaved `@user`. Keep using `current_user` to ask who is signed in. Resource-specific variables retain their names when the authentication scope has another name.
+
+Use the record's `errors` for validation messages. `@operation_error` holds an expected exception when available, and `@failure_reason` gives an operation-specific reason. They may be nil. Unexpected exceptions still reach Rails error handling. Registration also exposes `@registration_committed`, so an unsuccessful sign-in after account creation does not look like failed creation.
+
+Scope names must not collide with Rails state or endpoint variables such as `request`, `credential` or `recovery_codes`.
+
+### Change the fallback
+
+Override `default_render` if you want to change the controller's default response while retaining action overrides:
+
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::SessionsController
+  private
+
+  def default_render
+    if action_name == "create" && @operation_status == :invalid
+      render :new, status: :unprocessable_entity
+    else
+      super
     end
   end
 end
 ```
 
-Rendering or redirecting in the block suppresses the default response. A block that only observes the result leaves the normal HTML response in place. The operation has already run when the block receives its result; perform permission checks before calling `super`, not in this response block.
-
-| Outcome | Meaning |
-| --- | --- |
-| `result.ok?` | The operation completed; `value` contains its record. |
-| `result.pending?` | Authentication needs another step; `metadata[:next_step]` is `:two_factor` or `:selection`. This is not completed sign-in. |
-| `result.invalid?` | Credentials, continuation or selection were rejected. |
-| `result.cancelled?` | The operation was cancelled; for example, a sign-out hook prevented sign-out. |
-
-When supplied, `result.error` retains the underlying expected error and `result.metadata[:record]` provides its record and field errors. These fields are not present for every failure. Unexpected exceptions still propagate.
+A host action that already renders, redirects or calls `head` bypasses this fallback. [Registration](registration.md#custom-registration-forms) also accepts a block to save your records inside its transaction; that block is separate from response handling. Model methods keep their normal and bang APIs and their [`Vouch::Result` values](persistence.md).
 
 ## Endpoint reference
 
@@ -332,6 +371,8 @@ end
 ```
 
 Edit either local file. The route still points to `Users::SessionsController`. Keeping the local implementation as its superclass preserves your overrides, `super` calls and generated enrollment customizations. Re-running the generator does not replace the local implementation.
+
+The copied implementation includes `default_render`, so action overrides can still choose a response after `super`. Edit that local fallback to change the default response too.
 
 The optional `verifications` and `temporary_verifications` controllers can also be ejected. They use host-prepared records rather than an authentication scope; see the [verification guide](verification.md#results-and-customization) for their shared superclass.
 

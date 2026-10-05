@@ -2,8 +2,8 @@
 
 ## Unreleased
 
-- Host-owned registration forms with positional model construction, session continuations, and atomic OAuth, invitation, and MFA persistence.
-
+- Status-returning controller actions with mapped record variables and deferred default responses.
+- Transactional registration saving blocks for host-owned forms, associated records, OAuth, invitations, and MFA activation.
 - Separate MFA challenge, credential-management and recovery-code route declarations with configurable URLs and helper names.
 - Documented concrete storage for composite-key recovery-code and password-history owners, and compatible scalar keys for shared polymorphic storage.
 - Rails 8.1+ and PostgreSQL support, with case-insensitive email columns.

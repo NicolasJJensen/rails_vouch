@@ -179,16 +179,17 @@ Override the generated action to authorize the selected record or customize its 
 class Users::RecoveryCodesController < Vouch::RecoveryCodesController
   def create
     # Check permission to replace @recovery_owner's recovery codes.
-    super do |result|
-      unless result.ok?
-        redirect_to security_settings_path, alert: "Your recovery codes were not changed."
-      end
+    status = super
+    unless status == :ok
+      redirect_to security_settings_path, alert: "Your recovery codes were not changed."
     end
   end
 end
 ```
 
-Calling `super` without rendering a response keeps Vouch's default: successful generation renders the plaintext codes; failure renders the page with an error. An owner type and ID must match an allowed record belonging to the signed-in account. Vouch does not resolve arbitrary Ruby classes from the submitted type.
+`super` returns a status such as `:ok`, `:invalid` or `:cancelled`. Successful generation sets `@recovery_codes` to the plaintext codes and `@remaining_recovery_codes` to their count before control returns to your action. Use those variables to supply a different presentation, including JSON or Turbo.
+
+If your action does not respond, Vouch's `default_render` displays the codes after it finishes, or redisplays the settings page with the storage error. Errors on an affected code record remain available through `@operation_error.record` when the underlying exception supplies that record. An owner type and ID must match an allowed record belonging to the signed-in account. Vouch does not resolve arbitrary Ruby classes from the submitted type.
 
 For composite primary keys, pass `Vouch::RecordKey.to_param(phone)` instead of `phone.id`. Ordinary scalar IDs need no encoding helper.
 

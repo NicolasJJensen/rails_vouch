@@ -268,6 +268,19 @@ end
 
 Override `recent_authentication_confirmation_path(scope:)` when your confirmation page has a different entry point. Passwordless OAuth-only accounts can use the ordinary MFA/recovery option outside impersonation. During impersonation, the built-in form deliberately does not link to the target's authenticator challenge.
 
-Successful confirmation runs the normal `authentication_confirmation` [lifecycle](sessions-and-hooks.md#lifecycle-hooks), receiving the actor. It does not rerun `sign_in`. The generated sessions controller's `confirm` action accepts the usual result block when you need a different response.
+Successful confirmation runs the normal `authentication_confirmation` [lifecycle](sessions-and-hooks.md#lifecycle-hooks), receiving the actor. It does not rerun `sign_in`. To customize the generated sessions controller's `confirm` response, call `status = super`, then render or redirect. The operation returns `:ok`, `:invalid`, `:locked`, or `:cancelled`; `@confirmation_actor` contains the record whose proof was checked. Without a custom response, Vouch's `default_render` handles the outcome after the action finishes.
+
+```ruby
+# app/controllers/users/sessions_controller.rb
+class Users::SessionsController < Vouch::SessionsController
+  def confirm
+    status = super
+    return unless request.format.json?
+
+    render json: { status: status }, status: status == :ok ? :ok : :unprocessable_content
+  end
+end
+```
+
 
 Confirmation metadata is separate from `authentication_evidence`, which contains only MFA proofs. Page permissions remain your application's responsibility.

@@ -38,7 +38,6 @@ change_table :phones do |t|
   t.bigint :verification_version, default: 0, null: false
   t.bigint :verification_attempts, default: 0, null: false
   t.datetime :verification_locked_at
-
 end
 ```
 
@@ -140,7 +139,7 @@ end
 | `POST /verification/phone/42` | Send or resend the code for the authorized phone. |
 | `PATCH /verification/phone/42`, with `code` | Check the code and save verification. |
 
-The challenge token stays in the browser's session. The frontend submits the code, not an internal challenge token. The default response is JSON containing `status` and field `errors`; no verification form is supplied. Use the result block below for your own HTML, Turbo or JSON response.
+The challenge token stays in the browser's session. The frontend submits the code, not an internal challenge token. The default response is JSON containing `status` and field `errors`; no verification form is supplied. Override the action and respond after `super` for your own HTML, Turbo or JSON response, as shown below.
 
 > Configure a shared atomic cache before using the rate-limit examples. Their store and limits are explained [below](#protect-delivery-and-code-submission).
 
@@ -155,7 +154,7 @@ flowchart TD
   C --> D[Submit identifying fields and code]
   D --> E{Code accepted?}
   E -->|No| F[Retain attempt state and return errors]
-  E -->|Yes| G[Yield verified unsaved record]
+  E -->|Yes| G[Return ok with verified unsaved record in @verifiable]
   G --> H[Host saves or retains record in its form]
   H --> I[Host explicitly discards temporary entry when appropriate]
 ```
@@ -199,16 +198,15 @@ class TemporaryVerificationsController < Vouch::TemporaryVerificationsController
 
   def update
     # Authorize adding this phone to current_user here.
-    super do |result|
-      next unless result.ok?
+    status = super
+    return unless status == :ok
 
-      @verifiable.user = current_user
-      if @verifiable.save
-        forget_temporary_verification
-        redirect_to edit_profile_path, notice: "Phone verified"
-      else
-        render json: { errors: @verifiable.errors.to_hash }, status: :unprocessable_entity
-      end
+    @verifiable.user = current_user
+    if @verifiable.save
+      forget_temporary_verification
+      redirect_to edit_profile_path, notice: "Phone verified"
+    else
+      render json: { errors: @verifiable.errors.to_hash }, status: :unprocessable_entity
     end
   end
 
@@ -234,7 +232,7 @@ end
 
 The create action validates with the Rails `:verification` context. If registration verifies a contact before its owner exists, arrange your model validations to allow that context while still requiring ownership on persistence. Vouch does not remove association validations.
 
-After checking a code, the updated state is retained before your result block runs, including unsuccessful attempts. A failed attachment therefore does not discard proof. Missing or expired temporary state produces a normal `ActiveRecord::RecordNotFound` boundary; handle it through Rails `rescue_from` if your frontend needs a restart response.
+After checking a code, the updated state is retained before `super` returns, including unsuccessful attempts. A failed attachment therefore does not discard proof. If your action returns without responding, Vouch's `default_render` supplies the verification JSON response. Missing or expired temporary state produces a normal `ActiveRecord::RecordNotFound` boundary; handle it through Rails `rescue_from` if your frontend needs a restart response.
 
 > Recheck duplicate/ownership rules when saving and use database constraints where your application requires uniqueness. A completion-time lookup alone cannot prevent two concurrent attachments. Do not attach another owner's record merely because its phone number matches.
 
@@ -249,16 +247,15 @@ class TemporaryVerificationsController < Vouch::TemporaryVerificationsController
   def update
     target = current_user.phones.find(params.require(:replacement_id))
     # Authorize replacing target here.
-    super do |result|
-      next unless result.ok?
+    status = super
+    return unless status == :ok
 
-      applied = @verifiable.apply_verification_to(target)
-      if applied.ok? || applied.already_verified?
-        forget_temporary_verification
-        redirect_to edit_profile_path, notice: "Phone updated"
-      else
-        render json: { errors: target.errors.to_hash }, status: :unprocessable_entity
-      end
+    applied = @verifiable.apply_verification_to(target)
+    if applied.ok? || applied.already_verified?
+      forget_temporary_verification
+      redirect_to edit_profile_path, notice: "Phone updated"
+    else
+      render json: { errors: target.errors.to_hash }, status: :unprocessable_entity
     end
   end
 end
@@ -305,7 +302,7 @@ class PhoneSelection
 end
 ```
 
-`PhoneSelection` above is a standalone form illustrating credential serialization. To retain verified contacts during registration, include the encrypted string in your registration form's serialized data and use the [custom registration form integration](registration.md#custom-registration-forms). A registered form receives the mapped credentials record as a positional argument to `.new(record)` or `.deserialize(data, record)`. Your form validates and saves its contacts; Vouch opens the registration transaction.
+`PhoneSelection` above is a standalone form illustrating credential serialization. To retain verified contacts during registration, include the encrypted string in your form's serialized data and store that data in your own session entry. Restore the form in your registration controller, then save its contacts through the [registration saving block](registration.md#custom-registration-forms). Vouch opens that transaction; your application owns form construction, serialization and draft cleanup.
 
 > Encrypted credential state still counts toward the session size. Several contacts and TOTP enrollment data can exceed CookieStore's limit and raise `ActionDispatch::Cookies::CookieOverflow`. Use a suitable server-side session store or bound the records your form retains; do not discard proof silently.
 
@@ -332,7 +329,6 @@ It preserves an existing declaration and shared verification columns. It does no
 change_table :emails do |t|
   t.datetime :verified_at, index: true
   t.string :confirmation_nonce, index: { unique: true }
-
 end
 ```
 
@@ -397,7 +393,9 @@ Code and signed-link verification share one subject declaration. Success clears 
 
 Normal methods return `Vouch::Result`. Bang methods return the same successful result and raise `Vouch::OperationFailed` for expected unsuccessful outcomes. `already_verified?` means verification was already saved for this subject; `ok?` is false because no fresh proof was accepted. A bang call also raises for that outcome. See [results and persistence](persistence.md).
 
-Override a supplied controller action and call `super do |result|` to handle success, failure or already-verified state. Rendering or redirecting suppresses the default JSON response. Preparation only loads/builds records; delivery and mutation happen after your action's authorization.
+Controller actions return status symbols and expose the affected record as `@verifiable`. For example, `status = super` returns `:ok` when a new proof is accepted, `:already_verified` when verification was already saved, `:invalid` for an incorrect code or invalid record, and `:locked` when the attempt budget is exhausted. Expected persistence cancellation returns `:cancelled`. Field errors remain on `@verifiable.errors`; `@operation_error` holds an underlying exception when available.
+
+Render, redirect or call `head` after inspecting that status to replace the response. If your action does not respond, `default_render` returns JSON with `status` and `errors`: HTTP 200 for `:ok` or `:already_verified`, 429 for `:locked`, and 422 for other operational failures. Preparation only loads/builds records; delivery and mutation happen after your action's authorization. The model methods in the table above retain their `Vouch::Result` API.
 
 For complete controller control:
 

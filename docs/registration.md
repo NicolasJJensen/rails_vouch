@@ -23,33 +23,53 @@ In this guide, “account” means the model holding sign-in credentials; it can
 
 ## Custom registration forms
 
-Declare a form when registration needs associated records or several pages. The generated registration flow remains available without a custom form.
+Override `create` when you want a form object or want to save associated records yourself. Vouch prepares `@user` before the action. The block passed to `super` receives that same record and runs inside the registration transaction:
 
 ```ruby
-# app/controllers/application_controller.rb
-class ApplicationController < ActionController::Base
-  registration_form SignupForm
+# app/controllers/users/registrations_controller.rb
+class Users::RegistrationsController < Vouch::RegistrationsController
+  def create
+    status = super do |user|
+      @signup = SignupForm.new(user)
+      @signup.assign_attributes(params.require(:signup).permit(
+        :email_address, :password, :password_confirmation, :timezone
+      ))
+      @signup.save!
+    end
+
+    redirect_to welcome_path if status == :ok
+  end
 end
 ```
 
-This declaration applies to the registration and OAuth controllers through inheritance. A controller can declare another form for its scope. A class name string also works: `registration_form "SignupForm"`.
+> `SignupForm` and `welcome_path` belong to your application. Vouch has no form-class declaration and does not construct, validate, serialize or save your form for you. The complete example below defines a form and its session handling.
 
-Vouch passes the credentials record positionally. Use `initialize(user)` for a `User` model or `initialize(account)` for an `Account` model. Vouch supplies the existing pending record during invited registration.
+The block replaces Vouch's default save. Save the supplied record, then any related records; Vouch does not save it a second time. Returning `false` cancels and rolls back. A successful bang save may return `nil`. Validation exceptions roll back and remain available as `@operation_error`; your form retains its own `errors`.
 
-| Form method | Contract |
-| --- | --- |
-| `.new(record)` | Construct the form around the supplied record. |
-| `.deserialize(data, record)` | Restore serialized data around that same record. |
-| `serialize` | Return JSON-compatible session data. |
-| `assign_attributes(attributes)` | Apply permitted input. |
-| `valid?`, `errors` | Validate and expose errors through an Active Model-compatible interface. |
-| `save!` or `save` | Save the supplied record and associated records inside Vouch's transaction. |
+After the block, Vouch completes provider linking or invitation acceptance, constructs any mapped membership, and commits. It then attempts sign-in. Use the returned status and `@registration_committed` to decide the response. Without a render or redirect, Vouch sends its usual response after your action returns.
 
-Vouch prefers `save!` when available. A bang method may return `nil` on success. Returning `false` cancels registration. A non-bang `save` must return a truthy value on success. Validation exceptions roll back registration and render its errors. Vouch does not require an accessor named `account` or `user`.
+### Keep every step at the same URL
 
-### Define the form
+The following example collects profile details, verified contacts and a final password at `/users/sign_up`. Intermediate submissions render the next Turbo frame without creating database records. The final submission saves everything together.
 
-This example assumes `User` has one `Profile` with a `timezone` attribute and many `Phone` records. Each phone supports verification and MFA, as described in the [verification](verification.md) and [MFA](mfa.md) guides.
+It assumes these application associations exist:
+
+```ruby
+# app/models/user.rb — alongside the generated authentication declarations
+class User < ApplicationRecord
+  has_one :profile, inverse_of: :user
+  has_many :phones, inverse_of: :user
+  has_many :emails, inverse_of: :user
+end
+
+# app/models/profile.rb
+class Profile < ApplicationRecord
+  belongs_to :user
+  validates :timezone, presence: true
+end
+```
+
+`Profile` has a `timezone` field. `Phone` and `Email` use the [verification](verification.md) features, with `e164` and `email_address` as their respective subjects. Add [MFA support](mfa.md) if the form will enable them as authenticators.
 
 ```ruby
 # app/forms/signup_form.rb
@@ -57,43 +77,54 @@ class SignupForm
   include ActiveModel::Model
   include ActiveModel::Attributes
 
-  attr_reader :user, :profile, :phones
+  attr_reader :user, :profile, :phones, :emails, :contact_states, :unavailable_contacts
   attribute :enable_mfa, :boolean, default: false
+  attribute :step, :integer, default: 1
 
-  delegate :email_address, :email_address=,
-    :password, :password=,
+  delegate :email_address, :email_address=, :password, :password=,
     :password_confirmation, :password_confirmation=, to: :user
   delegate :timezone, :timezone=, to: :profile
+
+  validate do
+    errors.add(:contacts, "must be verified again or removed") if unavailable_contacts.any?
+    if enable_mfa && phones.empty? && emails.empty?
+      errors.add(:enable_mfa, "requires a verified contact")
+    end
+    errors.add(:timezone, "cannot be blank") if timezone.blank?
+  end
 
   def initialize(user)
     super()
     @user = user
     @profile = user.profile || user.build_profile
     @phones = []
+    @emails = []
+    @contact_states = { "phones" => {}, "emails" => {} }
+    @unavailable_contacts = []
   end
 
   def self.deserialize(data, user)
+    data ||= {}
     form = new(user)
-    form.email_address = data["email_address"] if data.key?("email_address")
+    # An invitation's existing recipient is not editable.
+    form.email_address = data["email_address"] if user.new_record? && data.key?("email_address")
     form.timezone = data["timezone"]
     form.enable_mfa = data["enable_mfa"]
-    form.expired_phone = data["expired_phone"]
-
-    data.fetch("phones", []).each do |state|
-      phone = Phone.new
-      result = phone.restore_verification_state(state)
-      if result.ok?
-        form.phones << phone
-      else
-        form.expired_phone = true
+    form.step = data.fetch("step", 1)
+    { "phones" => Phone, "emails" => Email }.each do |key, model|
+      states = data.fetch("contact_states", {}).fetch(key, {})
+      form.contact_states[key] = states.deep_dup
+      states.each do |subject, state|
+        contact = model.new
+        if contact.restore_verification_state(state).ok? && contact.verified? &&
+            contact.verification_subject_key == subject
+          form.public_send(key) << contact
+        else
+          form.unavailable_contacts << [key, subject]
+        end
       end
     end
     form
-  end
-
-  attr_accessor :expired_phone
-  validate do
-    errors.add(:phones, "must be verified again") if expired_phone
   end
 
   def serialize
@@ -101,202 +132,205 @@ class SignupForm
       "email_address" => email_address,
       "timezone" => timezone,
       "enable_mfa" => enable_mfa,
-      "expired_phone" => expired_phone,
-      "phones" => phones.map(&:serialize_verification_state)
+      "step" => step,
+      "contact_states" => contact_states.deep_dup
     }
   end
 
+  def remove_contact(kind, subject)
+    contact_states.fetch(kind).delete(subject)
+    public_send(kind).reject! { |contact| contact.verification_subject_key == subject }
+    unavailable_contacts.delete([kind, subject])
+  end
+
   def save!
+    raise ActiveModel::ValidationError.new(self) unless valid?
+
     user.save!
     profile.save!
-    phones.each do |phone|
-      phone.user = user
-      phone.save!
-      phone.enable_two_factor! if enable_mfa
+    (phones + emails).each do |contact|
+      contact.user = user
+      contact.save!
+      contact.enable_two_factor! if enable_mfa
     end
     user.enable_two_factor! if enable_mfa
   end
 end
 ```
 
-The example applies one MFA choice to all included phones. Your form can store a separate selection for each credential. Email records follow the same verification export/restore pattern with your `Email` model.
+The form validates all required fields on final submission, regardless of the displayed step. It never serializes passwords or submitted verification codes. Expired proofs remain in the draft and block completion. A fresh verification replaces the entry for that subject; removing it explicitly clears that entry. The form does not silently drop a previously selected contact or retain a permanent error flag after it has been re-verified.
 
-The form reads provider-mapped fields directly from `user`. OAuth updates therefore appear in the form and its next serialized version. Vouch cannot synchronize an independently cached `@email_address` or another virtual field automatically.
-
-> Keep passwords, submitted codes and plaintext authenticator secrets out of `serialize`. Use `serialize_verification_state` for temporary verified records. Restoring that state checks its model, subject and original expiry. Copying a submitted `verified_at` does not establish verification.
-
-The example retains an expired-phone flag and blocks completion until your form clears it after re-verification or explicit removal. A fuller form can track each expired contact separately. Do not silently accept an expired proof. If deserialization raises `Vouch::OperationFailed`, Vouch displays a verification error and preserves the stored draft.
-
-### Permit input and render errors
-
-The form can use its own parameter root and fields. Override `registration_form_params` in the generated controller:
+In this example, saved form values take precedence over OAuth-prefilled fields. Omit that assignment or make it conditional if provider data should take precedence instead. The form wraps Vouch's record; it does not create a replacement `User`.
 
 ```ruby
 # app/controllers/users/registrations_controller.rb
 class Users::RegistrationsController < Vouch::RegistrationsController
+  before_action :set_signup, only: [:new, :create]
+
+  def create
+    @signup.assign_attributes(signup_params)
+
+    if params[:remove_contact].present?
+      kind, subject = params.require(:remove_contact).permit(:phones, :emails).to_h.first
+      return head :bad_request unless kind
+
+      @signup.remove_contact(kind, subject)
+      session[:signup] = @signup.serialize
+      return render :new
+    end
+
+    if ["details", "contacts"].include?(params[:advance])
+      @signup.step = params[:advance] == "details" ? 1 : 2
+      session[:signup] = @signup.serialize
+      return render :new
+    end
+
+    session[:signup] = @signup.serialize
+    status = super do |_user|
+      @signup.save!
+    end
+    session.delete(:signup) if @registration_committed
+
+    redirect_to root_path, status: :see_other if status == :ok
+  end
+
   private
 
-  def registration_form_params
-    allowed = [:timezone, :password, :password_confirmation]
+  def set_signup
+    @signup = SignupForm.deserialize(session[:signup], @user)
+  end
+
+  def signup_params
+    allowed = [:timezone, :password, :password_confirmation, :enable_mfa]
     allowed << :email_address unless invitation_registration?
     params.fetch(:signup, ActionController::Parameters.new).permit(*allowed)
   end
 end
 ```
 
-Without this override, Vouch uses the normal `account_params` or invitation parameters. Vouch exposes the form as `@registration_form` and through the `registration_form` helper. Update the generated view to use it:
+The parent `before_action` prepares `@user` before `set_signup` and rejects an invalid OAuth context before that callback runs. For an invitation it is the pending recipient; for an OAuth continuation it contains the mapped provider fields. Validation failures, invalid invitations, required MFA and membership selection use the normal fallback because this override only redirects a completed sign-in. The session retains `timezone` and the first-step email; the final form does not need hidden copies of them.
 
 ```erb
 <%# app/views/users/registrations/new.html.erb %>
-<% @registration_form.errors.full_messages.each do |message| %>
-  <p><%= message %></p>
-<% end %>
-
-<%= form_with model: @registration_form, scope: :signup,
-      url: vouch_route_path(:registrations, :create) do |form| %>
-  <% unless invitation_registration? %>
-    <%= form.email_field :email_address %>
+<%= turbo_frame_tag "signup" do %>
+  <% (@signup.errors.full_messages + @user.errors.full_messages).uniq.each do |message| %>
+    <p role="alert"><%= message %></p>
   <% end %>
-  <%= form.text_field :timezone %>
-  <% unless oauth_registration? %>
-    <%= form.password_field :password %>
-    <%= form.password_field :password_confirmation %>
+
+  <% @signup.unavailable_contacts.each do |kind, subject| %>
+    <p><%= JSON.parse(subject).join(", ") %> must be verified again or removed.</p>
+    <%= button_to "Remove contact", user_registration_path,
+          params: { remove_contact: { kind => subject } },
+          form: { data: { turbo_frame: "signup" } } %>
   <% end %>
-  <%= form.submit "Create account" %>
+
+  <%= form_with model: @signup, scope: :signup, url: user_registration_path,
+        data: { turbo_frame: @signup.step == 1 ? "signup" : "_top" } do |form| %>
+    <% if @signup.step == 1 %>
+      <%= form.email_field :email_address unless invitation_registration? %>
+      <%= form.text_field :timezone %>
+      <%= form.button "Continue", name: :advance, value: "contacts" %>
+    <% else %>
+      <p><%= @signup.phones.size %> phones and <%= @signup.emails.size %> emails verified</p>
+      <%= form.check_box :enable_mfa %>
+      <%= form.label :enable_mfa, "Require a second factor when signing in" %>
+      <% unless oauth_registration? %>
+        <%= form.password_field :password %>
+        <%= form.password_field :password_confirmation %>
+      <% end %>
+      <%= form.button "Back", name: :advance, value: "details",
+            data: { turbo_frame: "signup" } %>
+      <%= form.submit "Create account" %>
+    <% end %>
+  <% end %>
 <% end %>
 ```
 
-A failed associated-record save adds its messages to the form's base errors. Your form can instead catch that validation exception and attach errors to particular fields.
+The existing registration route handles both steps; no step routes are needed. The second-step form targets the full page so sign-in and MFA redirects can leave the frame. The Back button targets the frame again. See [Turbo frame navigation](https://turbo.hotwired.dev/reference/frames#targeting-navigation-into-or-out-of-a-frame).
 
-### Save intermediate steps
+> This is a session draft owned by your application. Choose its expiry, restart/removal behavior and whether separate browser tabs share it. Encrypted contact proofs and OAuth continuations keep their own expiry. Several encrypted contact records can exceed CookieStore's capacity; bound the draft or use a suitable server-side session store.
 
-Custom actions access the same form with `registration_form`. `save_registration_form` serializes it without saving database records and returns a `Vouch::Result`.
+### Add verified contacts to the draft
+
+Use the [temporary verification controller](verification.md#verify-before-saving) to send and check codes without saving a contact. The example there supplies the required callbacks, rate limits, subject lookup and routes. For registration, adapt its success action to write verified state into the form draft. The following is only that adaptation: add the allowlisted record preparation, authoritative saved-record lookup, rate limits and routes from the verification guide. Replace its signed-in guard with the unsigned-user guard shown here:
 
 ```ruby
-# app/controllers/users/signup_steps_controller.rb
-class Users::SignupStepsController < Vouch::RegistrationsController
+# app/controllers/signup_verifications_controller.rb
+class SignupVerificationsController < Vouch::TemporaryVerificationsController
+  # Add the preparation and rate-limit callbacks shown in the verification guide.
+  # Allow only Phone and Email; set @existing_verifiable using your uniqueness rules.
+  before_action :require_unsigned_user
+
   def update
-    form = registration_form
-    allowed = [:timezone]
-    allowed << :email_address unless invitation_registration?
-    form.assign_attributes(params.require(:signup).permit(*allowed))
-    result = save_registration_form
+    status = super
+    return unless status == :ok
 
-    if result.ok?
-      redirect_to new_registration_path
-    else
-      render json: { error: result.metadata[:reason] }, status: :unprocessable_entity
-    end
-  rescue Vouch::RegistrationFormError
-    clear_registration_form
-    redirect_to new_registration_path, alert: "Your registration expired or changed. Please start again."
+    draft = (session[:signup] || {}).deep_dup
+    key = { "phone" => "phones", "email" => "emails" }.fetch(params[:kind])
+    draft["contact_states"] ||= {}
+    draft["contact_states"][key] ||= {}
+    draft["contact_states"][key][@verifiable.verification_subject_key] =
+      @verifiable.serialize_verification_state
+    session[:signup] = draft
+    forget_temporary_verification
+    redirect_to new_user_registration_path, status: :see_other
+  end
+
+  private
+
+  def require_unsigned_user
+    head :forbidden if user_signed_in?
   end
 end
 ```
+
+This action runs after Vouch has checked the code and retained the updated verification state. Only remove that state after your draft accepts it. A re-verified contact replaces the old entry with the same model kind and normalized subject. Other expired entries remain visible until they are re-verified or removed. Registration verification establishes control of a contact; it does not count as sign-in MFA evidence.
+
+### Include authenticator apps
+
+TOTP enrollment needs your credential adapter and enrollment UI; Vouch does not generate those. Follow the [TOTP adapter contract](credential-adapter-contract.md), confirm an enrollment code, then retain trusted encrypted enrollment state in your draft. Do not put a plaintext TOTP secret into a serialized form.
+
+When your `TotpAuthenticator` implements the verification-state contract, add its state bucket, restored collection and permitted enrollment selection alongside `Phone` and `Email`. Include that collection when validating whether a selected MFA factor exists. Save it and enable it in the same `save!` method:
 
 ```ruby
-# config/routes.rb — alongside Vouch.routes
-Rails.application.routes.draw do
-  namespace :users do
-    resource :signup_step, only: :update
-  end
+# app/forms/signup_form.rb — inside save!, after user.save!
+@authenticators.each do |authenticator|
+  authenticator.user = user
+  authenticator.save!
+  authenticator.enable_two_factor!
 end
 ```
 
-Submit your intermediate page to `users_signup_step_path`. Save the current fields before leaving the page for an OAuth request. The OAuth callback restores this form before applying the new provider's data.
+> `TotpAuthenticator` and `@authenticators` are additions your application implements. Confirming enrollment must produce trusted state through your adapter; setting `verified_at` from submitted input is not verification. The generic code-delivery controller is not a TOTP enrollment endpoint.
 
-`save_registration_form!` raises `Vouch::OperationFailed` when the draft cannot be saved. `clear_registration_form` removes the stored draft and the current request's form instance. Use it for an explicit restart.
+### Continue through OAuth
 
-The draft belongs to one authentication scope, session context and invitation. It expires after `pending_authentication_ttl`, measured from its first save. Saving another step does not extend that expiry. A changed context or expired draft requires a restart.
+Save permitted intermediate form fields to your own session draft before starting an OAuth registration request. Vouch separately stores verified provider proof. On return, `set_signup` restores your draft around the provider-prefilled `@user`; there is no automatic synchronization of an independent form object.
 
-A scope has one draft per session. Tabs share it. Applications requiring separate drafts per tab must manage that distinction before using this shared registration continuation.
+A form can submit an explicit “save and connect” branch to the same `create` action. That branch saves `@signup.serialize` and renders a provider button, which starts the [OAuth registration request](oauth.md#choose-registration-behavior). Do not call registration `super` until the person chooses to finish.
 
-### Attach verified contacts
-
-Keep the preparation and rate-limit callbacks from your [temporary verification controller](verification.md#verify-before-saving). Its success handler can put the verified record into the registration form:
-
-```ruby
-# app/controllers/users/temporary_verifications_controller.rb
-# Relevant override in your configured temporary verification controller.
-class Users::TemporaryVerificationsController < Vouch::TemporaryVerificationsController
-  def update
-    super do |result|
-      next unless result.ok?
-
-      form = registration_form
-      form.phones.reject! { |phone| phone.verification_subject_key == @verifiable.verification_subject_key }
-      form.phones << @verifiable
-      saved = save_registration_form
-
-      if saved.ok?
-        forget_temporary_verification
-        redirect_to new_registration_path
-      else
-        render json: { error: saved.metadata[:reason] }, status: :unprocessable_entity
-      end
-    end
-  rescue Vouch::RegistrationFormError
-    clear_registration_form
-    redirect_to new_registration_path, alert: "Your registration expired or changed. Please start again."
-  end
-end
-```
-
-Only remove temporary verification state after the form retains it successfully. For signed-in contact management, attach the verified record to the authorized owner instead. The host controller chooses that destination.
-
-For TOTP, your enrollment adapter must confirm a code and retain trustworthy enrollment state. The form then saves and enables that credential inside its `save!` method. Vouch's generic temporary verification controller does not implement a TOTP enrollment adapter. Enrollment is not authentication evidence.
+For automatic OAuth registration, put your form save in the callback's [persistence block](oauth.md#customize-automatic-registration). Vouch calls that block only when creating a new account automatically, not for sign-in, linking, or a redirect to the registration form.
 
 ### Finish in one transaction
 
 ```mermaid
 flowchart TD
-  form[Restore host form] --> fields[Apply permitted final input]
-  fields --> tx[Vouch opens the registration transaction]
-  tx --> validate[Validate form]
-  validate --> save[Form saves the owner, associated records and selected MFA activation]
-  save --> links[Vouch links OAuth providers and completes invitation or membership construction]
-  links --> commit[Commit]
-  commit --> clear[Clear completed registration state]
-  clear --> signin[Continue authentication]
-  save -->|Failure| rollback[Roll back and render errors]
+  form[Restore host draft and apply permitted input] --> tx[Vouch opens registration transaction]
+  tx --> hooks[Run transactional registration hooks]
+  hooks --> save[Host block saves user, profile, contacts and MFA activation]
+  save --> links[Vouch links OAuth providers and completes membership or invitation]
+  links --> commit[Commit registration]
+  commit --> signin[Continue authentication]
+  signin --> response[Host action chooses response or Vouch uses default_render]
+  save -->|Failure| rollback[Roll back and retain errors]
   links -->|Failure| rollback
 ```
 
-Vouch runs form validation and persistence inside its registration transaction. The existing lifecycle hooks still run. All participating records must use the credentials model's writing connection.
+All participating records must use the credentials model's writing connection. Enable selected MFA credentials inside this transaction, after saving their owner and the credentials. An enabled credential and an account requirement are separate settings; see [MFA activation](mfa.md).
 
-For a multi-tenant application, keep `build_tenant` and `build_identity` for Vouch's mapped organisation and membership. The form owns additional records and their input. Those builders can read `registration_form` when they need its fields. Invited registration uses the existing membership and skips both builders.
+For a multi-tenant application, keep `build_tenant` and `build_identity` for the mapped organisation and membership. The form can hold their input or constructed records, and the builders can return those records. Do not independently create a second tenant in the form. Invited registration uses the existing membership and skips these builders.
 
-Form validation failure, an OAuth-link conflict, or a later invitation/MFA failure rolls back the registration writes together. If registration commits but sign-in fails, Vouch keeps the account and redirects to sign-in with the creation and sign-in failure messages.
-
-### Session capacity
-
-The form envelope has a default limit of 2 KB. This is separate from the OAuth context limit. Exceeding it returns `:registration_too_large` and preserves the previous stored draft.
-
-Encrypted verification state can exceed a cookie session's available space even for one credential. Use a suitable server-side session store for larger forms:
-
-```ruby
-# config/initializers/session_store.rb
-Rails.application.config.session_store :cache_store
-```
-
-Configure a shared cache store with the lifetime and availability your application needs. Registration still creates no unfinished business records in the database.
-
-Increase the form limit after selecting the session store:
-
-```ruby
-# app/controllers/application_controller.rb
-class ApplicationController < ActionController::Base
-  registration_form SignupForm
-
-  private
-
-  def registration_form_byte_limit
-    32.kilobytes
-  end
-end
-```
-
-The form controls which permitted attributes it serializes. Vouch rejects live objects and common plaintext secret fields, but cannot identify sensitive values hidden under arbitrary names.
+If registration commits but sign-in fails afterward, `@registration_committed` stays true. Clear the draft and direct the person to sign-in; creating their records again would duplicate completed work.
 
 ## Accounts without passwords
 
@@ -396,7 +430,7 @@ Configure OAuth callback registration with `:form` (the default) when a new prov
 auth.oauth_callbacks registration: :form
 ```
 
-After an explicit OAuth registration request is verified, Vouch applies the provider data to the unsaved account and retains its attributes and provider proof in the session. `RegistrationsController#new` restores those values and pre-fills the form without applying the mapping again. No new account or provider link is saved yet. The generated form uses `oauth_registration?` to omit password fields while a valid provider proof supplies the sign-in method.
+After an explicit OAuth registration request is verified, Vouch applies the provider data to the unsaved account and retains its attributes and provider proof in the session. The registration controller's preparation callback restores those values and pre-fills the form without applying the mapping again. No new account or provider link is saved yet. The generated form uses `oauth_registration?` to omit password fields while a valid provider proof supplies the sign-in method.
 
 On submit, Vouch combines the mapped account fields with permitted form fields and creates the account and OAuth link in one transaction. In a multi-tenant setup, that transaction also includes the organisation and membership. It then continues through MFA and membership selection before redirecting. Validation failures re-render the form. Provider/UID data comes from protected session state, never submitted fields.
 
@@ -452,23 +486,22 @@ Vouch commits the account and related records before signing the person in. If t
 
 Validation failures and cancelled creation roll back the registration and redisplay the form. Unexpected exceptions still reach Rails error handling.
 
-Override `create` and pass a block to `super` to handle the outcome yourself:
+Call `super`, then use the returned status to handle the response yourself:
 
 ```ruby
 # app/controllers/users/registrations_controller.rb
 class Users::RegistrationsController < Vouch::RegistrationsController
   def create
-    super do |result|
-      if result.invalid? && result.metadata[:committed]
-        flash[:notice] = "Your account is ready."
-        redirect_to new_user_session_path, alert: "Please sign in to continue."
-      end
+    status = super
+    if status == :invalid && @registration_committed
+      flash[:notice] = "Your account is ready."
+      redirect_to new_user_session_path, alert: "Please sign in to continue."
     end
   end
 end
 ```
 
-The block receives `ok`, `pending`, `invalid`, or `cancelled` results. A pending result identifies `:two_factor` or `:selection` in `metadata[:next_step]`. `metadata[:committed]` tells you whether registration was saved, and `result.error` carries an expected failure exception when available. Vouch uses its normal response unless the block renders or redirects. The same `create` override handles ordinary registration and an OAuth registration form submission.
+The action returns `:ok`, `:pending`, `:invalid`, or `:cancelled`. `@next_step` identifies a pending `:two_factor` or `:selection` step. `@registration_committed` distinguishes saved registration from rolled-back creation; `@operation_error` carries an expected failure exception when available. Vouch's `default_render` runs only if your action finishes without a response. The block form of `super` is for saving records, not for handling the response.
 
 ## Send people to onboarding
 

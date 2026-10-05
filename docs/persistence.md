@@ -41,7 +41,7 @@ For a bang operation, rescue `Vouch::OperationFailed` at the boundary where you 
 
 > An exclamation mark does not make a failed proof successful. Choose the method that fits your control flow, and check the result or handle its exception. Individual feature guides list their supported operations.
 
-For controller customization, use [the action result block](controllers.md#customize-action-responses) instead of rebuilding a supplied endpoint.
+For controller customization, call `super` and use its returned status to [choose the action response](controllers.md#customize-action-responses).
 
 ## Why Vouch checks required writes
 
