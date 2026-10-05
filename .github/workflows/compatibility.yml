@@ -18,9 +18,11 @@ jobs:
             suite: full
 
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rails_vouch
     env:
       VOUCH_RAILS: ${{ matrix.rails }}
-      VOUCH_RELEASE_DEPS: "1"
       RAILS_ENV: test
       PGHOST: localhost
       PGPORT: "5432"
@@ -43,13 +45,26 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: rails_vouch
+
+      - uses: actions/checkout@v4
+        with:
+          repository: NicolasJJensen/active_hooks
+          path: active_hooks
+
+      - uses: actions/checkout@v4
+        with:
+          repository: NicolasJJensen/otp_courier
+          path: otp_courier
 
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: false
+          working-directory: rails_vouch
 
-      - name: Resolve released dependencies
+      - name: Install dependencies including sibling gems
         run: bundle install
 
       - name: Prepare test database
