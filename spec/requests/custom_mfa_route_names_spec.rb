@@ -3,6 +3,8 @@
 require "rails_helper"
 require "erb"
 require "tmpdir"
+require "rails/generators"
+require "generators/vouch/two_factorable/two_factorable_generator"
 
 RSpec.describe "Custom MFA routes with generated views", type: :request do
   let(:account) { create(:account, password: "password123", password_confirmation: "password123") }
@@ -18,16 +20,20 @@ RSpec.describe "Custom MFA routes with generated views", type: :request do
     {
       "Sessions" => Vouch::SessionsController,
       "TwoFactorChallenge" => Vouch::TwoFactorChallengeController,
-      "TwoFactorCredentials" => Vouch::TwoFactorCredentialsController,
       "RecoveryCodes" => Vouch::RecoveryCodesController
     }.each do |name, parent|
       klass = Class.new(parent) { auth_scope :account }
       stub_const("PortalMfa::#{name}Controller", klass)
       klass.prepend_view_path(@views)
     end
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["TwoFactorCredential"],
+      auth_scope: "account", controller_path: "portal_mfa", subject: ["otp_secret"])
+    generator.destination_root = @views
+    generator.invoke(:create_optional_ui)
+    load File.join(@views, "app/controllers/portal_mfa/two_factor_credentials_controller.rb")
+    PortalMfa::TwoFactorCredentialsController.prepend_view_path(File.join(@views, "app/views"))
     {
       two_factor_challenge: %w[index show recovery],
-      two_factor_credentials: %w[index],
       recovery_codes: %w[show]
     }.each do |controller, actions|
       FileUtils.mkdir_p(File.join(@views, "portal_mfa", controller.to_s))

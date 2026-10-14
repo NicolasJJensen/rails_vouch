@@ -141,6 +141,32 @@ RSpec.describe "Account and membership sessions", type: :request do
     response.parsed_body
   end
 
+  it "approves the account before entering a linked membership without repeating the approval rule" do
+    email = account.two_factor_credentials.create!(verified_at: Time.current)
+    policy = Vouch::AuthenticationPolicy.new
+    allow(policy).to receive(:sign_in_approval_required?).and_return(true)
+    allow(policy).to receive(:sign_in_approval_credential).and_return(email)
+    code = nil
+    allow_any_instance_of(TwoFactorCredential).to receive(:deliver_two_factor_code) { |_record, value| code = value }
+    original_policy = Vouch.configuration.authentication_policy
+    Vouch.configuration.authentication_policy = policy
+
+    get "/protected_page"
+    follow_redirect!
+    account_login
+    expect(response).to redirect_to("/linked_accounts/two_factor_challenges")
+    expect(status).to include("account" => nil, "member" => nil)
+    get "/linked_accounts/two_factor_challenges/#{email.id}"
+    patch "/linked_accounts/two_factor_challenges/#{email.id}", params: { code: code }
+    expect(response).to redirect_to("/linked_members/sign_in")
+    follow_redirect!
+    expect(status).to include("account" => account.id, "member" => membership.id)
+    expect(policy).to have_received(:sign_in_approval_required?).once
+    expect(request.session[Vouch::Session.key_for(:account, :evidence)].sole).to include("purpose" => "sign_in_approval")
+  ensure
+    Vouch.configuration.authentication_policy = original_policy
+  end
+
   it "does not select or sign out a membership after the host denies the action" do
     account_login
     %i[new create].each do |action|

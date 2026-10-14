@@ -124,6 +124,51 @@ RSpec.describe "optional feature view generators" do
     expect(File).not_to exist(File.join(directory, "app/controllers/users/recovery_codes_controller.rb"))
   end
 
+  it "adds a second credential association and preserves customized management files on repeat runs" do
+    directory = Dir.mktmpdir("vouch-multiple-mfa")
+    @directories << directory
+    FileUtils.mkdir_p(File.join(directory, "app/models"))
+    FileUtils.mkdir_p(File.join(directory, "config"))
+    File.write(File.join(directory, "app/models/user.rb"), "class User < ApplicationRecord\nend\n")
+    File.write(File.join(directory, "app/models/phone.rb"), "class Phone < ApplicationRecord\n  belongs_to :user\nend\n")
+    File.write(File.join(directory, "app/models/email.rb"), "class Email < ApplicationRecord\n  belongs_to :user\nend\n")
+    File.write(File.join(directory, "config/routes.rb"), <<~RUBY)
+      Rails.application.routes.draw do
+        Vouch.routes(self) do |auth|
+          auth.scope model: "User" do
+            auth.sessions
+          end
+        end
+      end
+    RUBY
+    generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"], subject: ["e164"])
+    generator.destination_root = directory
+    generator.invoke_all
+    controller_path = File.join(directory, "app/controllers/users/two_factor_credentials_controller.rb")
+    view_path = File.join(directory, "app/views/users/two_factor_credentials/new.html.erb")
+    controller = File.read(controller_path).sub("private", "private\n\n  def host_customization; end")
+    view = File.read(view_path).sub("<h1>", '<h1 class="host-heading">')
+    File.write(controller_path, controller)
+    File.write(view_path, view)
+
+    2.times do
+      generator = Vouch::Generators::TwoFactorableGenerator.new(["Email"], subject: ["email_address"])
+      generator.destination_root = directory
+      expect(generator).to receive(:say).with(/Review app\/controllers\/users\/two_factor_credentials_controller.rb/, :yellow)
+      allow(generator).to receive(:say).with(any_args).and_call_original
+      generator.invoke_all
+    end
+
+    owner = File.read(File.join(directory, "app/models/user.rb"))
+    expect(owner.scan("has_many :phones").size).to eq(1)
+    expect(owner.scan("has_many :emails").size).to eq(1)
+    expect(File.read(File.join(directory, "app/models/email.rb"))).to include("self.verifiable_subject_attribute = :email_address")
+    expect(File.read(controller_path)).to eq(controller)
+    expect(File.read(view_path)).to eq(view)
+    expect(File.read(File.join(directory, "config/routes.rb")).scan("auth.two_factor_credentials").size).to eq(1)
+    expect(Dir[File.join(directory, "db/migrate/*add_two_factor_enabled_to_users.rb")].size).to eq(1)
+  end
+
   it "adds independent MFA declarations once and preserves custom declarations" do
     directory = Dir.mktmpdir("vouch-mfa-routes")
     @directories << directory

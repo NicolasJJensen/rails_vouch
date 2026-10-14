@@ -6,7 +6,7 @@ module Vouch
 
     def complete_sign_in(account, hook: :sign_in, method: :password, context: nil,
                          credential: nil, refresh_oauth: false, signed_in_via: nil,
-                         evidence_method: nil, recovery_owner: nil,
+                         evidence_method: nil, recovery_owner: nil, evidence_purpose: nil,
                          **hook_opts, &block)
       return :denied if Vouch::ImpersonationStack.active?(session)
       if method == :registration
@@ -21,18 +21,23 @@ module Vouch
       identities = pending_candidate_identities(account, context)
       return :no_identity if identities.empty?
 
-      if needs_second_factor?(account, context) && !credential && !context['factor'] && !evidence_method
-        primary = context['first_factor']
-        authentication_session.begin_second_factor!(context, primary: primary)
-        return :needs_two_factor
-      end
-
+      return :denied unless prepare_sign_in_approval(account, context)
+      context['factor_required'] ||= needs_second_factor?(account, context)
       context['factor'] = credential_reference(credential) if credential
       if evidence_method
-        context['evidence'] = Vouch::AuthenticationEvidence.build(method: evidence_method, account: account,
-          credential: (credential unless evidence_method.to_sym == :recovery_code), owner: recovery_owner || credential)
+        proof = Vouch::AuthenticationEvidence.build(method: evidence_method, account: account,
+          credential: (credential unless evidence_method.to_sym == :recovery_code), owner: recovery_owner || credential,
+          purpose: evidence_purpose)
+        return :denied unless Vouch::AuthenticationEvidence.valid?(proof, account: account, mapping: auth_mapping)
+
+        context['proofs'] = Vouch::AuthenticationEvidence.record(context['proofs'], proof, account: account, mapping: auth_mapping)
       end
-      return :denied unless valid_context_factor?(account, context)
+
+      unless sign_in_requirements_satisfied?(account, context)
+        authentication_session.begin_second_factor!(context, primary: context['first_factor'],
+          factor_required: context['factor_required'])
+        return :needs_two_factor
+      end
 
       if identities.one?
         bind_identity(account, identities.first, context, oauth_auth_hash: hook_opts[:auth_hash], &block)
@@ -50,7 +55,8 @@ module Vouch
 
     def bind_identity(account, identity, context, oauth_auth_hash: nil)
       return :denied if Vouch::ImpersonationStack.active?(session)
-      factor = nil
+      factors = []
+      proofs = []
       invitation = nil
       hook = context['hook'].to_sym
       oauth = context['oauth'] && parse_oauth(context['oauth'])
@@ -66,10 +72,10 @@ module Vouch
           next false unless Vouch::PendingAuthentication.valid?(context, account)
           next false unless authentication_allowed?(account, context)
           next false unless pending_candidate_identities(account, context).any? { |candidate| Vouch::RecordKey.same?(candidate, identity) }
-          next false unless valid_context_factor?(account, context)
-
-          factor = context_credential(account, context)
-          factor.lock! if factor
+          proofs = pending_authentication_proofs(account, context)
+          factors = proofs.filter_map { |proof| credential_for_authentication_proof(account, proof) }.uniq
+          factors.each(&:lock!)
+          next false unless prepare_sign_in_approval(account, context) && sign_in_requirements_satisfied?(account, context)
           if context['refresh_oauth']
             begin
               account.update_from_oauth!(oauth_auth_hash || oauth)
@@ -77,7 +83,7 @@ module Vouch
               raise ActiveRecord::Rollback
             end
           end
-          commit_env.add(factor) if factor
+          factors.each { |factor| commit_env.add(factor) }
           yield commit_env if block_given?
           invitation = accept_pending_invitation(account, publish: false, transactional: true)
           identity.reload if invitation && Vouch::RecordKey.same?(identity, invitation) && identity.class == invitation.class
@@ -85,7 +91,7 @@ module Vouch
           true
         end
         env.abort! unless committed
-        env.add(factor) if factor
+        factors.each { |factor| env.add(factor) }
 
         # A failed authentication operation must not publish a Warden identity.
         renew_authentication_session
@@ -95,7 +101,7 @@ module Vouch
         else
           session.delete(primary_key)
         end
-        authentication_session.store_evidence!(context['evidence'], account: account) if context['evidence']
+        proofs.each { |proof| authentication_session.store_evidence!(proof, account: account) }
         if invitation
           publish_invitation_acceptance
         end
@@ -105,11 +111,12 @@ module Vouch
       end
       return :denied unless completed
 
-      if context.dig("evidence", "method") == "recovery_code"
+      if proofs.any? { |proof| proof["method"] == "recovery_code" }
         flash[:notice] = I18n.t("vouch.two_factor.recovery_code_used")
       end
-      if context['evidence']
-        run_hooks(:two_factor_verification, account, identity, factor, evidence: context['evidence'], additional: false)
+      proofs.each do |proof|
+        factor = credential_for_authentication_proof(account, proof)
+        run_hooks(:two_factor_verification, account, identity, factor, evidence: proof, additional: false)
       end
       :signed_in
     rescue Vouch::Persistence::Cancelled

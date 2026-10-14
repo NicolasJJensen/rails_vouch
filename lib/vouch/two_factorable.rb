@@ -138,12 +138,26 @@ module Vouch
       Vouch::Result.cancelled(record: error.record, error: error)
     end
 
-    # Issue a fresh 2FA challenge. Delivery exceptions bubble (decisions
-    # 38, 40). Hosts rescue at the controller level.
     def challenge
+      issue_authentication_challenge(approval: false)
+    end
+
+    def verify_challenge(code, token:)
+      verify_authentication_challenge(code, token: token, approval: false)
+    end
+
+    def sign_in_approval_challenge
+      issue_authentication_challenge(approval: true)
+    end
+
+    def verify_sign_in_approval(code, token:)
+      verify_authentication_challenge(code, token: token, approval: true)
+    end
+
+    private def issue_authentication_challenge(approval:)
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:two_factorable, self.class))
       raise ArgumentError, "cannot challenge an unpersisted record" unless persisted?
-      return Vouch::Result.locked if two_factor_locked? || !two_factor_eligible?
+      return Vouch::Result.locked if two_factor_locked? || !authentication_challenge_eligible?(approval: approval)
 
       begin
         nonce = issue_nonce!(:two_factor_nonce)
@@ -154,7 +168,7 @@ module Vouch
         return Vouch::Result.cancelled(record: error.record, error: error)
       end
       issued = OtpCourier::OTP.issue(
-        purpose:  Vouch::Purposes.two_factor(self),
+        purpose:  authentication_challenge_purpose(approval: approval),
         payload:  two_factor_payload.merge("nonce" => nonce),
         validity: two_factorable_config.challenge_validity,
         length:   two_factorable_config.length
@@ -165,20 +179,19 @@ module Vouch
       Vouch::Result.ok(issued.token)
     end
 
-    def verify_challenge(code, token:)
+    private def verify_authentication_challenge(code, token:, approval:)
       self.class.validate_auth_schema!(*Vouch::FeatureContracts.columns_for(:two_factorable, self.class))
-      return Vouch::Result.locked if two_factor_locked? || !two_factor_eligible?
+      return Vouch::Result.locked if two_factor_locked? || !authentication_challenge_eligible?(approval: approval)
 
-      # Trim leading and trailing whitespace from copy-paste.
       code = code.to_s.strip
 
-      payload = consume_otp_token(token, code, Vouch::Purposes.two_factor(self))
+      payload = consume_otp_token(token, code, authentication_challenge_purpose(approval: approval))
 
       if two_factor_payload_valid?(payload)
         transaction_result = Vouch::Persistence.transaction(self) do
           lock!
           next Vouch::Result.invalid if two_factor_locked?
-          next Vouch::Result.invalid unless two_factor_eligible?
+          next Vouch::Result.invalid unless authentication_challenge_eligible?(approval: approval)
           next Vouch::Result.invalid unless two_factor_payload_valid?(payload)
 
           Vouch::Persistence.update!(self,
@@ -219,7 +232,7 @@ module Vouch
       Vouch::Result.cancelled(record: error.record, error: error)
     end
 
-    %i[enable_two_factor disable_two_factor challenge verify_challenge record_two_factor_use].each do |operation|
+    %i[enable_two_factor disable_two_factor challenge verify_challenge sign_in_approval_challenge verify_sign_in_approval record_two_factor_use].each do |operation|
       define_method(:"#{operation}!") do |*args, **options|
         result = public_send(operation, *args, **options)
         raise Vouch::OperationFailed, result unless result.ok?
@@ -311,6 +324,14 @@ module Vouch
         #{candidates.map(&:name).join(', ')}. Override #two_factor_account_class
         to select the owning account model.
       MSG
+    end
+
+    def authentication_challenge_eligible?(approval:)
+      approval ? (respond_to?(:verified?) && verified?) : two_factor_eligible?
+    end
+
+    def authentication_challenge_purpose(approval:)
+      approval ? Vouch::Purposes.sign_in_approval(self) : Vouch::Purposes.two_factor(self)
     end
 
     def two_factor_eligible?

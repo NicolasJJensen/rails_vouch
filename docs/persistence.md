@@ -49,6 +49,32 @@ Rails deliberately catches `ActiveRecord::Rollback` at a transaction boundary. A
 
 Authentication cannot continue if consuming its proof was cancelled: the code would otherwise remain usable. Vouch therefore checks required writes and transaction completion before reporting success.
 
+[Custom registration blocks](registration.md#custom-registration-forms) use ordinary Rails persistence. Return `false` to cancel registration, or let a save exception reach Vouch. A successful block can return `nil`, provided it saved the supplied credentials record.
+
+> Vouch checks its own required authentication writes. It does not inspect Rails' internal save status or intercept saves in your form. A callback or nested transaction that swallows `ActiveRecord::Rollback` must report cancellation to the form before registration continues.
+
+For example, a form can check the return value when a model uses callbacks that raise `ActiveRecord::Rollback`:
+
+```ruby
+# app/forms/signup_form.rb
+class SignupForm
+  def initialize(user, profile)
+    @user = user
+    @profile = profile
+  end
+
+  def save!
+    [@user, @profile].each do |record|
+      unless record.save!
+        raise ActiveRecord::RecordNotSaved.new("Registration save was cancelled", record)
+      end
+    end
+  end
+end
+```
+
+The controller calls this form inside its registration saving block. The exception rolls back both saves and remains available as `@operation_error`. Model validations or `throw :abort` in a before callback already make `save!` raise, without this extra check.
+
 | Mechanism | Responsibility |
 | --- | --- |
 | Record lock | Prevent competing changes while checking and consuming a proof. |

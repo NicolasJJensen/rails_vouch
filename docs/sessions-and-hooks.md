@@ -59,7 +59,7 @@ typical use. Each supports the phases in the preceding table.
 
 | Lifecycle | Arguments | Example use |
 | --- | --- | --- |
-| `sign_in` | Credentials record, identity, `authentication_method:`; OAuth also supplies `auth_hash:` and a verified MFA factor is added after completion | Audit password, OAuth or custom sign-in. |
+| `sign_in` | Credentials record, identity, `authentication_method:`; OAuth also supplies `auth_hash:`. Verified MFA credentials are added as trailing arguments after completion. | Audit password, OAuth or custom sign-in. |
 | `authentication_confirmation` | Original actor confirming identity | Audit confirmation before a sensitive action. |
 | `sign_out` | Current identity | Audit a logout. |
 | `sign_up` | Credentials record; created identity is added after creation | Create associated registration data. |
@@ -145,6 +145,8 @@ end
 | `on_two_factor_verification` | Credentials record, selected identity, verified credential; `evidence:` and `additional:` keywords |
 
 `on_two_factor_verification` runs after an MFA proof is accepted. `additional: false` means it completed the sign-in challenge; `additional: true` means an already signed-in person completed another challenge. `evidence:` describes the accepted proof. Account recovery can supply no credential record, so handle a nil third argument. Ordinary contact verification does not fire this authentication event.
+
+When [sign-in approval](sign-in-approval.md) requires multiple proofs, Vouch retains them until sign-in completes. It then emits this event for each proof. Failed or abandoned sign-ins do not emit these completion events. Proof from an unenrolled approval contact includes `purpose: "sign_in_approval"`.
 
 `on_invitation_acceptance` is a convenient spelling of `after_invitation_acceptance`; both run inside the acceptance transaction.
 

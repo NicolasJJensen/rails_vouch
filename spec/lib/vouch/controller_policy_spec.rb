@@ -224,6 +224,31 @@ RSpec.describe 'Controller integration policy' do
     )
   end
 
+  it 'does not let the primary passwordless credential approve its own sign-in' do
+    account = create(:account)
+    create(:user, account: account)
+    credential = account.two_factor_credentials.create!(verified_at: Time.current)
+    policy = Vouch::AuthenticationPolicy.new
+    allow(policy).to receive(:sign_in_approval_required?).and_return(true)
+    allow(policy).to receive(:sign_in_approval_credential).and_return(credential)
+    allow(controller).to receive(:authentication_policy).and_return(policy)
+
+    expect(controller.send(:complete_sign_in, account, method: :passwordless, signed_in_via: credential)).to eq(:denied)
+    expect(proxy).not_to have_received(:set_user)
+  end
+
+  it 'denies a missing approval contact before trying to load credential associations' do
+    account = create(:account)
+    create(:user, account: account)
+    policy = Vouch::AuthenticationPolicy.new
+    allow(policy).to receive(:sign_in_approval_required?).and_return(true)
+    allow(controller).to receive(:authentication_policy).and_return(policy)
+    expect(controller).not_to receive(:two_factor_credentials_for)
+
+    expect(controller.send(:complete_sign_in, account)).to eq(:denied)
+    expect(proxy).not_to have_received(:set_user)
+  end
+
   it 'clears a prior credential reference when a new password authentication completes' do
     account = create(:account)
     create(:user, account: account)

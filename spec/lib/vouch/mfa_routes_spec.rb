@@ -35,9 +35,12 @@ RSpec.describe "MFA route declarations" do
     expect(helpers.member_two_factor_credentials_path).to eq("/security/two_factor_credentials")
     expect(helpers.new_member_two_factor_credential_path).to eq("/security/two_factor_credentials/new")
     expect(helpers.member_two_factor_credential_path(7)).to eq("/security/two_factor_credentials/7")
+    expect(helpers.edit_member_two_factor_credential_path(7)).to eq("/security/two_factor_credentials/7/edit")
+    expect(helpers.send_code_member_two_factor_credential_path(7)).to eq("/security/two_factor_credentials/7/send_code")
     expect(helpers).not_to respond_to(:member_two_factor_challenges_path, :member_recovery_codes_path)
     expect(routes.routes.map { |route| [route.defaults[:action], route.verb] }).to contain_exactly(
-      ["index", "GET"], ["new", "GET"], ["create", "POST"], ["update", "PATCH|PUT"], ["destroy", "DELETE"]
+      ["index", "GET"], ["new", "GET"], ["create", "POST"], ["edit", "GET"],
+      ["send_code", "POST"], ["update", "PATCH|PUT"], ["destroy", "DELETE"]
     )
   end
 
@@ -52,7 +55,7 @@ RSpec.describe "MFA route declarations" do
 
   {
     two_factor_challenges: %i[index show update send_code destroy recovery consume_recovery],
-    two_factor_credentials: %i[index new create update destroy],
+    two_factor_credentials: %i[index new create edit send_code update destroy],
     recovery_codes: %i[show create]
   }.each do |feature, actions|
     it "supports a custom controller, URL, and full helper name for every #{feature} action" do

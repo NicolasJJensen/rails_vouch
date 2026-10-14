@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Host-requested sign-in approval through selected verified contacts, with MFA proof reuse and unchanged enrollment settings.
+
+- Custom registration forms use Rails exceptions or an explicit false return to cancel their transaction.
+- Resumable MFA enrollment with owner-scoped code resending and editable Rails delivery limits.
+- Generated MFA management supports multiple credential models without replacing customized files.
+- Authentication record-name conflicts reported when routes load.
 - Status-returning controller actions with mapped record variables and deferred default responses.
 - Transactional registration saving blocks for host-owned forms, associated records, OAuth, invitations, and MFA activation.
 - Separate MFA challenge, credential-management and recovery-code route declarations with configurable URLs and helper names.

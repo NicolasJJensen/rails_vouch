@@ -181,6 +181,8 @@ module Vouch
           index: :"#{helper_prefix}_two_factor_credentials",
           new: :"new_#{helper_prefix}_two_factor_credential",
           create: :"#{helper_prefix}_two_factor_credentials",
+          edit: :"edit_#{helper_prefix}_two_factor_credential",
+          send_code: :"send_code_#{helper_prefix}_two_factor_credential",
           update: :"#{helper_prefix}_two_factor_credential",
           destroy: :"#{helper_prefix}_two_factor_credential"
         },

@@ -5,10 +5,10 @@ module Vouch
     module Pending
       PendingAuthenticationContext = Struct.new(:account, :context, keyword_init: true)
 
-      def begin_second_factor!(context, primary: nil)
+      def begin_second_factor!(context, primary: nil, factor_required: true)
         renew!
         session[Vouch::Session.key_for(controller.send(:auth_mapping).evidence_scope_name, :signed_in_via)] = primary if primary
-        context['factor_required'] = true
+        context['factor_required'] ||= factor_required
         session[key(:two_factor)] = context
       end
 

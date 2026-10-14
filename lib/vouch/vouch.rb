@@ -114,6 +114,7 @@ module Vouch
 
     # Internal — RouteBuilder calls this to register a scope mapping.
     def register_mapping(scope, mapping)
+      ControllerOutcomes.validate_mapping!(mapping)
       ApplicationHelpers.validate_mapping!(mapping)
       mappings[scope.to_sym] = mapping
       configured_warden_configs.each { |config| configure_warden_scope(config, mapping) }

@@ -44,7 +44,11 @@ end
 
 > `SignupForm` and `welcome_path` belong to your application. Vouch has no form-class declaration and does not construct, validate, serialize or save your form for you. The complete example below defines a form and its session handling.
 
-The block replaces Vouch's default save. Save the supplied record, then any related records; Vouch does not save it a second time. Returning `false` cancels and rolls back. A successful bang save may return `nil`. Validation exceptions roll back and remain available as `@operation_error`; your form retains its own `errors`.
+The block replaces Vouch's default save. Save the supplied record, then any related records; Vouch does not save it a second time. Your form method may return `nil` after saving successfully. Return `false` to cancel registration, or let validation exceptions propagate: both roll back the transaction. Validation exceptions remain available as `@operation_error`, and your form retains its own `errors`.
+
+Use `save!` for required records and let its exceptions reach Vouch. A validation failure returns `:invalid`. An `ActiveRecord::RecordNotSaved` exception returns `:cancelled`. Both roll back the registration transaction before provider linking, invitation acceptance, or sign-in can complete.
+
+> Rails can swallow `ActiveRecord::Rollback` inside a model save or nested transaction. Vouch cannot detect every cancellation inside your form. Use validations, `throw :abort` in a before callback, or raise `ActiveRecord::RecordNotSaved` to cancel a required save. See [cancelled writes](persistence.md#why-vouch-checks-required-writes) for details.
 
 After the block, Vouch completes provider linking or invitation acceptance, constructs any mapped membership, and commits. It then attempts sign-in. Use the returned status and `@registration_committed` to decide the response. Without a render or redirect, Vouch sends its usual response after your action returns.
 

@@ -27,6 +27,7 @@ en:
     recovery_codes:
       generation_failed: "Recovery codes could not be replaced. Please try again."
     two_factor_credentials:
+      verification_unavailable: "A verification code could not be sent. Please try again later."
       removal_failed: "The authentication method could not be removed."
       added: "2FA method added."
       removed: "2FA method removed."

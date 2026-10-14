@@ -161,7 +161,7 @@ These are operation records, not authenticated-current-record helpers: a failed 
 
 Use the record's `errors` for validation messages. `@operation_error` holds an expected exception when available, and `@failure_reason` gives an operation-specific reason. They may be nil. Unexpected exceptions still reach Rails error handling. Registration also exposes `@registration_committed`, so an unsuccessful sign-in after account creation does not look like failed creation.
 
-Scope names must not collide with Rails state or endpoint variables such as `request`, `credential` or `recovery_codes`.
+> Scope names must not collide with Rails state or endpoint variables such as `request`, `credential` or `recovery_codes`. Vouch checks these names when routes load and raises `Vouch::ConfigurationError` with the conflicting variable. Parent and membership names must also produce distinct variables, including the membership collection: use `:account` and `:user`, for example, rather than `:users` and `:user`.
 
 ### Change the fallback
 
@@ -286,6 +286,8 @@ These routes use `auth.scope model: "User"` with the corresponding feature decla
 | `auth.two_factor_credentials` | `GET /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#index` |
 | | `GET /users/two_factor_credentials/new` | `new_user_two_factor_credential_path` | `Users::TwoFactorCredentialsController#new` |
 | | `POST /users/two_factor_credentials` | `user_two_factor_credentials_path` | `Users::TwoFactorCredentialsController#create` |
+| | `GET /users/two_factor_credentials/:id/edit` | `edit_user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#edit` |
+| | `POST /users/two_factor_credentials/:id/send_code` | `send_code_user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#send_code` |
 | | `PATCH/PUT /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#update` |
 | | `DELETE /users/two_factor_credentials/:id` | `user_two_factor_credential_path(id)` | `Users::TwoFactorCredentialsController#destroy` |
 | `auth.two_factor_challenges` | `GET /users/recovery` | `user_recovery_two_factor_challenge_path` | `Users::TwoFactorChallengeController#recovery` |

@@ -1,4 +1,4 @@
-<h1>Choose an MFA method</h1>
+<h1><%%= sign_in_approval_challenge? ? "Approve this sign-in" : "Choose an MFA method" %></h1>
 
 <ul>
   <%% @credentials.each do |credential| %>

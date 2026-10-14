@@ -54,7 +54,7 @@ module Vouch
           wiring << "  include Vouch::TwoFactorable\n" unless contents.include?("include Vouch::TwoFactorable")
           wiring << "  authentication_owner :#{authentication_owner_association}\n" unless contents.match?(/\bauthentication_owner\s/)
           if options[:subject].any? && !contents.include?("verifiable_subject_attribute")
-            value = options[:subject].length == 1 ? ":#{options[:subject].first}" : "[#{options[:subject].map { |a| ":#{a}" }.join(", ")}]"
+            value = subject_attributes.length == 1 ? ":#{subject_attributes.first}" : "[#{subject_attributes.map { |a| ":#{a}" }.join(", ")}]"
             wiring << "  self.verifiable_subject_attribute = #{value}\n"
           end
           wiring << "\n  def deliver_verification_code(_code)\n    raise NotImplementedError, \"Implement verification delivery for #{model_metadata.class_name}\"\n  end\n" unless contents.include?("def deliver_verification_code")
@@ -121,7 +121,14 @@ module Vouch
       end
 
       def template_unless_exists(source, destination)
-        template source, destination unless File.file?(File.join(destination_root, destination))
+        if File.file?(File.join(destination_root, destination))
+          say_status :skip, destination, :yellow
+          if destination.include?("two_factor_credentials")
+            say "Review #{destination} if it restricts enrollment to one credential type.", :yellow
+          end
+        else
+          template source, destination
+        end
       end
 
       def controller_scope_path
@@ -213,10 +220,6 @@ module Vouch
 
       def subject_attributes
         options[:subject].presence || [subject_attribute]
-      end
-
-      def permitted_subject_attributes
-        subject_attributes.map { |attribute| ":#{attribute}" }.join(", ")
       end
 
       def verifiable_columns_already_migrated?

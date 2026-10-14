@@ -31,6 +31,10 @@ module Vouch
         per_record(record, :two_factor)
       end
 
+      def sign_in_approval(record)
+        per_record(record, :sign_in_approval)
+      end
+
       # Magic-link sign-in purpose. Persisted-only — you can't sign in
       # with an unpersisted credential — so the per-record format applies
       # unconditionally.

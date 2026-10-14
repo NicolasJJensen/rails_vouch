@@ -1,7 +1,7 @@
 class Vouch::TwoFactorCredentialsController < ::ApplicationController
   include Vouch::Authentication
   before_action :build_credential, only: %i[new create]
-  before_action :set_credential, only: %i[update destroy]
+  before_action :set_credential, only: %i[edit send_code update destroy]
 
   def index
     @credentials = credential_relation

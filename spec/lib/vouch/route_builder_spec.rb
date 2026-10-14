@@ -60,6 +60,45 @@ RSpec.describe Vouch::RouteBuilder do
       Vouch.deregister_mapping(:nested_member)
     end
 
+    %i[credential credential_kind credentials_by_kind request vouch_identity].each do |name|
+      it "rejects the reserved record name #{name} while loading routes" do
+        routes = ActionDispatch::Routing::RouteSet.new
+        expect {
+          routes.draw do
+            Vouch::RouteBuilder.new(self).scope(name, model: "Account") { |auth| auth.sessions }
+          end
+        }.to raise_error(Vouch::ConfigurationError, /cannot expose @#{name}/)
+        expect(Vouch.registered_scope?(name)).to be(false)
+        expect(Vouch::ApplicationHelpers.instance_methods(false)).not_to include(:"current_#{name}")
+      end
+    end
+
+    it "rejects a parent name that collides with a membership collection before registration" do
+      routes = ActionDispatch::Routing::RouteSet.new
+      expect {
+        routes.draw do
+          Vouch::RouteBuilder.new(self).scope(:members, model: "Account") do |auth|
+            auth.sessions
+            auth.membership :member, model: "User" do |membership|
+              membership.sessions
+            end
+          end
+        end
+      }.to raise_error(Vouch::ConfigurationError, /aliases conflict at @members/)
+      expect(Vouch.registered_scope?(:member)).to be(false)
+      expect(Vouch.registered_scope?(:members)).to be(false)
+    end
+
+    it "allows an uncountable single-model scope without a membership collection" do
+      routes = ActionDispatch::Routing::RouteSet.new
+      routes.draw do
+        Vouch::RouteBuilder.new(self).scope(:staff, model: "Account") { |auth| auth.sessions }
+      end
+      expect(Vouch.mapping_for(:staff).account_class).to eq(Account)
+    ensure
+      Vouch.deregister_mapping(:staff)
+    end
+
     it "rejects replacing a scope with a different model configuration" do
       test_routes = ActionDispatch::Routing::RouteSet.new
       stub_const("InferenceCollision", Class.new)

@@ -183,6 +183,8 @@ module Vouch
         index: [[:get], "two_factor_credentials"],
         new: [[:get], "two_factor_credentials/new"],
         create: [[:post], "two_factor_credentials"],
+        edit: [[:get], "two_factor_credentials/:id/edit"],
+        send_code: [[:post], "two_factor_credentials/:id/send_code"],
         update: [[:patch, :put], "two_factor_credentials/:id"],
         destroy: [[:delete], "two_factor_credentials/:id"]
       })

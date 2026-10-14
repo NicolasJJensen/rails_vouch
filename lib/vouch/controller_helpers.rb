@@ -7,6 +7,7 @@ module Vouch
     include Vouch::InvitationHelpers
     include Vouch::LifecycleHooks
     include Vouch::AuthenticationCompletion
+    include Vouch::SignInApproval
     include Vouch::ControllerOutcomes
 
     AUTH_LIFECYCLE_HOOKS = %i[
@@ -288,8 +289,11 @@ module Vouch
     end
 
     def valid_context_factor?(account, context)
-      return true if context.dig('evidence', 'method') == 'recovery_code'
       return true unless context['factor_required'] || needs_second_factor?(account, context)
+      if context.key?("proofs")
+        return pending_authentication_proofs(account, context).any? { |proof| proof["purpose"] != "sign_in_approval" }
+      end
+      return true if context.dig('evidence', 'method') == 'recovery_code'
       factor = context_credential(account, context)
       factor && factor.two_factor_enabled? && factor.verified? && !factor.two_factor_locked? &&
         credential_reference(factor) == context['factor']

@@ -195,6 +195,94 @@ RSpec.describe "Host registration persistence", type: :request do
     expect(writes.count("once@example.test")).to eq(1)
   end
 
+  it "rolls back a form when an owner callback raises RecordNotSaved" do
+    cancel = proc { raise ActiveRecord::RecordNotSaved.new("Save cancelled", self) }
+    Account.after_create(cancel)
+    save_step(email_address: "cancelled@example.test", organisation_name: "Cancelled profile")
+
+    expect { submit }.not_to change(Account, :count)
+    expect(Organisation.where(name: "Cancelled profile")).not_to exist
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(controller.view_assigns.fetch("operation_status")).to eq(:cancelled)
+    expect(controller.view_assigns.fetch("registration_committed")).to be(false)
+    expect(controller.send(:current_identity)).to be_nil
+    expect(session[:signup]).to include("email_address" => "cancelled@example.test")
+  ensure
+    Account.skip_callback(:create, :after, cancel)
+  end
+
+  it "rolls back the owner and related writes when a related callback raises RecordNotSaved" do
+    cancel = proc { raise ActiveRecord::RecordNotSaved.new("Profile save cancelled", self) }
+    Organisation.after_create(cancel)
+
+    expect {
+      submit(email_address: "related@example.test", organisation_name: "Cancelled companion")
+    }.not_to change(Account, :count)
+    expect(Organisation.where(name: "Cancelled companion")).not_to exist
+    expect(controller.view_assigns.fetch("operation_status")).to eq(:cancelled)
+    expect(controller.view_assigns.fetch("operation_error").record).to be_a(Organisation)
+    expect(controller.send(:current_identity)).to be_nil
+  ensure
+    Organisation.skip_callback(:create, :after, cancel)
+  end
+
+  it "rolls back the owner when a related record fails validation" do
+    validate = proc { errors.add(:name, "is unavailable") }
+    Organisation.validate(validate)
+
+    expect {
+      submit(email_address: "invalid-related@example.test", organisation_name: "Invalid companion")
+    }.not_to change(Account, :count)
+    expect(Organisation.where(name: "Invalid companion")).not_to exist
+    expect(controller.view_assigns.fetch("operation_status")).to eq(:invalid)
+    expect(controller.view_assigns.fetch("operation_error").record.errors[:name]).to include("is unavailable")
+    expect(controller.send(:current_identity)).to be_nil
+  ensure
+    Organisation.skip_callback(:validate, :before, validate)
+  end
+
+  it "uses the supplied record without reading Rails' internal save status" do
+    allow_any_instance_of(Account).to receive(:_last_transaction_return_status).and_raise("Unexpected Rails internals access")
+
+    submit(email_address: "public-contract@example.test")
+
+    expect(response).to redirect_to("/")
+    expect(controller.view_assigns.fetch("registration_committed")).to be(true)
+  end
+
+  it "does not accept an invitation when its existing owner's save is cancelled" do
+    account = create(:account, password: nil, password_confirmation: nil, registration_required: true)
+    invitation = create(:user, :invited, account: account, invitation_sent_at: Time.current)
+    post "/users/invitation/accept", params: {token: invitation.invitation_token, choice: "new"}
+    cancel = proc { raise ActiveRecord::RecordNotSaved.new("Save cancelled", self) }
+    Account.after_update(cancel)
+
+    submit
+
+    expect(response).to have_http_status(:unprocessable_entity)
+    expect(controller.view_assigns.fetch("operation_status")).to eq(:cancelled)
+    expect(account.reload.password_digest).to be_nil
+    expect(account).to be_registration_required
+    expect(invitation.reload.invitation_accepted_at).to be_nil
+    expect(controller.send(:current_identity)).to be_nil
+  ensure
+    Account.skip_callback(:update, :after, cancel) if cancel
+  end
+
+  it "does not link providers or sign in after a cancelled automatic OAuth save" do
+    Vouch.mapping_for(:user).oauth_registration = :automatic
+    automatic_form_callback
+    cancel = proc { raise ActiveRecord::RecordNotSaved.new("Save cancelled", self) }
+    Account.after_create(cancel)
+
+    expect { connect("cancelled") }.not_to change(Account, :count)
+    expect(OmniAuthIdentity.where(uid: "cancelled")).not_to exist
+    expect(controller.view_assigns.fetch("operation_status")).to eq(:cancelled)
+    expect(controller.send(:current_identity)).to be_nil
+  ensure
+    Account.skip_callback(:create, :after, cancel)
+  end
+
   it "preserves host draft choices alongside multiple provider proofs" do
     save_step(email_address: "chosen@example.test", organisation_name: "Keep this profile")
     connect("first")

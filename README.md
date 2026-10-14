@@ -75,7 +75,11 @@ class ProjectsController < AuthenticatedController
 end
 ```
 
-Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. It supplies `authenticate_user!`, `current_user`, and `user_signed_in?`, and exposes current-user and signed-in helpers to views. After sign-in, a visitor returns to a protected GET page they requested; otherwise Vouch uses your sign-in redirect, which defaults to the root route. `projects` is an example association supplied by your application.
+Vouch automatically includes `Vouch::ApplicationHelpers` in application controllers. It supplies `authenticate_user!`, `current_user`, and `user_signed_in?`, and exposes current-user and signed-in helpers to views.
+
+After sign-in, a visitor returns to a protected GET page they requested; otherwise Vouch uses your sign-in redirect, which defaults to the root route.
+
+> `projects` is an example association in your application.
 
 ## Use the generated routes
 
@@ -115,7 +119,9 @@ end
 Choose an optional feature for its setup and customization guide.
 
 - [Password reset](docs/password-reset.md) and [password history](docs/password-history.md)
-- [Verification](docs/verification.md), [MFA](docs/mfa.md), [recovery codes](docs/recovery-codes.md), and [passwordless sign-in](docs/passwordless.md)
+- [MFA](docs/mfa.md), with pages to manage phone and email authenticators, resume verification, and resend codes
+- [Sign-in approval](docs/sign-in-approval.md), to request extra proof for unfamiliar devices or other application rules
+- [Verification](docs/verification.md), [recovery codes](docs/recovery-codes.md), and [passwordless sign-in](docs/passwordless.md)
 - [OAuth sign-in](docs/oauth.md)
 - [Invitations](docs/invitations.md)
 - [Impersonation for support access](docs/impersonation.md)
@@ -151,7 +157,8 @@ See [the generated models and schema](docs/model-mapping.md#multi-tenant-models)
 
 ## Customization and reference
 
-- [Registration](docs/registration.md), including [host-owned registration forms](docs/registration.md#custom-registration-forms), and [sign-in customization](docs/sign-in-customization.md)
+- [Registration](docs/registration.md), including custom forms that save the user and associated records in one transaction
+- [Sign-in customization](docs/sign-in-customization.md)
 - [Controllers, route paths, and ejection](docs/controllers.md)
 - [Models, primary keys, and advanced scopes](docs/model-mapping.md)
 - [Authentication policy and session invalidation](docs/authentication-policy.md)

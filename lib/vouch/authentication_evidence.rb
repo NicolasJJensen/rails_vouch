@@ -6,8 +6,9 @@ module Vouch
   module AuthenticationEvidence
     module_function
 
-    def build(method:, account: nil, credential: nil, owner: nil, verified_at: Time.current)
+    def build(method:, account: nil, credential: nil, owner: nil, purpose: nil, verified_at: Time.current)
       result = {"method" => method.to_s, "verified_at" => verified_at.utc.iso8601(6)}
+      result["purpose"] = purpose.to_s if purpose
       result["account_fingerprint"] = Vouch::PendingAuthentication.fingerprint(account) if account
       if credential
         result["credential_type"] = credential.class.name
@@ -40,6 +41,8 @@ module Vouch
     def valid?(proof, account:, mapping:)
       return false unless account && proof.is_a?(Hash)
       return false unless %w[two_factor recovery_code].include?(proof["method"])
+      return false unless [nil, "sign_in_approval"].include?(proof["purpose"])
+      return false if proof["purpose"] && proof["method"] != "two_factor"
       return false unless proof["account_fingerprint"] == Vouch::PendingAuthentication.fingerprint(account)
       return false if Time.iso8601(proof["verified_at"].to_s) > Time.current
 
@@ -79,7 +82,7 @@ module Vouch
         credential = account.public_send(association.name).reload.detect do |candidate|
           candidate.class.name == type && Vouch::RecordKey.serialize(candidate) == id
         end
-        credential && credential.two_factor_enabled? && credential.verified? && !credential.two_factor_locked? &&
+        credential && (evidence["purpose"] == "sign_in_approval" || credential.two_factor_enabled?) && credential.verified? && !credential.two_factor_locked? &&
           credential.try(:verification_version) == evidence["credential_version"] &&
           credential.try(:authentication_method).to_s == evidence["credential_method"].to_s &&
           credential.verified_at&.utc&.iso8601(6) == evidence["credential_verified_at"] &&

@@ -20,5 +20,18 @@ module Vouch
       account.respond_to?(:two_factor_enabled?) && account.two_factor_enabled?
     end
 
+    def sign_in_approval_required?(account, method:, provider:, controller:)
+      false
+    end
+
+    def sign_in_approval_credential(account, method:, provider:, controller:)
+      nil
+    end
+
+    def sign_in_approval_satisfied?(account, credential:, evidence:, method:, provider:, controller:)
+      evidence["method"] == "two_factor" &&
+        evidence["credential_type"] == credential.class.name &&
+        evidence["credential_id"] == Vouch::RecordKey.serialize(credential)
+    end
   end
 end

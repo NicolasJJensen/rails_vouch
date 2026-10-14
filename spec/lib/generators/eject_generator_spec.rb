@@ -132,7 +132,7 @@ RSpec.describe Vouch::Generators::EjectGenerator do
       expect(controller.class.ancestors).not_to include(Vouch::SessionsController)
     end
 
-    it "retains generated credential enrollment while inheriting the local management actions" do
+    it "retains generated enrollment and grouped management after ejection" do
       stub_const("EjectedOwners", Module.new)
       Dir.chdir(tmpdir) do
         generator = Vouch::Generators::TwoFactorableGenerator.new(["Phone"],
@@ -154,11 +154,11 @@ RSpec.describe Vouch::Generators::EjectGenerator do
       expect(controller.instance_variable_get(:@credential)).to equal(credential)
       expect(controller.method(:update).owner).to eq(EjectedOwners::TwoFactorCredentialsController)
 
-      account = Object.new
+      account = double("account", two_factor_credentials: relation)
       allow(controller).to receive(:current_account).and_return(account)
       controller.index
-      expect(controller.instance_variable_get(:@credentials)).to equal(relation)
-      expect(controller.method(:index).owner).to eq(EjectedOwners::TwoFactorCredentialsImplementationController)
+      expect(controller.instance_variable_get(:@credentials_by_kind)).to eq(two_factor_credentials: relation)
+      expect(controller.method(:destroy).owner).to eq(EjectedOwners::TwoFactorCredentialsImplementationController)
     end
   end
 

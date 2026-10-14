@@ -10,6 +10,7 @@ To end logins that already exist when an account is suspended, also [invalidate 
 
 - [Block suspended users](#block-suspended-users)
 - [MFA during sign-in](#mfa-during-sign-in)
+- [Require sign-in approval](#require-sign-in-approval)
 - [Pending sign-in timeout](#pending-sign-in-timeout)
 - [Revoke established sessions](#revoke-established-sessions)
 - [MFA evidence and application permissions](#mfa-evidence-and-application-permissions)
@@ -71,6 +72,12 @@ end
 ```
 
 `requires_mfa_by_policy?` is an example application predicate. The [MFA management pages](mfa.md#enroll-a-phone) let people enroll usable factors before your application makes them mandatory.
+
+## Require sign-in approval
+
+Use [sign-in approval](sign-in-approval.md) when a particular request needs extra proof through a selected contact. Your policy decides whether approval is required, selects one verified credential, and can accept qualifying ordinary MFA proof.
+
+The requirement and selected contact remain bound to that pending sign-in. Your application owns device recognition, approval records, and notifications.
 
 ## Pending sign-in timeout
 
@@ -146,7 +153,8 @@ For selecting which memberships are available, use [membership filtering](model-
 | --- | --- |
 | `method` | `two_factor` or `recovery_code`. |
 | `verified_at` | ISO 8601 time when the MFA proof completed. |
-| `credential_type`, `credential_id`, `credential_method` | The authenticator actually used for ordinary MFA. |
+| `credential_type`, `credential_id`, `credential_method` | The credential used for MFA or sign-in approval. |
+| `purpose` | `sign_in_approval` when an unenrolled contact supplied approval proof. Absent for ordinary MFA. |
 | `owner_type`, `owner_id` | The owner of a recovery-code set, when recovery was used. |
 
 For example, an application can require a recent TOTP proof before displaying a page:
